@@ -41,23 +41,50 @@ conclusion, not to copy the project's documentation into the brief.
 Never copy project knowledge into this configuration repository. It resolves
 per task, in place.
 
-## 3. Harness routing
+## 3. Routing
 
-| Work | Harness |
-| --- | --- |
-| analysis, investigation, review of a proposal | Pi |
-| architecture and structural decisions | Pi |
-| adversarial challenge, tenth-man | Pi |
-| small surgical edits in a known place | Pi |
-| implementation of a feature | omp |
-| debugging | omp |
-| refactoring | omp |
-| writing or repairing tests | omp |
+Five decisions, kept separate on purpose: **role** (how to work), **harness**
+(Pi or omp), **model**, **effort**, and **skills**. Never let one of them drag
+the others along - a hard task does not automatically mean the strongest
+model, and a strong model does not automatically mean maximum effort.
 
-`config/crew-dispatch.json` carries the same split in the form Firstmate reads
-at intake. When a task does not obviously fit a row, prefer omp for anything
-that will write a lot of code and Pi for anything that mostly reads and
-reasons. An explicit captain choice always wins over both.
+| Work | Harness | Model | Effort |
+| --- | --- | --- | --- |
+| small or surgical edit, quick factual question | Pi | `openai-codex/gpt-5.3-codex-spark` | low |
+| ordinary analysis, investigation, reviewing a proposal | Pi | `openai-codex/gpt-5.5` | medium |
+| difficult, broad or high-impact architecture | Pi | `openai-codex/gpt-6-astra` **(interim, see below)** | xhigh |
+| adversarial review, tenth-man | Pi | a strong model the work under review did not use | xhigh |
+| ordinary substantial implementation, normal debugging, refactors, tests | omp | `anthropic/claude-sonnet-5` | medium or high |
+| hard or large implementation, broad blast radius, security / migration / data-integrity / concurrency sensitive, difficult production bugs, high-risk refactors | omp | `anthropic/claude-opus-5` **or** `openai-codex/gpt-6-astra` | xhigh |
+
+`config/crew-dispatch.json` carries the same table in the form Firstmate reads
+at intake. An explicit captain choice always wins over it.
+
+**Effort is not negotiable downward.** Where this table says xhigh, a lane
+that cannot run xhigh does not run at reduced effort; it is reported as
+blocked and the work waits for a decision.
+
+**Medium versus high** on the Sonnet lane is a judgement about actual
+complexity - files touched, how settled the design is, how much of the system
+the change can disturb - never about how urgently the request was phrased.
+
+**Opus versus Astra** is a semantic choice between two peers, both at xhigh,
+made per task: Opus for long-context work across an unfamiliar repository,
+subtle invariants and careful migrations; Astra for dense algorithmic or
+protocol work and long autonomous tool loops. Weigh task shape, blast radius,
+reasoning needs, repository context and current provider headroom. Difficulty
+alone does not select Astra, and neither model is the default for everything.
+
+**Tenth-man independence.** Review on a model that did not produce the work.
+If the change came from Astra, review on a different strong model rather than
+the same one.
+
+**Architecture lane, interim.** The intended lane is Pi with
+`anthropic/claude-fable-5-1` at xhigh. It is blocked: this machine has no
+anthropic credential for Pi, so Fable is unreachable from Pi, though the model
+itself runs at xhigh under omp. Until Pi has that credential the architecture
+slot runs on the strongest verified Pi lane at the same effort. When the
+credential exists, change the model in that one rule and nothing else.
 
 ## 4. Roles
 
