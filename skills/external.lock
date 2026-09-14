@@ -1,0 +1,36 @@
+# External global skills, pinned by commit.
+#
+# install.sh clones each repository once into a machine-local cache, checks out
+# the exact commit below, and symlinks the named skill directory into
+# ~/.agents/skills/. Nothing is vendored into this repository, so their
+# licenses stay with their sources: all three are MIT.
+#
+# To move a pin: change the sha, rerun ./install.sh, and commit. Never track a
+# branch here - an unpinned global skill changes the behavior of every project
+# on this machine without a diff.
+#
+# Format, tab-separated:
+#   <our-id> <repo> <commit> <path-in-repo> <installed-skill-name>
+#
+# Verified 2026-09-15 against api.github.com.
+#
+# Known deviations:
+#   - ponytail:implement does not exist upstream. The repository ships exactly
+#     six skills (ponytail, -review, -audit, -debt, -gain, -help). The core
+#     `ponytail` skill is the closest counterpart and is what gets installed:
+#     lazy-implementation discipline for a coding task, not an implementation
+#     workflow. The id below records that substitution honestly.
+#   - addyosmani skills link to ../../references/*.md at the repository root,
+#     outside their own directory, so install.sh also links ~/.agents/references
+#     at the parent that those relative paths resolve to.
+
+superpowers:debug	obra/superpowers	b36e0829c6d0140e93cfef2ca599b1b07d4a7797	skills/systematic-debugging	systematic-debugging
+superpowers:verify	obra/superpowers	b36e0829c6d0140e93cfef2ca599b1b07d4a7797	skills/verification-before-completion	verification-before-completion
+superpowers:tdd	obra/superpowers	b36e0829c6d0140e93cfef2ca599b1b07d4a7797	skills/test-driven-development	test-driven-development
+ponytail:implement	DietrichGebert/ponytail	e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156	skills/ponytail	ponytail
+ponytail:review	DietrichGebert/ponytail	e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156	skills/ponytail-review	ponytail-review
+addy:planning	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/planning-and-task-breakdown	planning-and-task-breakdown
+addy:incremental	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/incremental-implementation	incremental-implementation
+addy:context	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/context-engineering	context-engineering
+addy:api-design	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/api-and-interface-design	api-and-interface-design
+addy:security	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/security-and-hardening	security-and-hardening
