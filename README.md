@@ -45,6 +45,34 @@ fm
 Rerunning `install.sh` is a reconcile, not a reinstall: it repairs symlinks,
 refreshes pinned skills, and leaves anything you have edited by hand alone.
 
+Verify an installation at any time:
+
+```sh
+tests/smoke.sh          # launcher, install state, skills, herdr
+tests/smoke.sh --live   # the same, plus a captain that is currently running
+```
+
+## Routing in v0.1
+
+Every lane below was probed directly and then again through a real
+FirstMate -> Herdr -> worker lifecycle before it was written into
+`firstmate/crew-dispatch.json`. Effort is never negotiated downward.
+
+| Work | Harness | Model | Effort |
+| --- | --- | --- | --- |
+| small, surgical, quick question | Pi | `openai-codex/gpt-5.3-codex-spark` | low |
+| ordinary analysis and review | Pi | `openai-codex/gpt-5.5` | medium |
+| difficult, broad architecture | Pi | `openai-codex/gpt-6-astra` | xhigh |
+| tenth-man, adversarial review | Pi | a strong model the work under review did not use | xhigh |
+| ordinary implementation, debugging, refactors, tests | omp | `anthropic/claude-sonnet-5` | medium or high |
+| hard, large or high-risk implementation | omp | `anthropic/claude-opus-5` or `openai-codex/gpt-6-astra` | xhigh |
+
+Opus and Astra are peers, chosen per task on shape, blast radius, reasoning
+needs and provider headroom - not by keyword and not by difficulty alone.
+
+Deferred to a later release, and absent from this configuration: Pi with
+`anthropic/claude-fable-5-1`, and the local Qwen/Ollama lane.
+
 ## Boundaries
 
 - **Official FirstMate** lives at `$FIRSTMATE_ROOT` (default

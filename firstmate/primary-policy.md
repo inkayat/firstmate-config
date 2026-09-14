@@ -79,12 +79,14 @@ alone does not select Astra, and neither model is the default for everything.
 If the change came from Astra, review on a different strong model rather than
 the same one.
 
-**Architecture lane, interim.** The intended lane is Pi with
-`anthropic/claude-fable-5-1` at xhigh. It is blocked: this machine has no
-anthropic credential for Pi, so Fable is unreachable from Pi, though the model
-itself runs at xhigh under omp. Until Pi has that credential the architecture
-slot runs on the strongest verified Pi lane at the same effort. When the
-credential exists, change the model in that one rule and nothing else.
+**Deferred to a later release.** Two lanes are deliberately absent from v0.1
+rather than blocked by it. Pi with `anthropic/claude-fable-5-1` at xhigh was
+the originally intended architecture lane; Pi has no anthropic credential on
+this machine, and adopting it is a later decision, so the architecture slot
+runs on the strongest verified Pi lane at the same effort. The local Qwen and
+Ollama lane is likewise deferred while that machine is offline. Neither is
+configured anywhere in this repository; adding one is a release of its own,
+not a config tweak.
 
 ## 4. Roles
 

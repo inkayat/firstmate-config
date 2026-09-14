@@ -2,42 +2,92 @@
   "rules": [
     {
       "when": "a small or surgical change in a known place, a one-file fix, a rename, a config edit, or a quick factual question about how something works",
-      "use": [{ "harness": "pi", "model": "openai-codex/gpt-5.3-codex-spark", "effort": "low" }],
+      "use": [
+        {
+          "harness": "pi",
+          "model": "openai-codex/gpt-5.3-codex-spark",
+          "effort": "low"
+        }
+      ],
       "why": "bounded and quick; the cheap fast lane is enough and a strong model at high effort buys nothing here"
     },
     {
       "when": "ordinary investigation, code reading, reviewing someone else's proposal, or analysis that needs real understanding but not a structural decision",
-      "use": [{ "harness": "pi", "model": "openai-codex/gpt-5.5", "effort": "medium" }],
+      "use": [
+        {
+          "harness": "pi",
+          "model": "openai-codex/gpt-5.5",
+          "effort": "medium"
+        }
+      ],
       "why": "reads and reasons rather than writing code; medium effort is the honest middle"
     },
     {
       "when": "difficult, broad, or high-impact architecture: a system boundary, a data model, a migration shape, an ambiguous design with long-term consequences",
-      "use": [{ "harness": "pi", "model": "openai-codex/gpt-6-astra", "effort": "xhigh" }],
-      "why": "INTERIM LANE. The intended lane is Pi with anthropic/claude-fable-5-1 at xhigh, which is blocked: Pi has no anthropic credential on this machine, so Fable is unreachable from Pi (the model itself runs fine at xhigh under omp). This is the strongest verified Pi lane and holds the architecture slot until Pi gets an anthropic credential, at which point the model here becomes anthropic/claude-fable-5-1 with effort unchanged at xhigh."
+      "use": [
+        {
+          "harness": "pi",
+          "model": "openai-codex/gpt-6-astra",
+          "effort": "xhigh"
+        }
+      ],
+      "why": "v0.1 architecture lane. Pi with anthropic/claude-fable-5-1 at xhigh was the originally intended lane and is deferred to a later release: Pi has no anthropic credential here and adopting one is a separate decision. This is the strongest verified Pi lane and holds the architecture slot at the same effort."
     },
     {
       "when": "adversarial review, tenth-man challenge of a plan or a completion claim, or risk analysis before an expensive commitment",
-      "use": [{ "harness": "pi", "model": "openai-codex/gpt-6-astra", "effort": "xhigh" }],
+      "use": [
+        {
+          "harness": "pi",
+          "model": "openai-codex/gpt-6-astra",
+          "effort": "xhigh"
+        }
+      ],
       "why": "independent scrutiny, deliberately on Pi and away from the implementation session. Independence is the point: when the work under review was itself produced on gpt-6-astra, override to another strong model such as openai-codex/gpt-5.6-sol so the reviewer is not the author"
     },
     {
       "when": "ordinary substantial implementation: a bounded feature, normal debugging, a normal refactor, or writing and repairing tests, with a blast radius you can hold in your head",
-      "use": [{ "harness": "omp", "model": "anthropic/claude-sonnet-5", "effort": "medium" }],
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-sonnet-5",
+          "effort": "medium"
+        }
+      ],
       "why": "the everyday coding lane"
     },
     {
       "when": "the same kind of implementation work when it spans several files or the design is not fully settled at intake",
-      "use": [{ "harness": "omp", "model": "anthropic/claude-sonnet-5", "effort": "high" }],
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-sonnet-5",
+          "effort": "high"
+        }
+      ],
       "why": "same lane, more thinking; choose between medium and high on actual complexity, not on how the request is phrased"
     },
     {
       "when": "hard or large implementation: broad blast radius, cross-stack work, security-sensitive, migration-sensitive, data-integrity-sensitive or concurrency-sensitive changes, difficult production bugs, high-risk refactors",
       "use": [
-        { "harness": "omp", "model": "anthropic/claude-opus-5", "effort": "xhigh" },
-        { "harness": "omp", "model": "openai-codex/gpt-6-astra", "effort": "xhigh" }
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-opus-5",
+          "effort": "xhigh"
+        },
+        {
+          "harness": "omp",
+          "model": "openai-codex/gpt-6-astra",
+          "effort": "xhigh"
+        }
       ],
       "why": "two peer lanes, both at xhigh, never downgraded. Choose semantically per task: Opus for long-context work across an unfamiliar repository, subtle invariants, and careful migrations; Astra for dense algorithmic or protocol work and long autonomous tool loops. Weigh task shape, blast radius, reasoning needs, repository context and current provider headroom. Do not reach for Astra merely because a task is difficult, and do not make either the universal default"
     }
   ],
-  "default": [{ "harness": "omp", "model": "anthropic/claude-sonnet-5", "effort": "medium" }]
+  "default": [
+    {
+      "harness": "omp",
+      "model": "anthropic/claude-sonnet-5",
+      "effort": "medium"
+    }
+  ]
 }
