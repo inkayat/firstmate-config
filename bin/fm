@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# fm - start the Firstmate captain from anywhere, on Pi, over Herdr.
+#
+#   cd ANY_DIRECTORY
+#   fm
+#
+# This launcher owns no lifecycle. The fleet lock, watcher, heartbeat, wake
+# queue, session-start digest, supervision protocol, spawn and teardown all
+# belong to the official FirstMate checkout and are reached exactly the way
+# upstream reaches them: the two tracked Pi primary extensions load, and
+# everything else follows. If lifecycle logic ever appears in this file,
+# delete it.
+#
+# It resolves four things:
+#
+#   FIRSTMATE_ROOT  the official checkout, never modified. From
+#                   ~/.config/firstmate-config/env, else the environment,
+#                   else ~/Developer/tools/firstmate.
+#   FM_HOME         the machine-local operational home holding state/, data/,
+#                   config/ and projects/. Default ~/.firstmate, outside both
+#                   the checkout and this config repository, so no machine
+#                   state can land in tracked source.
+#   FM_BACKEND      herdr, which is first in upstream's backend precedence
+#                   (FM_BACKEND, then config/backend, then autodetect).
+#   extensions      .pi/extensions/fm-primary-pi-watch.ts and
+#                   .pi/extensions/fm-primary-turnend-guard.ts. Pi
+#                   auto-discovers both from its working directory once the
+#                   project is trusted, and passing -e as well would load each
+#                   twice, so -e is used only while the checkout is untrusted -
+#                   upstream's documented trust-free fallback.
+#
+# Working directory. Pi runs IN the checkout, because AGENTS.md is a
+# working-directory context file and a captain whose harness never loaded it is
+# not a Firstmate captain. Your shell's directory is untouched, and the
+# directory you launched from is passed through as FM_FORK_ORIGIN_CWD so the
+# captain can resolve the project you meant instead of guessing.
+#
+# Usage:
+#   fm                    launch the captain
+#   fm --check            run the preflight and print the resolution
+#   fm --print-command    print the resolved environment and command
+#   fm --help
+set -u
+
+ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
+# shellcheck source=/dev/null
+[ ! -f "$ENV_FILE" ] || . "$ENV_FILE"
+
+self=${BASH_SOURCE[0]}
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self="$(cd "$(dirname "$self")" && pwd)/$target" ;;
+  esac
+done
+CONFIG_ROOT="$(cd "$(dirname "$self")/.." && pwd)"
+
+FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
+FM_HOME="${FM_HOME:-$HOME/.firstmate}"
+FM_BACKEND="${FM_BACKEND:-herdr}"
+PI_BIN="${FM_PI_BIN:-pi}"
+EXT_MODE="${FM_PI_EXTENSIONS:-auto}"
+ORIGIN_CWD=$PWD
+
+WATCH_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
+TURNEND_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
+
+die() { printf 'fm: %s\n' "$1" >&2; exit 1; }
+usage() { sed -n '2,/^set -u$/p' "$self" | sed -e 's/^# \{0,1\}//' -e '/^set -u$/d'; }
+
+# Harness identity markers leak from whatever shell launched us and upstream's
+# detection reads them, so a captain started from inside another agent's pane
+# would misreport its own harness. Herdr pane identity is deliberately kept:
+# when fm runs inside a herdr pane, that pane really is the captain's.
+SCRUB=(CLAUDECODE OMPCODE PI_CODING_AGENT FM_PI_HARNESS FM_OMP_HARNESS CURSOR_AGENT CURSOR_INVOKED_AS GEMINI_CLI GROK_AGENT)
+SCRUB_ENV=()
+for scrub_name in "${SCRUB[@]}"; do SCRUB_ENV+=(-u "$scrub_name"); done
+
+pi_trusts_root() {
+  local trust="$HOME/.pi/agent/trust.json"
+  [ -f "$trust" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  [ "$(jq -r --arg p "$FIRSTMATE_ROOT" '.[$p] // false' "$trust" 2>/dev/null)" = true ]
+}
+
+resolve_extension_mode() {
+  case $EXT_MODE in
+    explicit|discover) printf '%s' "$EXT_MODE" ;;
+    auto) if pi_trusts_root; then printf 'discover'; else printf 'explicit'; fi ;;
+    *) die "FM_PI_EXTENSIONS must be auto, explicit, or discover (got '$EXT_MODE')" ;;
+  esac
+}
+
+preflight() {
+  [ -f "$FIRSTMATE_ROOT/AGENTS.md" ] \
+    || die "no AGENTS.md under $FIRSTMATE_ROOT; run install.sh or set FIRSTMATE_ROOT"
+  [ -f "$WATCH_EXT" ] || die "missing Pi primary watcher extension: $WATCH_EXT"
+  [ -f "$TURNEND_EXT" ] || die "missing Pi primary turn-end guard: $TURNEND_EXT"
+  command -v "$PI_BIN" >/dev/null 2>&1 || die "Pi executable '$PI_BIN' is not on PATH"
+  [ "$FM_BACKEND" != herdr ] || command -v herdr >/dev/null 2>&1 \
+    || die "backend is herdr but the herdr CLI is not on PATH"
+  # A home carrying the secondmate marker belongs to a child home; adopting it
+  # as a captain home would put two identities on one lock.
+  [ ! -e "$FM_HOME/.fm-secondmate-home" ] \
+    || die "$FM_HOME is a secondmate home; choose another FM_HOME for a captain"
+  mkdir -p "$FM_HOME/state" "$FM_HOME/data" "$FM_HOME/config" "$FM_HOME/projects" \
+    || die "cannot create the operational home under $FM_HOME"
+}
+
+print_resolution() {
+  printf 'CONFIG_ROOT=%s\n' "$CONFIG_ROOT"
+  printf 'FIRSTMATE_ROOT=%s\n' "$FIRSTMATE_ROOT"
+  printf 'FM_HOME=%s\n' "$FM_HOME"
+  printf 'FM_BACKEND=%s\n' "$FM_BACKEND"
+  printf 'FM_FORK_ORIGIN_CWD=%s\n' "$ORIGIN_CWD"
+  printf 'PI_CWD=%s\n' "$FIRSTMATE_ROOT"
+  printf 'PI_BIN=%s\n' "$PI_BIN"
+  printf 'PI_EXTENSIONS=%s\n' "$1"
+  printf 'SCRUBBED_ENV=%s\n' "${SCRUB[*]}"
+}
+
+case ${1:-} in
+  --help|-h) usage; exit 0 ;;
+  --check)
+    preflight
+    mode=$(resolve_extension_mode) || exit 1
+    print_resolution "$mode"
+    printf 'PREFLIGHT=ok\n'
+    exit 0
+    ;;
+  --print-command)
+    preflight
+    mode=$(resolve_extension_mode) || exit 1
+    print_resolution "$mode"
+    if [ "$mode" = explicit ]; then
+      printf 'COMMAND=%s -e %s -e %s\n' "$PI_BIN" "$TURNEND_EXT" "$WATCH_EXT"
+    else
+      printf 'COMMAND=%s\n' "$PI_BIN"
+    fi
+    exit 0
+    ;;
+  '') ;;
+  *) die "unknown argument '$1'; see fm --help" ;;
+esac
+
+preflight
+mode=$(resolve_extension_mode) || exit 1
+
+cd "$FIRSTMATE_ROOT" || die "cannot enter $FIRSTMATE_ROOT"
+
+export FM_HOME FM_BACKEND
+export FM_FORK_ORIGIN_CWD="$ORIGIN_CWD"
+export FM_CONFIG_ROOT="$CONFIG_ROOT"
+
+# Machine-local record of what this captain was actually launched with. macOS
+# refuses to show another process's environment, so without this there is no
+# honest way to confirm afterwards that the live captain got herdr, this home,
+# and the directory you called fm from. `exec` keeps this pid, so the recorded
+# pid is the captain's own and can be compared with the holder of state/.lock.
+# Nothing reads this file to make a decision.
+{
+  printf 'pid=%s\n' "$$"
+  printf 'started=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'config_root=%s\n' "$CONFIG_ROOT"
+  printf 'firstmate_root=%s\n' "$FIRSTMATE_ROOT"
+  printf 'fm_home=%s\n' "$FM_HOME"
+  printf 'fm_backend=%s\n' "$FM_BACKEND"
+  printf 'origin_cwd=%s\n' "$ORIGIN_CWD"
+  printf 'pi_cwd=%s\n' "$FIRSTMATE_ROOT"
+  printf 'pi_extensions=%s\n' "$mode"
+} > "$FM_HOME/state/.fm-launch" 2>/dev/null || true
+
+set -- "$PI_BIN"
+[ "$mode" != explicit ] || set -- "$@" -e "$TURNEND_EXT" -e "$WATCH_EXT"
+
+exec env "${SCRUB_ENV[@]}" "$@"

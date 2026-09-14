@@ -1,0 +1,30 @@
+{
+  "rules": [
+    {
+      "when": "investigation, analysis, code reading, reviewing someone else's proposal, answering a question about how something works",
+      "use": [{ "harness": "pi" }],
+      "why": "mostly reading and reasoning; no large diff is expected"
+    },
+    {
+      "when": "architecture and structural decisions: choosing a boundary, a data model, a migration shape, or judging whether a design holds",
+      "use": [{ "harness": "pi" }],
+      "why": "architecture role work, deliberately separated from implementation ownership"
+    },
+    {
+      "when": "adversarial challenge of a plan or a claim, tenth-man review, risk analysis before a costly commitment",
+      "use": [{ "harness": "pi" }],
+      "why": "tenth-man role; independent scrutiny, not delivery"
+    },
+    {
+      "when": "a small surgical edit in a known place, a one-file fix, a rename, a config change",
+      "use": [{ "harness": "pi" }],
+      "why": "bounded and quick; a full coding harness buys nothing here"
+    },
+    {
+      "when": "implementing a feature, debugging a defect, refactoring, or writing and repairing tests",
+      "use": [{ "harness": "omp" }],
+      "why": "primary coding harness for work that writes a lot of code and runs it"
+    }
+  ],
+  "default": [{ "harness": "omp" }]
+}
