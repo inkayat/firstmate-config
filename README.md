@@ -22,6 +22,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `firstmate/primary-policy.md` | the captain's operating policy | read by the captain, path named from `data/captain.md` |
 | `firstmate/captain.md` | first-run template for the captain's own notes | copied to `$FM_HOME/data/captain.md` **only when absent** |
 | `firstmate/crew-dispatch.json` | which harness takes which kind of task | symlinked to `$FM_HOME/config/crew-dispatch.json` |
+| `firstmate/captain-startup-models.tsv` | ordered Pi/FirstMate Captain startup model candidates | read by `bin/fm`, never installed as Pi's global default |
 | `roles/*/ROLE.md` | generic role definitions quoted into worker briefs | read by the captain |
 | `skills/*/SKILL.md` | our own global skills | symlinked into `~/.agents/skills/` |
 | `skills/external.lock` | external skill packs, pinned by commit | cloned to a machine-local cache, symlinked into `~/.agents/skills/` |
@@ -51,6 +52,19 @@ Verify an installation at any time:
 tests/smoke.sh          # launcher, install state, skills, herdr
 tests/smoke.sh --live   # the same, plus a captain that is currently running
 ```
+
+## Captain startup model
+
+`bin/fm` reads `firstmate/captain-startup-models.tsv` and passes the selected
+candidate to Pi with `--model` and `--thinking` only for the FirstMate Captain
+process it starts.
+It does not write Pi's standalone default and it does not affect worker routing.
+
+Fallback is availability-only: a candidate is skipped for missing auth,
+unavailable model/provider, reliably reported quota exhaustion, or unsupported
+configured effort.
+The launcher prints the preferred candidate, selected candidate, and fallback
+reason when it did not use the preferred candidate.
 
 ## Routing in v0.1
 

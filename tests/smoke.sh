@@ -57,11 +57,14 @@ for origin in "$plain" "$repo" "$FIRSTMATE_ROOT"; do
   check "[$label] launcher selects the herdr backend" herdr "$(field "$out" FM_BACKEND)"
   check "[$label] Pi runs in the checkout so AGENTS.md loads" "$FIRSTMATE_ROOT" "$(field "$out" PI_CWD)"
   check "[$label] the invoking directory is carried through" "$origin" "$(field "$out" FM_FORK_ORIGIN_CWD)"
+  check "[$label] captain startup selects the configured preferred model" 'openai-codex/gpt-5.6-sol' "$(field "$out" SELECTED_MODEL)"
+  check "[$label] captain startup keeps configured preferred effort" high "$(field "$out" SELECTED_EFFORT)"
   case "$(field "$out" COMMAND)" in
-    *fm-primary-turnend-guard.ts*fm-primary-pi-watch.ts*)
-      pass "[$label] both Pi primary extensions are named explicitly" ;;
-    pi) pass "[$label] extensions come from Pi's own discovery (checkout is trusted)" ;;
-    *) fail "[$label] neither explicit -e nor trusted discovery: $(field "$out" COMMAND)" ;;
+    *'--model openai-codex/gpt-5.6-sol --thinking high'*fm-primary-turnend-guard.ts*fm-primary-pi-watch.ts*)
+      pass "[$label] model flags and both Pi primary extensions are named explicitly" ;;
+    *'--model openai-codex/gpt-5.6-sol --thinking high')
+      pass "[$label] model flags are present and extensions come from Pi's own discovery (checkout is trusted)" ;;
+    *) fail "[$label] command is missing model flags, explicit -e, or trusted discovery: $(field "$out" COMMAND)" ;;
   esac
 done
 
@@ -88,6 +91,11 @@ if [ -f "$FM_HOME/data/captain.md" ]; then
   pass 'the captain file exists in the home'
 else
   fail 'the captain file is missing from the home'
+fi
+if [ -f "$CONFIG_ROOT/firstmate/captain-startup-models.tsv" ]; then
+  pass 'the captain startup model chain is tracked in firstmate-config'
+else
+  fail 'the captain startup model chain is missing'
 fi
 if [ -z "$(cd "$FIRSTMATE_ROOT" && git status --porcelain)" ]; then
   pass 'the official checkout has no modifications'

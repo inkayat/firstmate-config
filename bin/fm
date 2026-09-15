@@ -11,7 +11,7 @@
 # everything else follows. If lifecycle logic ever appears in this file,
 # delete it.
 #
-# It resolves four things:
+# It resolves five things:
 #
 #   FIRSTMATE_ROOT  the official checkout, never modified. From
 #                   ~/.config/firstmate-config/env, else the environment,
@@ -22,6 +22,8 @@
 #                   state can land in tracked source.
 #   FM_BACKEND      herdr, which is first in upstream's backend precedence
 #                   (FM_BACKEND, then config/backend, then autodetect).
+#   model chain     firstmate/captain-startup-models.tsv, applied only to this
+#                   Pi/FirstMate captain launch with availability-only fallback.
 #   extensions      .pi/extensions/fm-primary-pi-watch.ts and
 #                   .pi/extensions/fm-primary-turnend-guard.ts. Pi
 #                   auto-discovers both from its working directory once the
@@ -65,9 +67,65 @@ ORIGIN_CWD=$PWD
 
 WATCH_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
 TURNEND_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
+MODEL_CHAIN="$CONFIG_ROOT/firstmate/captain-startup-models.tsv"
+SELECTED_MODEL=
+SELECTED_EFFORT=
+PREFERRED_MODEL=
+PREFERRED_EFFORT=
+FALLBACK_REASON=
 
 die() { printf 'fm: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,/^set -u$/p' "$self" | sed -e 's/^# \{0,1\}//' -e '/^set -u$/d'; }
+
+model_provider() { printf '%s' "${1%%/*}"; }
+model_name() { printf '%s' "${1#*/}"; }
+
+effort_supported_by_model() { # <model> <effort>
+  local model=$1 effort=$2 out thinking
+  case $effort in off|minimal|low|medium|high|xhigh|max) ;; *) return 1 ;; esac
+  [ "$effort" != off ] || return 0
+  out=$("$PI_BIN" --list-models "$model" 2>/dev/null) || return 1
+  thinking=$(printf '%s\n' "$out" | awk -v p="$(model_provider "$model")" -v m="$(model_name "$model")" '$1 == p && $2 == m {print $5; exit}')
+  [ "$thinking" = yes ]
+}
+
+model_available_reason() { # <model> <effort> ; prints reason when unavailable
+  local model=$1 effort=$2 out status reason
+  out=$("$PI_BIN" --list-models "$model" 2>/dev/null) || { printf 'model/provider unavailable'; return 1; }
+  if ! printf '%s\n' "$out" | awk -v p="$(model_provider "$model")" -v m="$(model_name "$model")" '$1 == p && $2 == m {found=1} END {exit found ? 0 : 1}'; then
+    printf 'model/provider unavailable'
+    return 1
+  fi
+  if ! effort_supported_by_model "$model" "$effort"; then
+    printf 'unsupported configured effort %s' "$effort"
+    return 1
+  fi
+  out=$("$PI_BIN" auth check --model "$model" --json --no-refresh 2>&1) || true
+  status=$(printf '%s' "$out" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+  [ "$status" = ready ] && return 0
+  reason=$(printf '%s' "$out" | sed -n 's/.*"reason"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+  [ -n "$reason" ] || reason=${status:-authentication unavailable}
+  printf '%s' "$reason"
+  return 1
+}
+
+resolve_model_chain() {
+  local model effort reason reasons=()
+  [ -f "$MODEL_CHAIN" ] || die "missing captain startup model chain: $MODEL_CHAIN"
+  while IFS="$(printf '\t')" read -r model effort _rest || [ -n "${model:-}" ]; do
+    case ${model:-} in ''|\#*) continue ;; esac
+    [ -n "${PREFERRED_MODEL:-}" ] || { PREFERRED_MODEL=$model; PREFERRED_EFFORT=$effort; }
+    reason=$(model_available_reason "$model" "$effort")
+    if [ -z "$reason" ]; then
+      SELECTED_MODEL=$model
+      SELECTED_EFFORT=$effort
+      break
+    fi
+    reasons+=("$model $effort: $reason")
+  done < "$MODEL_CHAIN"
+  [ -n "$SELECTED_MODEL" ] || die "no configured captain startup model is available ($(IFS='; '; printf '%s' "${reasons[*]}"))"
+  [ "$SELECTED_MODEL" = "$PREFERRED_MODEL" ] || FALLBACK_REASON=$(IFS='; '; printf '%s' "${reasons[*]}")
+}
 
 # Harness identity markers leak from whatever shell launched us and upstream's
 # detection reads them, so a captain started from inside another agent's pane
@@ -98,6 +156,7 @@ preflight() {
   [ -f "$WATCH_EXT" ] || die "missing Pi primary watcher extension: $WATCH_EXT"
   [ -f "$TURNEND_EXT" ] || die "missing Pi primary turn-end guard: $TURNEND_EXT"
   command -v "$PI_BIN" >/dev/null 2>&1 || die "Pi executable '$PI_BIN' is not on PATH"
+  [ -f "$MODEL_CHAIN" ] || die "missing captain startup model chain: $MODEL_CHAIN"
   [ "$FM_BACKEND" != herdr ] || command -v herdr >/dev/null 2>&1 \
     || die "backend is herdr but the herdr CLI is not on PATH"
   # A home carrying the secondmate marker belongs to a child home; adopting it
@@ -117,6 +176,11 @@ print_resolution() {
   printf 'PI_CWD=%s\n' "$FIRSTMATE_ROOT"
   printf 'PI_BIN=%s\n' "$PI_BIN"
   printf 'PI_EXTENSIONS=%s\n' "$1"
+  printf 'PREFERRED_MODEL=%s\n' "$PREFERRED_MODEL"
+  printf 'PREFERRED_EFFORT=%s\n' "$PREFERRED_EFFORT"
+  printf 'SELECTED_MODEL=%s\n' "$SELECTED_MODEL"
+  printf 'SELECTED_EFFORT=%s\n' "$SELECTED_EFFORT"
+  [ -z "$FALLBACK_REASON" ] || printf 'FALLBACK_REASON=%s\n' "$FALLBACK_REASON"
   printf 'SCRUBBED_ENV=%s\n' "${SCRUB[*]}"
 }
 
@@ -125,6 +189,7 @@ case ${1:-} in
   --check)
     preflight
     mode=$(resolve_extension_mode) || exit 1
+    resolve_model_chain
     print_resolution "$mode"
     printf 'PREFLIGHT=ok\n'
     exit 0
@@ -132,11 +197,12 @@ case ${1:-} in
   --print-command)
     preflight
     mode=$(resolve_extension_mode) || exit 1
+    resolve_model_chain
     print_resolution "$mode"
     if [ "$mode" = explicit ]; then
-      printf 'COMMAND=%s -e %s -e %s\n' "$PI_BIN" "$TURNEND_EXT" "$WATCH_EXT"
+      printf 'COMMAND=%s --model %s --thinking %s -e %s -e %s\n' "$PI_BIN" "$SELECTED_MODEL" "$SELECTED_EFFORT" "$TURNEND_EXT" "$WATCH_EXT"
     else
-      printf 'COMMAND=%s\n' "$PI_BIN"
+      printf 'COMMAND=%s --model %s --thinking %s\n' "$PI_BIN" "$SELECTED_MODEL" "$SELECTED_EFFORT"
     fi
     exit 0
     ;;
@@ -146,6 +212,11 @@ esac
 
 preflight
 mode=$(resolve_extension_mode) || exit 1
+resolve_model_chain
+
+printf 'FirstMate Captain model preference: %s (%s)\n' "$PREFERRED_MODEL" "$PREFERRED_EFFORT"
+printf 'FirstMate Captain model selected: %s (%s)\n' "$SELECTED_MODEL" "$SELECTED_EFFORT"
+[ -z "$FALLBACK_REASON" ] || printf 'FirstMate Captain fallback: %s\n' "$FALLBACK_REASON"
 
 cd "$FIRSTMATE_ROOT" || die "cannot enter $FIRSTMATE_ROOT"
 
@@ -169,9 +240,14 @@ export FM_CONFIG_ROOT="$CONFIG_ROOT"
   printf 'origin_cwd=%s\n' "$ORIGIN_CWD"
   printf 'pi_cwd=%s\n' "$FIRSTMATE_ROOT"
   printf 'pi_extensions=%s\n' "$mode"
+  printf 'preferred_model=%s\n' "$PREFERRED_MODEL"
+  printf 'preferred_effort=%s\n' "$PREFERRED_EFFORT"
+  printf 'selected_model=%s\n' "$SELECTED_MODEL"
+  printf 'selected_effort=%s\n' "$SELECTED_EFFORT"
+  [ -z "$FALLBACK_REASON" ] || printf 'fallback_reason=%s\n' "$FALLBACK_REASON"
 } > "$FM_HOME/state/.fm-launch" 2>/dev/null || true
 
-set -- "$PI_BIN"
+set -- "$PI_BIN" --model "$SELECTED_MODEL" --thinking "$SELECTED_EFFORT"
 [ "$mode" != explicit ] || set -- "$@" -e "$TURNEND_EXT" -e "$WATCH_EXT"
 
 exec env "${SCRUB_ENV[@]}" "$@"
