@@ -73,27 +73,36 @@ installs, repairs, or restarts anything, never modifies `FM_HOME` or a
 project, never touches routing or auth, and never makes a paid or live model
 inference call - every availability probe it runs is the same cheap,
 non-billable kind `bin/fm` already uses at startup (`pi auth check`, `pi
---list-models`, `pi list`, `claude auth status`, `herdr status --json`), from
-the one authoritative path both share: `firstmate/fm-captain-lib.sh`.
+--list-models`, `pi list`, `claude auth status`, `herdr status --json`, `omp
+models --json`), from the one authoritative Captain path both `bin/fm` and
+`bin/fm-doctor` share: `firstmate/fm-captain-lib.sh`.
 
 It reports, in order: SYSTEM (this repository's and the official checkout's
-path/version/commit/dirty state, OS, cwd, current Git project root),
-LAUNCHER/PATH (every `fm` discoverable on `PATH` and precedence against the
-one this repository installs), CAPTAIN (the configured startup model chain's
-per-candidate availability, selection, and fallback reason), RUNTIME (Herdr
-installation, client/server health and protocol compatibility, fleet lock,
-watcher, wake queue, and in-flight task count - read-only, via upstream's own
-`fm-lock.sh status` and `fm-supervision-lib.sh` when available, `UNKNOWN`
+path/version/commit/dirty state, `FM_HOME`, OS, cwd, current Git project
+root), LAUNCHER/PATH (every `fm` discoverable on `PATH`, precedence against
+the one this repository installs, and the executable a plain `fm` currently
+resolves to), CAPTAIN (the configured startup model chain's per-candidate
+availability, selection, and fallback reason), RUNTIME (Herdr installation,
+client/server health and protocol compatibility, fleet lock, watcher,
+heartbeat, wake queue, and in-flight task count - read-only, via upstream's
+own `fm-lock.sh status` and `fm-supervision-lib.sh` when available, `UNKNOWN`
 otherwise), HARNESSES (Pi/omp installation, version, primary extensions, and
-readable config), ROUTING (`crew-dispatch.json` structural validity, cheap
-per-lane model availability, and Fable/Qwen's intentionally `DEFERRED`
-status), ROLES and SKILLS (readable role files; global skill installation
-count, missing entries, broken links, unreadable `SKILL.md`), and PROJECTS
-(registered names from FirstMate's own `data/projects.md` via
-`fm-project-mode.sh`, the confident current project when the working
-directory matches a registered name, and - for that project only - presence,
-never contents, of `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md`, and
-project-local skill directories).
+readable config), ROUTING (`crew-dispatch.json` structural validity via real
+JSON parsing - `jq`, then `python3`, then a dependency-free string-aware awk
+fallback, whichever is actually on the machine - and cheap per-lane model
+availability discovered through each lane's own harness catalog: `pi
+--list-models` for a `pi` lane, `omp models --json` for an `omp` lane, never
+one harness's detector standing in for the other's, plus Fable/Qwen's
+intentionally `DEFERRED` status), ROLES and SKILLS (readable role files;
+global skill installation count, missing entries, broken links, unreadable
+`SKILL.md`), and PROJECTS (registered names from FirstMate's own
+`data/projects.md` via `fm-project-mode.sh`, the confident current project
+when the working directory is that project's own registered clone under
+`$FM_HOME/projects` - matched by real canonical path, never by directory
+basename, so an unrelated checkout that happens to share a project's
+directory name is never misidentified - and, for that project only,
+presence, never contents, of `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md`,
+and project-local skill directories).
 
 Every finding uses exactly one of: `PASS`, `WARNING`, `FAIL`, `DEFERRED`,
 `BLOCKED_AUTH`, `BLOCKED_QUOTA`, `NOT_APPLICABLE`, `UNKNOWN`. A blocked status
@@ -115,12 +124,18 @@ worst individual check status found anywhere, which can differ from
 while `exit_code` stays `0`.
 
 **JSON schema** (`--json`, `schema_version: 1`): a single object with
-`schema_version`, `status`, `exit_code`, `timestamp`, `system`, `firstmate`
-(this repository and the official checkout), `launcher`, `captain`,
-`runtime`, `harnesses`, `routing`, `roles`, `skills`, `projects`, and
-`checks` - an array of `{id, status, summary, detail?}` rows, one per finding
-named above. The schema stays valid JSON without `jq` or any optional tool;
-`fm-doctor` never depends on one to run or to render its own output.
+`schema_version`, `status`, `exit_code`, `timestamp`, `system` (including
+`fm_home`), `firstmate` (this repository and the official checkout, each with
+its own `commit`), `launcher` (including `resolved`, the executable a plain
+`fm` currently resolves to), `captain`, `runtime` (including a `heartbeat`
+object distinct from `watcher`), `harnesses`, `routing` (including
+`parse_method`, whichever crew-dispatch JSON parser tier actually ran),
+`roles`, `skills`, `projects`, and `checks` - an array of
+`{id, status, summary, detail?}` rows, one per finding named above. Rendering
+this schema never depends on `jq`, `python3`, or any optional tool. Parsing
+`crew-dispatch.json` itself prefers `jq`, then `python3`, then a
+dependency-free awk fallback - whichever is actually installed - never a
+hard requirement.
 
 ## Captain startup model
 

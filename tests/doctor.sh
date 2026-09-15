@@ -10,6 +10,12 @@
 # crew-dispatch) need a deliberately broken configuration and use a disposable
 # copy of bin/fm-doctor under a fake CONFIG_ROOT so the real repository is
 # never touched.
+#
+# The hermetic PATH used by run_doctor deliberately omits jq and python3, so
+# every scenario below exercises fm-doctor's dependency-free awk crew-dispatch
+# parser by default; scenario 12 adds a real jq to the PATH (only when one is
+# actually installed on the machine running these tests) to prove the jq tier
+# too.
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,14 +28,27 @@ check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected '$2', got 
 contains() { case $2 in *"$3"*) pass "$1" ;; *) fail "$1 (missing '$3' in '$2')" ;; esac; }
 not_contains() { case $2 in *"$3"*) fail "$1 (unexpectedly found '$3' in '$2')" ;; *) pass "$1" ;; esac; }
 
-# Zero-dependency JSON brace/bracket balance check (no jq requirement, mirrors
-# bin/fm-doctor's own crew-dispatch validator).
+# Zero-dependency JSON brace/bracket balance check: the last-resort tier when
+# neither jq nor python3 is on the test runner's own PATH.
 json_balanced() {
   printf '%s' "$1" | awk '
     BEGIN { d = 0 }
     { for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); if (c == "{" || c == "[") d++; if (c == "}" || c == "]") d-- } }
     END { exit (d == 0) ? 0 : 1 }
   '
+}
+
+# Real JSON parsing of fm-doctor's own --json output, on whatever parser this
+# test runner actually has (independent of run_doctor's hermetic child PATH,
+# which deliberately has neither): jq, then python3, then the balance check.
+json_parse_ok() { # <json>
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$1" | jq -e . >/dev/null 2>&1
+  elif command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$1" | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null 2>&1
+  else
+    json_balanced "$1"
+  fi
 }
 
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-doctor-test.XXXXXX") || exit 1
@@ -118,9 +137,35 @@ exit 0
 SH
 chmod +x "$FAKE_BIN/herdr"
 
+# omp's own model catalog, independent of pi's: `models <provider> --json`,
+# filtered by FM_TEST_OMP_AVAILABLE (falls back to FM_TEST_AVAILABLE so most
+# scenarios need not set it separately). Lets scenario 13 prove routing checks
+# an omp lane's model through omp, never through pi's fake.
 cat > "$FAKE_BIN/omp" <<'SH'
 #!/usr/bin/env bash
-[ "${1:-}" != --version ] || printf 'omp/9.9.9-fake\n'
+available=",${FM_TEST_OMP_AVAILABLE-${FM_TEST_AVAILABLE-openai-codex/gpt-5.6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra}},"
+if [ "${1:-}" = --version ]; then
+  printf 'omp/9.9.9-fake\n'
+  exit 0
+fi
+if [ "${1:-}" = models ]; then
+  provider=${2:-}
+  json='{"models":['
+  first=1
+  IFS=',' read -ra entries <<< "${available#,}"
+  for entry in "${entries[@]}"; do
+    [ -n "$entry" ] || continue
+    p=${entry%%/*}
+    id=${entry#*/}
+    [ "$p" = "$provider" ] || continue
+    [ "$first" -eq 1 ] || json="$json,"
+    json="$json{\"provider\":\"$p\",\"id\":\"$id\"}"
+    first=0
+  done
+  json="$json]}"
+  printf '%s\n' "$json"
+  exit 0
+fi
 exit 0
 SH
 chmod +x "$FAKE_BIN/omp"
@@ -200,7 +245,10 @@ HEALTHY_AVAILABLE="openai-codex/gpt-5.6-sol,pi-claude-code-provider/sonnet,opena
 # needs, never a whole real bin directory. On macOS, /usr/bin itself ships a
 # real `fm` (Apple's Foundation Models CLI, a genuine real-world PATH
 # collision), so the ambient PATH and even a whole system directory are both
-# unsafe defaults for a deterministic fixture.
+# unsafe defaults for a deterministic fixture. jq and python3 are
+# deliberately excluded, so every scenario below exercises fm-doctor's
+# dependency-free awk crew-dispatch parser unless a scenario opts a real jq
+# back in.
 SYS_BIN="$TMP_ROOT/sysbin"
 mkdir -p "$SYS_BIN"
 for _tool in bash git uname sed awk grep wc date find stat readlink basename dirname tr head cat mkdir env; do
@@ -218,6 +266,7 @@ run_doctor() { # [extra args to fm-doctor]
     FM_CONFIG_ENV="$TMP_ROOT/no-such-env-file" \
     FM_SKILLS_ROOT="${RUN_SKILLS_ROOT:-${RUN_HOME:-$FAKE_HOME}/.agents/skills}" \
     FM_TEST_AVAILABLE="${FM_TEST_AVAILABLE-$HEALTHY_AVAILABLE}" \
+    FM_TEST_OMP_AVAILABLE="${FM_TEST_OMP_AVAILABLE-$HEALTHY_AVAILABLE}" \
     FM_TEST_SONNET_INSTALLED="${FM_TEST_SONNET_INSTALLED:-yes}" \
     FM_TEST_SONNET_AUTH="${FM_TEST_SONNET_AUTH:-ready}" \
     FM_TEST_HERDR_RUNNING="${FM_TEST_HERDR_RUNNING:-true}" \
@@ -234,6 +283,8 @@ contains 'healthy: overall status is PASS' "$out" 'DOCTOR PASS exit=0'
 contains 'healthy: launcher resolves ours first' "$out" "PASS          launcher.resolution"
 contains 'healthy: captain selects the preferred candidate' "$out" 'selected preferred candidate openai-codex/gpt-5.6-sol'
 contains 'healthy: herdr server reported running' "$out" 'PASS          runtime.herdr_server'
+contains 'healthy: FM_HOME is explicitly reported' "$out" "FM_HOME=$FAKE_FM_HOME"
+contains 'healthy: an explicit heartbeat check is reported' "$out" 'runtime.heartbeat'
 contains 'healthy: roles all readable' "$out" 'PASS          roles.tenth-man'
 contains 'healthy: skills fully installed' "$out" 'PASS          skills.global_installation'
 contains 'healthy: Fable/Qwen reported DEFERRED, not FAIL' "$out" 'DEFERRED      routing.fable_qwen_deferred'
@@ -292,6 +343,7 @@ out=$(run_doctor); code=$?
 unset RUN_FM_HOME
 if [ "$code" -eq 0 ]; then fail "invalid crew-dispatch: expected nonzero exit, got 0"; else pass 'invalid crew-dispatch: exit code is nonzero'; fi
 contains 'invalid crew-dispatch: routing check reports FAIL' "$out" 'FAIL          routing.crew_dispatch_valid'
+contains 'invalid crew-dispatch: parsed via the dependency-free tier' "$out" 'parsed via awk'
 contains 'invalid crew-dispatch: other mandatory checks stay healthy' "$out" 'PASS          captain.selection'
 
 # =============================================================================
@@ -361,6 +413,21 @@ not_contains "multi-project: B's AGENTS.md content never leaks into A's run" "$o
 not_contains "multi-project: B's own AGENTS.md content never leaks" "$out_b" 'AGENTS-B-SECRET-MARKER'
 not_contains "multi-project: A's AGENTS.md content never leaks into B's run" "$out_b" 'AGENTS-A-SECRET-MARKER'
 
+# An unrelated checkout that merely shares a registered project's directory
+# name, but is not that project's own clone under $FM_HOME/projects, must
+# never be identified as the confident current project - the basename-match
+# misidentification bin/fm-doctor's project resolution used to have.
+IMPOSTOR_DIR="$TMP_ROOT/elsewhere/project-a"
+mkdir -p "$IMPOSTOR_DIR"
+( cd "$IMPOSTOR_DIR" && git init -q && printf 'not the real project A\n' > README.md \
+  && git add -A && git -c user.email=t@example.invalid -c user.name=t commit -qm init )
+RUN_FM_HOME=$MP_FM_HOME RUN_CWD=$IMPOSTOR_DIR
+out_impostor=$(run_doctor); code_impostor=$?
+unset RUN_FM_HOME RUN_CWD
+check 'impostor checkout: exit code stays 0' 0 "$code_impostor"
+contains 'impostor checkout: no confident current project, despite the matching directory name' "$out_impostor" 'no confident current project'
+not_contains 'impostor checkout: never misidentified as the registered project-a' "$out_impostor" 'confident current project: project-a'
+
 RUN_FM_HOME=$MP_FM_HOME RUN_CWD=$proj_a
 json_a=$(run_doctor --json)
 unset RUN_FM_HOME RUN_CWD
@@ -372,13 +439,63 @@ not_contains 'multi-project JSON: never carries file contents' "$json_a" 'AGENTS
 # 9. Valid, documented JSON schema
 # =============================================================================
 json=$(run_doctor --json)
-if json_balanced "$json"; then pass 'JSON: braces/brackets are balanced'; else fail 'JSON: unbalanced braces/brackets'; fi
+if json_parse_ok "$json"; then pass 'JSON: parses with a real JSON parser'; else fail 'JSON: failed to parse'; fi
 for key in schema_version status exit_code timestamp system firstmate launcher captain runtime harnesses routing roles skills projects checks; do
   contains "JSON: top-level key '$key' present" "$json" "\"$key\":"
 done
 contains 'JSON: status is PASS for the healthy fixture' "$json" '"status":"PASS"'
 contains 'JSON: exit_code is 0 for the healthy fixture' "$json" '"exit_code":0'
 contains 'JSON: a check row carries id/status/summary' "$json" '"id":"launcher.resolution","status":"PASS"'
+contains 'JSON: system carries fm_home' "$json" "\"fm_home\":\"$FAKE_FM_HOME\""
+contains 'JSON: launcher exposes the executable currently resolved from PATH' "$json" "\"resolved\":\"$LAUNCHER_OK/fm\""
+contains 'JSON: an empty PATH competitor array serializes as []' "$json" '"competing_before":[],"competing_after":[]'
+not_contains 'JSON: an empty PATH competitor array never serializes as [""]' "$json" '"competing_after":[""]'
+contains 'JSON: runtime carries an explicit heartbeat object' "$json" '"heartbeat":{'
+
+# =============================================================================
+# 10. Herdr protocol incompatibility -> mandatory FAIL, nonzero exit
+# =============================================================================
+FM_TEST_HERDR_COMPATIBLE=false
+out=$(run_doctor); code=$?
+json_incompatible=$(FM_TEST_HERDR_COMPATIBLE=false run_doctor --json)
+unset FM_TEST_HERDR_COMPATIBLE
+if [ "$code" -eq 0 ]; then fail "herdr incompatible: expected nonzero exit, got 0"; else pass 'herdr incompatible: exit code is nonzero'; fi
+contains 'herdr incompatible: server check reports FAIL' "$out" 'FAIL          runtime.herdr_server'
+contains 'herdr incompatible: overall exit is reported nonzero' "$out" 'exit=1'
+contains 'herdr incompatible: other mandatory checks stay healthy' "$out" 'PASS          captain.selection'
+contains 'herdr incompatible JSON: runtime.herdr.compatible is false' "$json_incompatible" '"compatible":false'
+
+# =============================================================================
+# 11. crew-dispatch parsed via the jq tier, when jq is actually installed
+# =============================================================================
+SYS_JQ=$(command -v jq 2>/dev/null || printf '')
+if [ -n "$SYS_JQ" ]; then
+  JQ_BIN="$TMP_ROOT/jqbin"
+  mkdir -p "$JQ_BIN"
+  ln -s "$SYS_JQ" "$JQ_BIN/jq"
+  RUN_PATH="$LAUNCHER_OK:$FAKE_BIN:$JQ_BIN:$SYS_PATH"
+  out=$(run_doctor); code=$?
+  unset RUN_PATH
+  check 'jq tier: exit code is 0' 0 "$code"
+  contains 'jq tier: crew-dispatch reports it was parsed via jq' "$out" 'parsed via jq'
+  contains 'jq tier: the real crew-dispatch.json has 9 lanes' "$out" '9 lane(s)'
+else
+  pass 'jq tier: skipped (no jq installed on the test runner)'
+fi
+
+# =============================================================================
+# 12. Routing model discovery is scoped to each lane's own harness
+# =============================================================================
+# openai-codex/gpt-6-astra is configured on both a pi lane and an omp lane in
+# the real crew-dispatch.json. Make it available in pi's fake catalog but
+# absent from omp's, so a doctor that still used the Captain's Pi detector for
+# every lane would wrongly report the omp lane available too.
+FM_TEST_OMP_AVAILABLE='anthropic/claude-sonnet-5,anthropic/claude-opus-5'
+out=$(run_doctor); code=$?
+unset FM_TEST_OMP_AVAILABLE
+check 'harness-scoped routing: exit code stays 0 (non-mandatory)' 0 "$code"
+contains 'harness-scoped routing: the pi lane is checked through pi and is available' "$out" 'PASS          routing.model.pi.openai-codex/gpt-6-astra'
+contains 'harness-scoped routing: the omp lane for the same model is checked independently through omp and is unavailable' "$out" 'FAIL          routing.model.omp.openai-codex/gpt-6-astra'
 
 printf '\nDOCTOR TESTS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]

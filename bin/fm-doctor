@@ -6,8 +6,9 @@
 # projects, or the official FirstMate checkout. Never makes a paid/live model
 # inference call. Every probe here is the same cheap, non-billable kind bin/fm
 # already uses at startup (pi auth check, pi --list-models, pi list, claude
-# auth status, herdr status --json) - see firstmate/fm-captain-lib.sh, the one
-# authoritative Captain availability path shared with bin/fm.
+# auth status, herdr status --json, omp models --json) - see
+# firstmate/fm-captain-lib.sh, the one authoritative Captain availability path
+# shared with bin/fm.
 #
 # Usage:
 #   fm doctor             human-readable report
@@ -45,6 +46,12 @@ CONFIG_ROOT="$(cd "$(dirname "$self")/.." && pwd)"
 
 FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
 FM_HOME="${FM_HOME:-$HOME/.firstmate}"
+# Exported so every upstream helper this script shells out to (fm-project-mode.sh,
+# fm-lock.sh, fm-supervision-lib.sh) resolves the same home from its own
+# environment-variable interface, regardless of whether the caller (a bare
+# `fm-doctor` invocation, `fm doctor` before it exports anything, or a test
+# fixture) already exported it.
+export FM_HOME
 FM_BACKEND="${FM_BACKEND:-herdr}"
 PI_BIN="${FM_PI_BIN:-pi}"
 SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
@@ -85,6 +92,17 @@ json_esc() {
 
 jstr() { printf '"%s"' "$(json_esc "${1:-}")"; }
 
+# jtri <true|false|""> -> a JSON true/false/null literal. Used for facts that
+# are genuinely unknown (an unavailable upstream helper), never coerced to
+# false, so a consumer can tell "no" apart from "couldn't tell".
+jtri() {
+  case ${1:-} in
+    true) printf true ;;
+    false) printf false ;;
+    *) printf null ;;
+  esac
+}
+
 json_array() { # <elements...> -> a JSON array of strings
   local out='[' first=1 e
   for e in "$@"; do
@@ -109,6 +127,13 @@ canon_path() {
   dir=$(cd "$(dirname "$p")" 2>/dev/null && pwd) || { printf '%s' "$p"; return; }
   base=$(basename "$p")
   printf '%s/%s' "$dir" "$base"
+}
+
+# Canonical absolute path of an existing directory, or empty when it does not
+# exist. Used to match a project by where it actually lives, never by its
+# directory's bare name (two unrelated checkouts can share a basename).
+real_dir() {
+  ( cd "$1" 2>/dev/null && pwd -P )
 }
 
 # Portable mtime; Linux stat lacks -f, macOS stat lacks -c (mirrors
@@ -154,6 +179,7 @@ OS_ARCH=$(uname -m 2>/dev/null || printf unknown)
 GIT_PROJECT_ROOT=$(git -C "$ORIGIN_CWD" rev-parse --show-toplevel 2>/dev/null || printf '')
 
 add_check system.platform PASS "$OS_NAME/$OS_ARCH" ""
+add_check system.fm_home PASS "FM_HOME=$FM_HOME" "$FM_HOME"
 if [ -n "$GIT_PROJECT_ROOT" ]; then
   add_check system.git_project PASS "cwd is inside a Git project" "$GIT_PROJECT_ROOT"
 else
@@ -161,8 +187,9 @@ else
 fi
 
 CONFIG_VERSION=$(git -C "$CONFIG_ROOT" describe --tags --always --dirty 2>/dev/null || printf unknown)
+CONFIG_COMMIT=$(git -C "$CONFIG_ROOT" rev-parse --short HEAD 2>/dev/null || printf unknown)
 CONFIG_DIRTY=$(git_dirty_count "$CONFIG_ROOT")
-add_check firstmate.config PASS "firstmate-config at $CONFIG_VERSION ($CONFIG_DIRTY modification(s))" "$CONFIG_ROOT"
+add_check firstmate.config PASS "firstmate-config at $CONFIG_VERSION (commit $CONFIG_COMMIT, $CONFIG_DIRTY modification(s))" "$CONFIG_ROOT"
 
 FIRSTMATE_BROKEN=0
 if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
@@ -180,10 +207,10 @@ else
   add_check firstmate.official FAIL "no AGENTS.md under $FIRSTMATE_ROOT; official FirstMate checkout is missing or broken" "$FIRSTMATE_ROOT"
 fi
 
-J_SYSTEM=$(printf '{"os":%s,"arch":%s,"cwd":%s,"git_project_root":%s}' \
-  "$(jstr "$OS_NAME")" "$(jstr "$OS_ARCH")" "$(jstr "$ORIGIN_CWD")" "$(jstr "$GIT_PROJECT_ROOT")")
-J_FIRSTMATE=$(printf '{"config":{"path":%s,"version":%s,"dirty":%s},"official":{"path":%s,"commit":%s,"dirty":%s}}' \
-  "$(jstr "$CONFIG_ROOT")" "$(jstr "$CONFIG_VERSION")" "$(jstr "$CONFIG_DIRTY")" \
+J_SYSTEM=$(printf '{"os":%s,"arch":%s,"cwd":%s,"git_project_root":%s,"fm_home":%s}' \
+  "$(jstr "$OS_NAME")" "$(jstr "$OS_ARCH")" "$(jstr "$ORIGIN_CWD")" "$(jstr "$GIT_PROJECT_ROOT")" "$(jstr "$FM_HOME")")
+J_FIRSTMATE=$(printf '{"config":{"path":%s,"version":%s,"commit":%s,"dirty":%s},"official":{"path":%s,"commit":%s,"dirty":%s}}' \
+  "$(jstr "$CONFIG_ROOT")" "$(jstr "$CONFIG_VERSION")" "$(jstr "$CONFIG_COMMIT")" "$(jstr "$CONFIG_DIRTY")" \
   "$(jstr "$FIRSTMATE_ROOT")" "$(jstr "$FIRSTMATE_COMMIT")" "$(jstr "$FIRSTMATE_DIRTY")")
 
 # =============================================================================
@@ -192,6 +219,10 @@ J_FIRSTMATE=$(printf '{"config":{"path":%s,"version":%s,"dirty":%s},"official":{
 
 LAUNCHER_SHADOWED=0
 EXPECTED_FM=$(canon_path "$CONFIG_ROOT/bin/fm")
+# The executable a plain `fm` invocation would resolve right now. A read-only
+# PATH lookup (never executes the target), reported alongside the manual scan
+# below so the JSON carries the one fact a user actually hits at the shell.
+RESOLVED_FM=$(command -v fm 2>/dev/null || printf '')
 FOUND_OURS=0
 OTHER_BEFORE=()
 OTHER_AFTER=()
@@ -229,9 +260,9 @@ else
   add_check launcher.resolution PASS "firstmate-config's fm ($EXPECTED_FM) resolves first on PATH" "$LAUNCHER_DETAIL"
 fi
 
-J_LAUNCHER=$(printf '{"expected":%s,"resolves_first":%s,"found":%s,"competing_before":%s,"competing_after":%s}' \
-  "$(jstr "$EXPECTED_FM")" "$([ "$FOUND_OURS" -eq 1 ] && printf true || printf false)" \
-  "$(json_array "${ALL_FOUND[@]:-}")" "$(json_array "${OTHER_BEFORE[@]:-}")" "$(json_array "${OTHER_AFTER[@]:-}")")
+J_LAUNCHER=$(printf '{"expected":%s,"resolved":%s,"resolves_first":%s,"found":%s,"competing_before":%s,"competing_after":%s}' \
+  "$(jstr "$EXPECTED_FM")" "$(jstr "$RESOLVED_FM")" "$([ "$FOUND_OURS" -eq 1 ] && printf true || printf false)" \
+  "$(json_array "${ALL_FOUND[@]}")" "$(json_array "${OTHER_BEFORE[@]}")" "$(json_array "${OTHER_AFTER[@]}")")
 
 # =============================================================================
 # CAPTAIN
@@ -303,21 +334,28 @@ J_CAPTAIN=$(printf '{"extensions_present":%s,"selected_model":%s,"selected_effor
 # =============================================================================
 
 HERDR_BROKEN=0
+HERDR_INCOMPATIBLE=0
+HERDR_CLI_PRESENT=false
+HERDR_RUNNING=
+HERDR_COMPATIBLE=
+HERDR_SERVER_VERSION=
+HERDR_CLIENT_VERSION=
 if ! command -v herdr >/dev/null 2>&1; then
   HERDR_BROKEN=1
   add_check runtime.herdr_cli FAIL "backend is $FM_BACKEND but the herdr CLI is not on PATH" ""
-  HERDR_STATUS_JSON='{}'
 else
+  HERDR_CLI_PRESENT=true
   add_check runtime.herdr_cli PASS "herdr CLI present" "$(command -v herdr)"
   HERDR_STATUS_JSON=$(herdr status --json 2>/dev/null || printf '{}')
-  server_running=$(json_bool_field "$HERDR_STATUS_JSON" running)
-  server_compatible=$(json_bool_field "$HERDR_STATUS_JSON" compatible)
-  server_version=$(json_string_field "$HERDR_STATUS_JSON" version)
-  client_version=$(printf '%s' "$HERDR_STATUS_JSON" | tr '\n' ' ' | sed -n 's/.*"client":{[^}]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-  if [ "$server_compatible" = false ]; then
+  HERDR_RUNNING=$(json_bool_field "$HERDR_STATUS_JSON" running)
+  HERDR_COMPATIBLE=$(json_bool_field "$HERDR_STATUS_JSON" compatible)
+  HERDR_SERVER_VERSION=$(json_string_field "$HERDR_STATUS_JSON" version)
+  HERDR_CLIENT_VERSION=$(printf '%s' "$HERDR_STATUS_JSON" | tr '\n' ' ' | sed -n 's/.*"client":{[^}]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  if [ "$HERDR_COMPATIBLE" = false ]; then
+    HERDR_INCOMPATIBLE=1
     add_check runtime.herdr_server FAIL "herdr client/server protocol reported incompatible" "$HERDR_STATUS_JSON"
-  elif [ "$server_running" = true ]; then
-    add_check runtime.herdr_server PASS "herdr server running (version ${server_version:-unknown}, client ${client_version:-unknown})" ""
+  elif [ "$HERDR_RUNNING" = true ]; then
+    add_check runtime.herdr_server PASS "herdr server running (version ${HERDR_SERVER_VERSION:-unknown}, client ${HERDR_CLIENT_VERSION:-unknown})" ""
   else
     add_check runtime.herdr_server WARNING "herdr server is not running" ""
   fi
@@ -325,20 +363,50 @@ fi
 
 STATE_DIR="$FM_HOME/state"
 
+LOCK_STATUS="lock: free"
+LOCK_KNOWN=true
 if [ -d "$STATE_DIR" ] && [ -x "$FIRSTMATE_ROOT/bin/fm-lock.sh" ]; then
   lock_out=$("$FIRSTMATE_ROOT/bin/fm-lock.sh" status 2>&1 | tail -1)
+  LOCK_STATUS=$lock_out
   add_check runtime.fleet_lock PASS "$lock_out" ""
 elif [ ! -d "$STATE_DIR" ] || [ ! -f "$STATE_DIR/.lock" ]; then
   add_check runtime.fleet_lock PASS "lock: free" ""
 else
+  LOCK_STATUS="lock file present; holder liveness unverified"
+  LOCK_KNOWN=false
   add_check runtime.fleet_lock UNKNOWN "lock file present; FirstMate's fm-lock.sh unavailable to verify holder liveness" ""
 fi
 
 SUP_LIB="$FIRSTMATE_ROOT/bin/fm-supervision-lib.sh"
+WATCHER_NEEDED=
+WATCHER_FRESH=
+HEARTBEAT_PRESENT=
+HEARTBEAT_DESC=unknown
+WAKE_PENDING=
+IN_FLIGHT=0
 if [ -f "$SUP_LIB" ]; then
   # shellcheck source=/dev/null
   . "$SUP_LIB"
   fm_supervision_status "$STATE_DIR" "${FM_GUARD_GRACE:-300}"
+  WATCHER_NEEDED=$FM_SUP_NEEDED
+  WATCHER_FRESH=$FM_SUP_WATCHER_FRESH
+  HEARTBEAT_DESC=$FM_SUP_BEACON_DESC
+  WAKE_PENDING=$FM_SUP_QUEUE_PENDING
+  IN_FLIGHT=$FM_SUP_IN_FLIGHT
+  # Heartbeat is an unconditional fact about the beacon file itself, distinct
+  # from the watcher verdict below (which is conditioned on whether
+  # supervision is currently needed at all).
+  if [ "$FM_SUP_BEACON_DESC" = never ]; then
+    HEARTBEAT_PRESENT=false
+    add_check runtime.heartbeat NOT_APPLICABLE "no watcher heartbeat has ever been recorded" ""
+  else
+    HEARTBEAT_PRESENT=true
+    if [ "$FM_SUP_WATCHER_FRESH" = true ]; then
+      add_check runtime.heartbeat PASS "heartbeat fresh ($FM_SUP_BEACON_DESC)" ""
+    else
+      add_check runtime.heartbeat WARNING "heartbeat stale ($FM_SUP_BEACON_DESC)" ""
+    fi
+  fi
   if [ "$FM_SUP_NEEDED" != true ]; then
     add_check runtime.watcher NOT_APPLICABLE "no in-flight work, source, or check; no watcher required" "beacon: $FM_SUP_BEACON_DESC"
   elif [ "$FM_SUP_WATCHER_FRESH" = true ]; then
@@ -353,12 +421,19 @@ if [ -f "$SUP_LIB" ]; then
   fi
   add_check runtime.task_metadata PASS "$FM_SUP_IN_FLIGHT in-flight task record(s)" "staleness is FirstMate's own lifecycle concern; not independently classified here"
 else
+  add_check runtime.heartbeat UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
   add_check runtime.watcher UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
   add_check runtime.wake_queue UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
   add_check runtime.task_metadata UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
 fi
 
-J_RUNTIME="$HERDR_STATUS_JSON"
+J_RUNTIME=$(printf '{"herdr":{"cli_present":%s,"running":%s,"compatible":%s,"server_version":%s,"client_version":%s},"lock":{"status":%s,"known":%s},"watcher":{"needed":%s,"fresh":%s},"heartbeat":{"present":%s,"fresh":%s,"description":%s},"wake_queue":{"pending":%s},"task_metadata":{"in_flight":%s}}' \
+  "$HERDR_CLI_PRESENT" "$(jtri "$HERDR_RUNNING")" "$(jtri "$HERDR_COMPATIBLE")" "$(jstr "$HERDR_SERVER_VERSION")" "$(jstr "$HERDR_CLIENT_VERSION")" \
+  "$(jstr "$LOCK_STATUS")" "$LOCK_KNOWN" \
+  "$(jtri "$WATCHER_NEEDED")" "$(jtri "$WATCHER_FRESH")" \
+  "$(jtri "$HEARTBEAT_PRESENT")" "$(jtri "$WATCHER_FRESH")" "$(jstr "$HEARTBEAT_DESC")" \
+  "$(jtri "$WAKE_PENDING")" \
+  "$IN_FLIGHT")
 
 # =============================================================================
 # HARNESSES
@@ -415,70 +490,237 @@ J_HARNESSES=$(printf '{"pi":{"installed":%s,"version":%s},"omp":{"installed":%s,
 # ROUTING
 # =============================================================================
 
+# omp_model_availability <model> ; prints STATE<TAB>reason. A cheap,
+# non-billable catalog lookup (`omp models <provider> --json`), the omp
+# equivalent of fm-captain-lib.sh's `pi --list-models` catalog check - never
+# the Pi-specific detector, which knows nothing about omp's own providers.
+omp_model_availability() {
+  local model=$1 provider name out
+  provider=$(model_provider "$model")
+  name=$(model_name "$model")
+  command -v omp >/dev/null 2>&1 || { printf 'UNKNOWN\tomp executable not on PATH'; return; }
+  out=$(omp models "$provider" --json 2>/dev/null) || { printf 'UNKNOWN\tomp models catalog unavailable'; return; }
+  if printf '%s' "$out" | grep -qF "\"id\":\"$name\""; then
+    printf 'AVAILABLE\t'
+  else
+    printf 'UNAVAILABLE\tmodel not in omp %s catalog' "$provider"
+  fi
+}
+
+# crew_dispatch_validate <file> - real JSON parsing, tiered by whichever
+# parser is actually on this machine, never a new required dependency:
+#   1. jq, if present (already an accepted optional tool elsewhere in this
+#      repository - bin/fm's Pi trust check, tests/smoke.sh's herdr check).
+#   2. python3, if present (ships with Xcode CLT on macOS and with virtually
+#      every Linux distribution, including Omarchy).
+#   3. a dependency-free awk fallback: unlike naive brace/bracket counting,
+#      it is string- and escape-aware (braces inside a JSON string value no
+#      longer corrupt the depth count) and scopes the "rules"/"default" key
+#      check to the outermost object depth (a nested lane whose "when" text
+#      happens to contain the word "rules" no longer false-passes it).
+# Sets CD_BAD (empty when valid), CD_METHOD (which tier ran), and parallel
+# arrays CD_HARNESSES/CD_MODELS/CD_EFFORTS, one entry per lane object that
+# carries all three fields together (so, unlike independent field scans, a
+# harness/model/effort triple can never drift out of alignment).
+crew_dispatch_validate() {
+  local file=$1
+  CD_BAD=
+  CD_HARNESSES=()
+  CD_MODELS=()
+  CD_EFFORTS=()
+  if command -v jq >/dev/null 2>&1; then
+    CD_METHOD="jq"
+    crew_dispatch_validate_jq "$file"
+  elif command -v python3 >/dev/null 2>&1; then
+    CD_METHOD="python3"
+    crew_dispatch_validate_python3 "$file"
+  else
+    CD_METHOD="awk"
+    crew_dispatch_validate_awk "$file"
+  fi
+}
+
+crew_dispatch_validate_jq() {
+  local file=$1 err out kind h m e
+  if ! err=$(jq -e . "$file" 2>&1 >/dev/null); then
+    CD_BAD="malformed JSON ($(printf '%s' "$err" | head -1))"
+    return
+  fi
+  out=$(jq -r '
+    if (type!="object") or (has("rules")|not) or (has("default")|not) then
+      "BAD"
+    else
+      "OK"
+    end,
+    ( [.. | objects | select(has("harness") and has("model") and has("effort"))][] | "LANE\t\(.harness)\t\(.model)\t\(.effort)" )
+  ' "$file" 2>/dev/null)
+  if [ -z "$out" ]; then
+    CD_BAD="jq produced no output"
+    return
+  fi
+  while IFS="$(printf '\t')" read -r kind h m e; do
+    case $kind in
+      BAD) CD_BAD="missing required 'rules' or 'default' key" ;;
+      LANE) CD_HARNESSES+=("$h"); CD_MODELS+=("$m"); CD_EFFORTS+=("$e") ;;
+    esac
+  done <<EOF
+$out
+EOF
+}
+
+crew_dispatch_validate_python3() {
+  local file=$1 out kind h m e
+  if ! out=$(python3 - "$file" <<'PY' 2>&1
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        doc = json.load(f)
+except Exception as exc:
+    print("BAD\t" + str(exc).replace("\t", " ").replace("\n", " "))
+    sys.exit(0)
+if not isinstance(doc, dict) or "rules" not in doc or "default" not in doc:
+    print("BAD\tmissing required 'rules' or 'default' key")
+    sys.exit(0)
+print("OK")
+
+
+def walk(node):
+    if isinstance(node, dict):
+        if all(k in node for k in ("harness", "model", "effort")):
+            print("LANE\t%s\t%s\t%s" % (node["harness"], node["model"], node["effort"]))
+        for v in node.values():
+            walk(v)
+    elif isinstance(node, list):
+        for v in node:
+            walk(v)
+
+
+walk(doc)
+PY
+  ); then
+    CD_BAD="python3 JSON parser failed"
+    return
+  fi
+  while IFS="$(printf '\t')" read -r kind h m e; do
+    case $kind in
+      BAD) CD_BAD=${h:-malformed JSON} ;;
+      LANE) CD_HARNESSES+=("$h"); CD_MODELS+=("$m"); CD_EFFORTS+=("$e") ;;
+    esac
+  done <<EOF
+$out
+EOF
+}
+
+crew_dispatch_validate_awk() {
+  local file=$1 result
+  result=$(awk '
+    BEGIN { depth = 0; instr = 0; esc = 0; bad = 0; rules = 0; deflt = 0; keybuf = "" }
+    {
+      line = $0
+      n = length(line)
+      for (i = 1; i <= n; i++) {
+        c = substr(line, i, 1)
+        if (instr) {
+          if (esc) { esc = 0; keybuf = keybuf c }
+          else if (c == "\\") { esc = 1 }
+          else if (c == "\"") {
+            instr = 0
+            if (depth == 1) {
+              if (keybuf == "rules") rules = 1
+              if (keybuf == "default") deflt = 1
+            }
+            keybuf = ""
+          }
+          else { keybuf = keybuf c }
+        } else {
+          if (c == "\"") { instr = 1; keybuf = "" }
+          else if (c == "{" || c == "[") depth++
+          else if (c == "}" || c == "]") { depth--; if (depth < 0) bad = 1 }
+        }
+      }
+    }
+    END {
+      if (bad || depth != 0 || instr) { print "BAD\tmalformed JSON (unbalanced braces/brackets)"; exit }
+      if (!(rules && deflt)) { print "BAD\tmissing required '"'"'rules'"'"' or '"'"'default'"'"' key"; exit }
+      print "OK"
+    }
+  ' "$file")
+  case $result in
+    BAD*) CD_BAD=${result#BAD$'\t'} ;;
+    OK)
+      local harnesses=() models=() efforts=()
+      while IFS= read -r v; do [ -z "$v" ] || harnesses+=("$v"); done < <(sed -n 's/.*"harness"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$file")
+      while IFS= read -r v; do [ -z "$v" ] || models+=("$v"); done < <(sed -n 's/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$file")
+      while IFS= read -r v; do [ -z "$v" ] || efforts+=("$v"); done < <(sed -n 's/.*"effort"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$file")
+      if [ "${#harnesses[@]}" -ne "${#models[@]}" ] || [ "${#models[@]}" -ne "${#efforts[@]}" ]; then
+        CD_BAD="structurally inconsistent lane entries (harness/model/effort counts differ; install jq or python3 for exact per-lane parsing)"
+      else
+        CD_HARNESSES=("${harnesses[@]}")
+        CD_MODELS=("${models[@]}")
+        CD_EFFORTS=("${efforts[@]}")
+      fi
+      ;;
+  esac
+}
+
 CREW_DISPATCH="$FM_HOME/config/crew-dispatch.json"
 [ -f "$CREW_DISPATCH" ] || CREW_DISPATCH="$CONFIG_ROOT/firstmate/crew-dispatch.json"
 
 CREW_DISPATCH_INVALID=0
+ROUTING_HARNESSES=()
 ROUTING_MODELS=()
 ROUTING_EFFORTS=()
+CD_METHOD="none"
 if [ ! -r "$CREW_DISPATCH" ]; then
   CREW_DISPATCH_INVALID=1
   add_check routing.crew_dispatch_valid FAIL "crew-dispatch.json missing or unreadable" "$CREW_DISPATCH"
 else
-  balanced=$(awk '
-    BEGIN { d = 0 }
-    { for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); if (c == "{" || c == "[") d++; if (c == "}" || c == "]") d-- } }
-    END { print (d == 0) ? "yes" : "no" }
-  ' "$CREW_DISPATCH")
-  harnesses_found=()
-  efforts_found=()
-  while IFS= read -r v; do [ -z "$v" ] || harnesses_found+=("$v"); done < <(sed -n 's/.*"harness"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CREW_DISPATCH")
-  while IFS= read -r v; do [ -z "$v" ] || ROUTING_MODELS+=("$v"); done < <(sed -n 's/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CREW_DISPATCH")
-  while IFS= read -r v; do [ -z "$v" ] || efforts_found+=("$v"); done < <(sed -n 's/.*"effort"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CREW_DISPATCH")
-  ROUTING_EFFORTS=("${efforts_found[@]:-}")
-  bad=
-  if [ "$balanced" != yes ]; then
-    bad="malformed JSON (unbalanced braces/brackets)"
-  elif ! grep -q '"rules"' "$CREW_DISPATCH" || ! grep -q '"default"' "$CREW_DISPATCH"; then
-    bad="missing required 'rules' or 'default' key"
-  elif [ "${#harnesses_found[@]}" -ne "${#ROUTING_MODELS[@]}" ] || [ "${#ROUTING_MODELS[@]}" -ne "${#efforts_found[@]}" ]; then
-    bad="structurally inconsistent lane entries (harness/model/effort counts differ)"
-  else
-    for h in "${harnesses_found[@]}"; do
+  crew_dispatch_validate "$CREW_DISPATCH"
+  bad=$CD_BAD
+  if [ -z "$bad" ]; then
+    for h in "${CD_HARNESSES[@]}"; do
       case $h in pi|omp) ;; *) bad="invalid harness '$h'"; break ;; esac
     done
-    if [ -z "$bad" ]; then
-      for e in "${efforts_found[@]}"; do
-        case $e in off|minimal|low|medium|high|xhigh|max) ;; *) bad="invalid effort '$e'"; break ;; esac
-      done
-    fi
+  fi
+  if [ -z "$bad" ]; then
+    for e in "${CD_EFFORTS[@]}"; do
+      case $e in off|minimal|low|medium|high|xhigh|max) ;; *) bad="invalid effort '$e'"; break ;; esac
+    done
   fi
   if [ -n "$bad" ]; then
     CREW_DISPATCH_INVALID=1
-    add_check routing.crew_dispatch_valid FAIL "$bad" "$CREW_DISPATCH"
+    add_check routing.crew_dispatch_valid FAIL "$bad" "$CREW_DISPATCH (parsed via $CD_METHOD)"
   else
-    add_check routing.crew_dispatch_valid PASS "${#ROUTING_MODELS[@]} lane(s), structurally valid" "$CREW_DISPATCH"
+    ROUTING_HARNESSES=("${CD_HARNESSES[@]}")
+    ROUTING_MODELS=("${CD_MODELS[@]}")
+    ROUTING_EFFORTS=("${CD_EFFORTS[@]}")
+    add_check routing.crew_dispatch_valid PASS "${#ROUTING_MODELS[@]} lane(s), structurally valid" "$CREW_DISPATCH (parsed via $CD_METHOD)"
   fi
 fi
 
-seen_models=""
+seen=""
 for i in "${!ROUTING_MODELS[@]}"; do
   m=${ROUTING_MODELS[$i]}
   e=${ROUTING_EFFORTS[$i]:-medium}
-  case ",$seen_models," in *",$m,"*) continue ;; esac
-  seen_models="$seen_models,$m"
-  result=$(model_availability "$m" "$e")
+  h=${ROUTING_HARNESSES[$i]:-pi}
+  key="$h/$m"
+  case ",$seen," in *",$key,"*) continue ;; esac
+  seen="$seen,$key"
+  case $h in
+    omp) result=$(omp_model_availability "$m") ;;
+    *) result=$(model_availability "$m" "$e") ;;
+  esac
   state=${result%%$'\t'*}
   reason=${result#*$'\t'}
   case $state in
-    AVAILABLE) add_check "routing.model.$m" PASS "$m: available" "$reason" ;;
-    UNKNOWN) add_check "routing.model.$m" WARNING "$m: availability unknown" "$reason" ;;
-    *) add_check "routing.model.$m" FAIL "$m: unavailable" "$reason" ;;
+    AVAILABLE) add_check "routing.model.$h.$m" PASS "$h/$m: available" "$reason" ;;
+    UNKNOWN) add_check "routing.model.$h.$m" WARNING "$h/$m: availability unknown" "$reason" ;;
+    *) add_check "routing.model.$h.$m" FAIL "$h/$m: unavailable" "$reason" ;;
   esac
 done
 
 fable_qwen_found=0
-for m in "${ROUTING_MODELS[@]:-}"; do
+for m in "${ROUTING_MODELS[@]}"; do
   case $m in *fable*|*qwen*|*ollama*) fable_qwen_found=1; break ;; esac
 done
 if [ "$fable_qwen_found" -eq 1 ]; then
@@ -487,8 +729,8 @@ else
   add_check routing.fable_qwen_deferred DEFERRED "Fable and Qwen/Ollama are intentionally absent from configured crew-dispatch.json lanes; deferred to a later release" ""
 fi
 
-J_ROUTING=$(printf '{"crew_dispatch_path":%s,"valid":%s,"lane_count":%s}' \
-  "$(jstr "$CREW_DISPATCH")" "$([ "$CREW_DISPATCH_INVALID" -eq 0 ] && printf true || printf false)" "${#ROUTING_MODELS[@]}")
+J_ROUTING=$(printf '{"crew_dispatch_path":%s,"valid":%s,"lane_count":%s,"parse_method":%s}' \
+  "$(jstr "$CREW_DISPATCH")" "$([ "$CREW_DISPATCH_INVALID" -eq 0 ] && printf true || printf false)" "${#ROUTING_MODELS[@]}" "$(jstr "$CD_METHOD")")
 
 # =============================================================================
 # ROLES
@@ -525,7 +767,7 @@ SKILL_MISSING=()
 SKILL_BROKEN=()
 SKILL_UNREADABLE=()
 SKILL_INSTALLED=0
-for name in "${SKILL_EXPECTED[@]:-}"; do
+for name in "${SKILL_EXPECTED[@]}"; do
   [ -n "$name" ] || continue
   target="$SKILLS_ROOT/$name"
   if [ ! -e "$target" ] && [ ! -L "$target" ]; then
@@ -547,7 +789,7 @@ fi
 
 J_SKILLS=$(printf '{"root":%s,"expected":%s,"installed":%s,"missing":%s,"broken_links":%s,"unreadable":%s}' \
   "$(jstr "$SKILLS_ROOT")" "${#SKILL_EXPECTED[@]}" "$SKILL_INSTALLED" \
-  "$(json_array "${SKILL_MISSING[@]:-}")" "$(json_array "${SKILL_BROKEN[@]:-}")" "$(json_array "${SKILL_UNREADABLE[@]:-}")")
+  "$(json_array "${SKILL_MISSING[@]}")" "$(json_array "${SKILL_BROKEN[@]}")" "$(json_array "${SKILL_UNREADABLE[@]}")")
 
 # =============================================================================
 # PROJECTS
@@ -561,7 +803,7 @@ fi
 
 J_PROJECTS_LIST='['
 first_proj=1
-for name in "${REG_NAMES[@]:-}"; do
+for name in "${REG_NAMES[@]}"; do
   [ -n "$name" ] || continue
   posture=$("$FIRSTMATE_ROOT/bin/fm-project-mode.sh" --raw "$name" 2>/dev/null || printf 'UNKNOWN UNKNOWN')
   pmode=${posture%% *}
@@ -586,11 +828,21 @@ else
   add_check projects.registry PASS "${#REG_NAMES[@]} registered project(s)" "$(IFS=', '; printf '%s' "${REG_NAMES[*]}")"
 fi
 
+# Confident current project: cwd must actually BE the registered clone
+# ($FM_HOME/projects/<name>), resolved and compared as real canonical paths -
+# never a bare basename match, which would misidentify any unrelated
+# checkout, worktree, or clone that merely happens to share a directory name
+# with a registered project (for example, a disposable task worktree of this
+# very repository, whose basename is "firstmate-config").
 CURRENT_PROJECT=
-if [ -n "$GIT_PROJECT_ROOT" ]; then
-  cand_name=$(basename "$GIT_PROJECT_ROOT")
-  for name in "${REG_NAMES[@]:-}"; do
-    if [ "$name" = "$cand_name" ]; then CURRENT_PROJECT=$name; break; fi
+GIT_PROJECT_REAL=$(real_dir "${GIT_PROJECT_ROOT:-/nonexistent}")
+if [ -n "$GIT_PROJECT_REAL" ]; then
+  for name in "${REG_NAMES[@]}"; do
+    cand_real=$(real_dir "$FM_HOME/projects/$name")
+    if [ -n "$cand_real" ] && [ "$cand_real" = "$GIT_PROJECT_REAL" ]; then
+      CURRENT_PROJECT=$name
+      break
+    fi
   done
 fi
 
@@ -611,7 +863,7 @@ if [ -n "$CURRENT_PROJECT" ]; then
   J_PROJECTS_CURRENT=$(printf '{"name":%s,"path":%s,"agents_override_present":%s,"agents_md_present":%s,"claude_md_present":%s,"project_local_skill_dirs":{"claude":%s,"agents":%s,"agent":%s}}' \
     "$(jstr "$CURRENT_PROJECT")" "$(jstr "$proot")" "$has_override" "$has_agents" "$has_claude" "$c_claude" "$c_agents" "$c_agent")
 else
-  add_check projects.current NOT_APPLICABLE "no confident current project (cwd is not a registered project)" ""
+  add_check projects.current NOT_APPLICABLE "no confident current project (cwd is not a registered project's own clone)" ""
 fi
 
 J_PROJECTS=$(printf '{"registered":%s,"current":%s}' "$J_PROJECTS_LIST" "$J_PROJECTS_CURRENT")
@@ -625,6 +877,7 @@ MANDATORY_FAIL=0
 [ "$CREW_DISPATCH_INVALID" -eq 0 ] || MANDATORY_FAIL=1
 [ "$NO_USABLE_CAPTAIN" -eq 0 ] || MANDATORY_FAIL=1
 [ "$HERDR_BROKEN" -eq 0 ] || MANDATORY_FAIL=1
+[ "$HERDR_INCOMPATIBLE" -eq 0 ] || MANDATORY_FAIL=1
 [ "$LAUNCHER_SHADOWED" -eq 0 ] || MANDATORY_FAIL=1
 
 WORST_RANK=0
