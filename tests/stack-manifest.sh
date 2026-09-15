@@ -90,6 +90,47 @@ printf 'schema_version\t1\nfirstmate_repo\thttps://example.invalid/x.git\n' > "$
 stack_manifest_load "$MALFORMED" && fail 'manifest_load: a manifest missing required keys must not report success' || pass 'manifest_load: a manifest missing required keys reports failure'
 contains 'manifest_load: malformed-file error names a missing key' "$SM_LOAD_ERROR" 'PI_MIN'
 
+# --- value validation: schema pin, commit format, numeric versions, min<=
+#     tested, duplicate required keys, and unknown keys never overwriting a
+#     known field. mkmanifest below writes a complete, otherwise-valid
+#     manifest so each scenario below corrupts exactly one thing.
+VALID_COMMIT=$(printf 'a%.0s' {1..40})
+mkmanifest() { # <path> <schema> <repo> <commit> <pi_min> <pi_tested> <omp_min> <omp_tested> <herdr_min> <herdr_tested>
+  local _out=$1
+  printf 'schema_version\t%s\nfirstmate_repo\t%s\nfirstmate_validated_commit\t%s\npi_min_version\t%s\npi_tested_version\t%s\nomp_min_version\t%s\nomp_tested_version\t%s\nherdr_min_version\t%s\nherdr_tested_version\t%s\n' \
+    "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" > "$_out"
+}
+
+UNSUPPORTED_SCHEMA="$TMP_ROOT/unsupported-schema.tsv"
+mkmanifest "$UNSUPPORTED_SCHEMA" 99 https://example.invalid/x.git "$VALID_COMMIT" 0.85.1 0.85.1 18.1.21 18.1.21 0.8.0 0.8.0
+stack_manifest_load "$UNSUPPORTED_SCHEMA" && fail 'manifest_load: an unsupported schema_version must not report success' || pass 'manifest_load: an unsupported schema_version reports failure'
+contains 'manifest_load: unsupported schema_version error names the field' "$SM_LOAD_ERROR" 'schema_version'
+
+BAD_COMMIT="$TMP_ROOT/bad-commit.tsv"
+mkmanifest "$BAD_COMMIT" 1 https://example.invalid/x.git deadbeef 0.85.1 0.85.1 18.1.21 18.1.21 0.8.0 0.8.0
+stack_manifest_load "$BAD_COMMIT" && fail 'manifest_load: a non-40-hex firstmate_validated_commit must not report success' || pass 'manifest_load: a non-40-hex firstmate_validated_commit reports failure'
+contains 'manifest_load: bad-commit error names the field' "$SM_LOAD_ERROR" 'firstmate_validated_commit'
+
+BAD_VERSION="$TMP_ROOT/bad-version.tsv"
+mkmanifest "$BAD_VERSION" 1 https://example.invalid/x.git "$VALID_COMMIT" latest 0.85.1 18.1.21 18.1.21 0.8.0 0.8.0
+stack_manifest_load "$BAD_VERSION" && fail 'manifest_load: a non-numeric tool version must not report success' || pass 'manifest_load: a non-numeric tool version reports failure'
+contains 'manifest_load: non-numeric version error names the field' "$SM_LOAD_ERROR" 'pi_min_version'
+
+BAD_RANGE="$TMP_ROOT/bad-range.tsv"
+mkmanifest "$BAD_RANGE" 1 https://example.invalid/x.git "$VALID_COMMIT" 9.9.9 0.1.0 18.1.21 18.1.21 0.8.0 0.8.0
+stack_manifest_load "$BAD_RANGE" && fail 'manifest_load: pi_min_version greater than pi_tested_version must not report success' || pass 'manifest_load: pi_min_version greater than pi_tested_version reports failure'
+contains 'manifest_load: min>tested error names the field' "$SM_LOAD_ERROR" 'pi_min_version'
+
+DUP_KEY="$TMP_ROOT/dup-key.tsv"
+printf 'schema_version\t1\nschema_version\t1\nfirstmate_repo\thttps://example.invalid/x.git\nfirstmate_validated_commit\t%s\npi_min_version\t0.85.1\npi_tested_version\t0.85.1\nomp_min_version\t18.1.21\nomp_tested_version\t18.1.21\nherdr_min_version\t0.8.0\nherdr_tested_version\t0.8.0\n' "$VALID_COMMIT" > "$DUP_KEY"
+stack_manifest_load "$DUP_KEY" && fail 'manifest_load: a duplicate required key must not report success' || pass 'manifest_load: a duplicate required key reports failure'
+contains 'manifest_load: duplicate-key error names the key' "$SM_LOAD_ERROR" 'duplicate'
+
+EXTRA_KEY="$TMP_ROOT/extra-key.tsv"
+printf 'schema_version\t1\nfirstmate_repo\thttps://example.invalid/x.git\nfirstmate_validated_commit\t%s\npi_min_version\t0.85.1\npi_tested_version\t0.85.1\nomp_min_version\t18.1.21\nomp_tested_version\t18.1.21\nherdr_min_version\t0.8.0\nherdr_tested_version\t0.8.0\nfuture_unknown_key\tsome-value\n' "$VALID_COMMIT" > "$EXTRA_KEY"
+stack_manifest_load "$EXTRA_KEY" && pass 'manifest_load: an unknown future key is ignored, load still succeeds' || fail "manifest_load: an unknown future key incorrectly broke load: $SM_LOAD_ERROR"
+check 'manifest_load: unknown key never overwrites a known field (pi_min_version)' 0.85.1 "$SM_PI_MIN"
+
 # stack_commit_relation: a small synthetic Git graph exercising every outcome.
 REL_REPO="$TMP_ROOT/rel-repo"
 mkdir -p "$REL_REPO"
@@ -256,6 +297,18 @@ run_fake_doctor() {
   FM_TEST_HERDR_VERSION="${FM_TEST_HERDR_VERSION:-0.8.0}" \
   "$DOC_CFG/bin/fm-doctor"
 }
+
+# --- B0: a missing or invalid mandatory manifest is a genuine mandatory
+#         FAIL (nonzero exit), never silently advisory -------------------
+rm -f "$DOC_CFG/firstmate/stack-manifest.tsv"
+out=$(run_fake_doctor); code=$?
+if [ "$code" -eq 0 ]; then fail 'B0a missing manifest: expected nonzero exit (mandatory), got 0'; else pass 'B0a missing manifest: exit code is nonzero (mandatory)'; fi
+contains 'B0a missing manifest: reports FAIL' "$out" 'FAIL          stack.manifest'
+
+printf 'schema_version\t1\nfirstmate_repo\thttps://example.invalid/x.git\n' > "$DOC_CFG/firstmate/stack-manifest.tsv"
+out=$(run_fake_doctor); code=$?
+if [ "$code" -eq 0 ]; then fail 'B0b malformed manifest (missing required keys): expected nonzero exit (mandatory), got 0'; else pass 'B0b malformed manifest (missing required keys): exit code is nonzero (mandatory)'; fi
+contains 'B0b malformed manifest: reports FAIL' "$out" 'FAIL          stack.manifest'
 
 # --- B1: exact validated stack -> every stack check PASSes, DOCTOR PASS ----
 write_doc_manifest "$DOC_C2"

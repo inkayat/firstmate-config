@@ -9,10 +9,15 @@
 # Public interface:
 #   stack_manifest_load <path>
 #     Sets the SM_* globals below from a strict key<TAB>value manifest file.
-#     Returns 1 and sets SM_LOAD_ERROR on a missing file or a file missing
-#     any required key; every SM_* global is reset to empty first, so a
-#     failed load can never leave a stale value from a previous call.
-#
+#     Returns 1 and sets SM_LOAD_ERROR on: a missing file; a file missing any
+#     required key; a duplicate required key (the first occurrence wins the
+#     error, never a silent last-value overwrite); a schema_version other
+#     than the one this parser supports; a firstmate_validated_commit that
+#     is not a full 40-hex SHA; a min/tested tool version that is not plain
+#     numeric dotted form; or a min version greater than its own tested
+#     version. Every SM_* global is reset to empty first, so a failed load
+#     can never leave a stale value from a previous call. Unknown keys are
+#     ignored (forward-compatible) but can never overwrite a known field.
 #   stack_version_extract <raw>
 #     Prints the leading dot-separated numeric version (two or more integer
 #     components, e.g. "0.85.1") found anywhere in <raw>, or nothing when
@@ -62,8 +67,13 @@ SM_HERDR_MIN=
 SM_HERDR_TESTED=
 SM_LOAD_ERROR=
 
+# The schema_version this parser understands. Bump this only alongside a
+# parser change that actually reads a new/changed key; a tracked manifest
+# whose schema_version disagrees fails closed rather than being guessed at.
+SM_SUPPORTED_SCHEMA_VERSION=1
+
 stack_manifest_load() { # <path>
-  local file=$1 key value missing='' field
+  local file=$1 key value missing='' field seen=' ' name min tested
   SM_SCHEMA_VERSION=; SM_FIRSTMATE_REPO=; SM_FIRSTMATE_COMMIT=
   SM_PI_MIN=; SM_PI_TESTED=; SM_OMP_MIN=; SM_OMP_TESTED=
   SM_HERDR_MIN=; SM_HERDR_TESTED=; SM_LOAD_ERROR=
@@ -76,6 +86,17 @@ stack_manifest_load() { # <path>
   while IFS="$(printf '\t')" read -r key value || [ -n "${key:-}" ]; do
     case ${key:-} in
       ''|\#*) continue ;;
+      schema_version|firstmate_repo|firstmate_validated_commit|pi_min_version|pi_tested_version|omp_min_version|omp_tested_version|herdr_min_version|herdr_tested_version)
+        case $seen in
+          *" $key "*)
+            SM_LOAD_ERROR="manifest $file has duplicate key: $key"
+            return 1
+            ;;
+        esac
+        seen="$seen$key "
+        ;;
+    esac
+    case ${key:-} in
       schema_version) SM_SCHEMA_VERSION=$value ;;
       firstmate_repo) SM_FIRSTMATE_REPO=$value ;;
       firstmate_validated_commit) SM_FIRSTMATE_COMMIT=$value ;;
@@ -97,6 +118,34 @@ stack_manifest_load() { # <path>
     SM_LOAD_ERROR="manifest $file missing required key(s):$missing"
     return 1
   fi
+
+  if [ "$SM_SCHEMA_VERSION" != "$SM_SUPPORTED_SCHEMA_VERSION" ]; then
+    SM_LOAD_ERROR="manifest $file has unsupported schema_version '$SM_SCHEMA_VERSION' (this parser supports only $SM_SUPPORTED_SCHEMA_VERSION)"
+    return 1
+  fi
+
+  if ! [[ $SM_FIRSTMATE_COMMIT =~ ^[0-9A-Fa-f]{40}$ ]]; then
+    SM_LOAD_ERROR="manifest $file firstmate_validated_commit is not a full 40-hex SHA: $SM_FIRSTMATE_COMMIT"
+    return 1
+  fi
+
+  for field in "pi:$SM_PI_MIN:$SM_PI_TESTED" "omp:$SM_OMP_MIN:$SM_OMP_TESTED" "herdr:$SM_HERDR_MIN:$SM_HERDR_TESTED"; do
+    name=${field%%:*}; field=${field#*:}
+    min=${field%%:*}; tested=${field#*:}
+    if ! [[ $min =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+      SM_LOAD_ERROR="manifest $file ${name}_min_version is not plain numeric dotted form: $min"
+      return 1
+    fi
+    if ! [[ $tested =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+      SM_LOAD_ERROR="manifest $file ${name}_tested_version is not plain numeric dotted form: $tested"
+      return 1
+    fi
+    if [ "$(stack_version_compare "$min" "$tested")" = gt ]; then
+      SM_LOAD_ERROR="manifest $file ${name}_min_version ($min) is greater than ${name}_tested_version ($tested)"
+      return 1
+    fi
+  done
+
   return 0
 }
 

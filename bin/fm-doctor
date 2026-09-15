@@ -18,14 +18,19 @@
 # Exit codes:
 #   0   mandatory architecture is healthy, even with WARNING, DEFERRED, or
 #       optional BLOCKED_* candidates present
-#   1   a genuine mandatory break: missing/broken official FirstMate, invalid
-#       captain-startup-models.tsv or crew-dispatch.json, no usable Captain
-#       (missing Pi primary extensions, an empty model chain, or every
-#       configured model candidate UNAVAILABLE), a missing, explicitly
+#   1   a genuine mandatory break: missing/broken official FirstMate, a
+#       missing or invalid tracked stack manifest (unparseable, missing a
+#       required key, or failing the loader's own value validation),
+#       invalid captain-startup-models.tsv or crew-dispatch.json, no usable
+#       Captain (missing Pi primary extensions, an empty model chain, or
+#       every configured model candidate UNAVAILABLE), a missing, explicitly
 #       protocol-incompatible, or definitively stopped/unreachable required
 #       Herdr server (its own status query failing outright, or reporting
-#       running:false), or an expected `fm` shadowed on PATH by a different
-#       executable earlier in PATH.
+#       running:false), a mandatory component (Pi/OMP/Herdr) below the
+#       manifest's hard minimum, the official FirstMate checkout at a
+#       known-incompatible commit (behind the validated baseline or
+#       diverged from it), or an expected `fm` shadowed on PATH by a
+#       different executable earlier in PATH.
 # Every other finding (routing lane availability, roles, skills, harness
 # versions, project reporting) is reported but never changes the exit code.
 set -u
@@ -938,6 +943,11 @@ MANDATORY_FAIL=0
 [ "$HERDR_INCOMPATIBLE" -eq 0 ] || MANDATORY_FAIL=1
 [ "$HERDR_UNREACHABLE" -eq 0 ] || MANDATORY_FAIL=1
 [ "$LAUNCHER_SHADOWED" -eq 0 ] || MANDATORY_FAIL=1
+# The tracked stack manifest is mandatory configuration: install.sh and
+# every stack.* check below depend on it, so a missing or invalid manifest
+# (unparseable, missing a required key, or failing the loader's own value
+# validation) is a genuine architecture break, not merely advisory.
+[ "$STACK_MANIFEST_LOADED" -eq 0 ] || MANDATORY_FAIL=1
 # A mandatory component below its hard minimum, or the official FirstMate
 # checkout at a known-incompatible commit (behind the validated baseline, or
 # diverged from it), is a genuine architecture break - not merely advisory.
