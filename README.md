@@ -301,6 +301,8 @@ tests/worker-context.sh                                   # default: run the off
 tests/worker-context.sh prepare <directory>                # build a persistent fixture repo at <directory>/repo, print its path
 tests/worker-context.sh handoff <repo-dir>                  # print the compact, no-body Firstmate-spec handoff for that fixture
 tests/worker-context.sh validate <worker-report> [<worktree>]  # classify a real worker report/transcript; exit 0 only if every required proof passes
+tests/worker-context.sh internal-prepare <directory>        # write a disposable bounded-internal-delegation canary fixture INSIDE your own real task worktree (a native bounded subagent always shares the parent session's cwd), print the path
+tests/worker-context.sh internal-handoff <directory> <worktree>  # print the read-only task text for a real bounded internal subagent to run against that fixture
 ```
 
 `prepare` builds the fixture once; `handoff` prints the paths/precedence/
@@ -347,7 +349,12 @@ live `validate` path is extended to require positive evidence for this -
 the helper's identity, model/effort, purpose, read-only-versus-mutating
 behavior, project/worktree scope, and inherited-context evidence - recorded
 from the harness's own existing session metadata, never a new telemetry
-mechanism.
+mechanism. That evidence must be backed by a real, disposable canary
+fixture (`internal-prepare`/`internal-handoff`, since a native bounded
+subagent always shares its parent session's cwd - there is no separate
+workspace to plant a fixture in) that the real subagent actually reads:
+self-reported labels alone, with no matching canary content in the
+report, fail the check.
 
 ## Verification provenance
 

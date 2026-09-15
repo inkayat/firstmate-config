@@ -316,6 +316,93 @@ Task:
 EOF
 }
 
+# =============================================================================
+# Bounded-internal-delegation canary fixture: real, disposable canary files
+# placed INSIDE the caller's own real task worktree (never a synthetic
+# standalone repo), because a native bounded subagent (e.g. omp's task
+# tool, non-isolated) always inherits the parent SESSION's cwd - there is
+# no cwd/workspace parameter to spawn it elsewhere. That structural fact is
+# itself part of the "same worktree" proof: the canary must be reachable
+# from wherever the real subagent already stands, not planted in a
+# separate repo it was never given a way to reach.
+# =============================================================================
+C_ID_PROJECT_INSTRUCTION='INTERNAL_DELEGATION_PROJECT_INSTRUCTION_CANARY'
+C_ID_SKILL_NAME='internal-delegation-canary-skill'
+C_ID_SKILL_BODY='INTERNAL_DELEGATION_SKILL_BODY_CANARY'
+C_ID_TARGET_FILE='internal-delegation-canary-notes.md'
+
+# fixture_internal_delegation_prepare <dir> - <dir> MUST be a path inside
+# the real task worktree the caller is currently standing in (never a
+# separate disposable repo - see the header above for why). Writes a
+# canary project instruction, a canary project-local skill, and a target
+# file; never deleted by this function, the caller owns cleanup (this
+# fixture is scratch content and must never be committed).
+fixture_internal_delegation_prepare() {
+  local dir=$1
+  mkdir -p "$dir/.agents/skills/$C_ID_SKILL_NAME"
+  cat > "$dir/AGENTS.md" <<EOF
+Rule: $C_ID_PROJECT_INSTRUCTION applies to files in this directory.
+
+Required project-local skill:
+  .agents/skills/$C_ID_SKILL_NAME/SKILL.md
+Requirement:
+  Read this skill before reading or discussing $C_ID_TARGET_FILE.
+EOF
+  cat > "$dir/.agents/skills/$C_ID_SKILL_NAME/SKILL.md" <<EOF
+---
+name: $C_ID_SKILL_NAME
+description: Disposable canary skill for the bounded-internal-delegation acceptance fixture.
+---
+$C_ID_SKILL_BODY: read and apply this skill before reading or discussing
+$C_ID_TARGET_FILE.
+EOF
+  printf -- '-- disposable internal-delegation canary target, read-only\n' > "$dir/$C_ID_TARGET_FILE"
+}
+
+# fixture_internal_delegation_handoff <dir> <expected-worktree> - the exact,
+# read-only task text for a REAL bounded internal subagent. Never pastes a
+# skill/instruction body (only the canary paths); the subagent must
+# actually read them for the body markers to appear in its report.
+fixture_internal_delegation_handoff() {
+  local dir=$1 expected=$2
+  cat <<EOF
+You are a bounded, read-only, task-local helper spawned by your parent
+through its harness's own native mechanism. You share your parent's exact
+task/project/worktree - there is no separate workspace or cwd for you.
+Do NOT write, edit, or run any mutating command. Do NOT create a
+Firstmate task, switch project, or spawn any child agent of your own.
+
+Before anything else, run \`pwd -P\` and \`git rev-parse --show-toplevel\`
+yourself and report both raw outputs; they should equal $expected.
+
+Read $dir/AGENTS.md, resolved from your current worktree root, and follow
+what it says before reading $dir/$C_ID_TARGET_FILE.
+
+Check your own available tool list for anything task/agent/subagent-
+shaped; report whether one is present, and - regardless - do not use it.
+Check your harness's own skill catalog (never a filesystem scan) for an
+entry named captain-hold-lifecycle and report its count. Separately,
+report the first content line of one real, already-installed shared
+skill from your global skill root, naming which skill it is.
+
+Report exactly these labels, one per line, then declare you are finished:
+  INTERNAL_SUBAGENT_ID: <your own registry/session id>
+  INTERNAL_SUBAGENT_HARNESS: <harness name>
+  INTERNAL_SUBAGENT_MODEL: <model>
+  INTERNAL_SUBAGENT_EFFORT: <effort>
+  INTERNAL_SUBAGENT_PURPOSE: <why you were spawned, one line>
+  INTERNAL_SUBAGENT_MODE: read-only
+  INTERNAL_SUBAGENT_SAME_WORKTREE: true | false
+  INTERNAL_SUBAGENT_SAME_PROJECT: true | false
+  INTERNAL_SUBAGENT_FIRSTMATE_TASK_CREATED: none | <task id>
+  INTERNAL_SUBAGENT_CONTEXT_INHERITED: <what you inherited, one line>
+  INTERNAL_SUBAGENT_RECURSION_TOOL_SEEN: yes | no
+  INTERNAL_SUBAGENT_RECURSION_TOOL_USED: no
+  INTERNAL_SUBAGENT_OFFICIAL_INTERNAL_SKILL_COUNT: <n>
+  INTERNAL_SUBAGENT_SHARED_SKILL_EVIDENCE: <skill name>: <its first content line>
+EOF
+}
+
 # fixture_validate <transcript-file> - classifies each headline canary from
 # raw transcript/output text as absent, present (catalog only), or applied
 # (body-only marker present, i.e. actually read and used). Offline
@@ -491,10 +578,39 @@ fixture_validate_live() {
       else
         _req INTERNAL_SUBAGENT_IDENTITY_REPORTED 1
       fi
+
+      # Positive origin proof, not self-reported prose: both canary
+      # markers only ever appear in the disposable AGENTS.md/SKILL.md the
+      # fixture writes into the real task worktree, so their presence
+      # proves the subagent actually read that content from wherever it
+      # stands - never merely asserted "yes" in the labels above.
+      case $t in
+        *"$C_ID_PROJECT_INSTRUCTION"*"$C_ID_SKILL_BODY"*|*"$C_ID_SKILL_BODY"*"$C_ID_PROJECT_INSTRUCTION"*)
+          _req INTERNAL_SUBAGENT_CANARY_APPLIED 0 ;;
+        *) _req INTERNAL_SUBAGENT_CANARY_APPLIED 1 ;;
+      esac
+
+      # Bounded recursion: seeing a delegation-shaped tool is fine (the
+      # harness's own native depth gate governs that); actually using one
+      # is not - this task's acceptance scenario is exactly one bounded
+      # level, never a chain.
+      case $(_wc_field "$t" INTERNAL_SUBAGENT_RECURSION_TOOL_USED) in
+        no) _req INTERNAL_SUBAGENT_RECURSION_BOUNDED 0 ;;
+        *) _req INTERNAL_SUBAGENT_RECURSION_BOUNDED 1 ;;
+      esac
+
+      # Zero official-internal-skill leakage into the internal subagent's
+      # own catalog view - the same positive-count proof pattern as the
+      # outer worker's OFFICIAL_INTERNAL_SKILL_COUNT_ZERO check above.
+      case $(_wc_field "$t" INTERNAL_SUBAGENT_OFFICIAL_INTERNAL_SKILL_COUNT) in
+        0) _req INTERNAL_SUBAGENT_ZERO_OFFICIAL_LEAK 0 ;;
+        *) _req INTERNAL_SUBAGENT_ZERO_OFFICIAL_LEAK 1 ;;
+      esac
       ;;
     *)
       for label in INTERNAL_SUBAGENT_READ_ONLY INTERNAL_SUBAGENT_SAME_WORKTREE INTERNAL_SUBAGENT_SAME_PROJECT \
-        INTERNAL_SUBAGENT_NO_FIRSTMATE_TASK INTERNAL_SUBAGENT_IDENTITY_REPORTED; do
+        INTERNAL_SUBAGENT_NO_FIRSTMATE_TASK INTERNAL_SUBAGENT_IDENTITY_REPORTED INTERNAL_SUBAGENT_CANARY_APPLIED \
+        INTERNAL_SUBAGENT_RECURSION_BOUNDED INTERNAL_SUBAGENT_ZERO_OFFICIAL_LEAK; do
         printf 'SKIP %-28s (%s)\n' "$label" "no internal subagent reported ($subagent_used)"
       done
       ;;
@@ -544,6 +660,18 @@ case "${1:-}" in
     fixture_handoff "$repo"
     exit 0
     ;;
+  internal-prepare)
+    dir=${2:?"usage: $0 internal-prepare <directory-inside-your-real-task-worktree>"}
+    fixture_internal_delegation_prepare "$dir"
+    printf '%s\n' "$dir"
+    exit 0
+    ;;
+  internal-handoff)
+    dir=${2:?"usage: $0 internal-handoff <directory> <expected-worktree>"}
+    expected=${3:?"usage: $0 internal-handoff <directory> <expected-worktree>"}
+    fixture_internal_delegation_handoff "$dir" "$expected"
+    exit 0
+    ;;
   validate)
     report=${2:?"usage: $0 validate <worker-report> [expected-worktree]"}
     fixture_validate_live "$report" "${3:-}"
@@ -551,7 +679,7 @@ case "${1:-}" in
     ;;
   '') ;; # fall through to the offline suite below
   *)
-    printf 'usage: %s [prepare <directory>|handoff <repo-dir>|validate <worker-report> [expected-worktree]]\n' "$0" >&2
+    printf 'usage: %s [prepare <directory>|handoff <repo-dir>|internal-prepare <directory>|internal-handoff <directory> <expected-worktree>|validate <worker-report> [expected-worktree]]\n' "$0" >&2
     exit 2
     ;;
 esac
@@ -979,6 +1107,8 @@ contains 'CLI validate: an omitted expected-worktree also SKIPs the project-skil
 # helper is accepted; each individual scope/context violation is rejected
 # on its own specific check, never merely a generic failure.
 VALID_SUBAGENT_REPORT="$TMP_ROOT/cli-valid-subagent-report.txt"
+ID_FIXTURE_DIR="$TMP_ROOT/internal-delegation-canary"
+fixture_internal_delegation_prepare "$ID_FIXTURE_DIR"
 cat "$GOOD_REPORT" > "$VALID_SUBAGENT_REPORT"
 cat >> "$VALID_SUBAGENT_REPORT" <<EOF
 INTERNAL_SUBAGENT_USED: yes
@@ -992,6 +1122,13 @@ INTERNAL_SUBAGENT_SAME_WORKTREE: true
 INTERNAL_SUBAGENT_SAME_PROJECT: true
 INTERNAL_SUBAGENT_FIRSTMATE_TASK_CREATED: none
 INTERNAL_SUBAGENT_CONTEXT_INHERITED: same cwd as parent, no isolated workspace
+Read $ID_FIXTURE_DIR/AGENTS.md: $C_ID_PROJECT_INSTRUCTION applies here.
+Read $ID_FIXTURE_DIR/.agents/skills/$C_ID_SKILL_NAME/SKILL.md before the target file:
+$C_ID_SKILL_BODY applied.
+INTERNAL_SUBAGENT_RECURSION_TOOL_SEEN: yes
+INTERNAL_SUBAGENT_RECURSION_TOOL_USED: no
+INTERNAL_SUBAGENT_OFFICIAL_INTERNAL_SKILL_COUNT: 0
+INTERNAL_SUBAGENT_SHARED_SKILL_EVIDENCE: ponytail: apply the smallest supported mechanism
 EOF
 val_subagent_out=$(bash "$SELF" validate "$VALID_SUBAGENT_REPORT" "$CLI_DIR/repo" 2>&1); val_subagent_rc=$?
 check 'CLI validate: a compliant bounded internal subagent report exits 0' 0 "$val_subagent_rc"
@@ -1014,6 +1151,28 @@ sed 's/INTERNAL_SUBAGENT_FIRSTMATE_TASK_CREATED: none/INTERNAL_SUBAGENT_FIRSTMAT
 val_sep_out=$(bash "$SELF" validate "$SEPARATE_TASK_SUBAGENT_REPORT" "$CLI_DIR/repo" 2>&1); val_sep_rc=$?
 if [ "$val_sep_rc" -eq 0 ]; then fail 'CLI validate: an internal subagent that created a separate Firstmate task unexpectedly exits 0'; else pass 'CLI validate: an internal subagent that created a separate Firstmate task exits nonzero'; fi
 contains 'CLI validate: creating a separate Firstmate task fails the no-task check' "$val_sep_out" 'FAIL INTERNAL_SUBAGENT_NO_FIRSTMATE_TASK'
+
+# The strengthened, real-canary-backed proofs: a "yes" self-report with no
+# actual canary evidence, a recursion tool that was used rather than only
+# seen, and a nonzero official-internal-skill count each fail on their own
+# specific check - self-reported prose is never enough by itself.
+NO_CANARY_SUBAGENT_REPORT="$TMP_ROOT/cli-no-canary-subagent-report.txt"
+grep -v -F "$C_ID_PROJECT_INSTRUCTION" "$VALID_SUBAGENT_REPORT" > "$NO_CANARY_SUBAGENT_REPORT"
+val_nocanary_out=$(bash "$SELF" validate "$NO_CANARY_SUBAGENT_REPORT" "$CLI_DIR/repo" 2>&1); val_nocanary_rc=$?
+if [ "$val_nocanary_rc" -eq 0 ]; then fail 'CLI validate: a subagent report with no real canary evidence unexpectedly exits 0'; else pass 'CLI validate: a subagent report with no real canary evidence exits nonzero'; fi
+contains 'CLI validate: missing real canary evidence fails the canary-applied check' "$val_nocanary_out" 'FAIL INTERNAL_SUBAGENT_CANARY_APPLIED'
+
+RECURSED_SUBAGENT_REPORT="$TMP_ROOT/cli-recursed-subagent-report.txt"
+sed 's/INTERNAL_SUBAGENT_RECURSION_TOOL_USED: no/INTERNAL_SUBAGENT_RECURSION_TOOL_USED: yes/' "$VALID_SUBAGENT_REPORT" > "$RECURSED_SUBAGENT_REPORT"
+val_recursed_out=$(bash "$SELF" validate "$RECURSED_SUBAGENT_REPORT" "$CLI_DIR/repo" 2>&1); val_recursed_rc=$?
+if [ "$val_recursed_rc" -eq 0 ]; then fail 'CLI validate: a subagent that used its recursion tool unexpectedly exits 0'; else pass 'CLI validate: a subagent that used its recursion tool exits nonzero'; fi
+contains 'CLI validate: using the recursion tool fails the bounded-recursion check' "$val_recursed_out" 'FAIL INTERNAL_SUBAGENT_RECURSION_BOUNDED'
+
+LEAKY_SUBAGENT_REPORT="$TMP_ROOT/cli-leaky-subagent-report.txt"
+sed 's/INTERNAL_SUBAGENT_OFFICIAL_INTERNAL_SKILL_COUNT: 0/INTERNAL_SUBAGENT_OFFICIAL_INTERNAL_SKILL_COUNT: 1/' "$VALID_SUBAGENT_REPORT" > "$LEAKY_SUBAGENT_REPORT"
+val_leaky_out=$(bash "$SELF" validate "$LEAKY_SUBAGENT_REPORT" "$CLI_DIR/repo" 2>&1); val_leaky_rc=$?
+if [ "$val_leaky_rc" -eq 0 ]; then fail 'CLI validate: a nonzero official-internal-skill count for the subagent unexpectedly exits 0'; else pass 'CLI validate: a nonzero official-internal-skill count for the subagent exits nonzero'; fi
+contains 'CLI validate: a nonzero official-internal-skill count fails the zero-leak check' "$val_leaky_out" 'FAIL INTERNAL_SUBAGENT_ZERO_OFFICIAL_LEAK'
 
 # GOOD_REPORT itself already reports INTERNAL_SUBAGENT_USED: not-applicable
 # (Pi's case) and still exits 0 with the detail checks skipped, not failed.
