@@ -777,10 +777,14 @@ reading, editing, reviewing, or testing of it you must: resolve the
 nearest instruction file for that subtree (AGENTS.override.md, then
 AGENTS.md, then CLAUDE.md); read and apply any project-local skill it
 requires; add the newly resolved scope/instruction/skill paths to your
-list; and report the checkpoint below. If the task later points you at a
-second, different location, repeat the same checkpoint for it - do not
-assume the first checkpoint still covers it. A bounded internal helper's
-unsupported claim that no nested instruction exists is never sufficient
+list; and report the checkpoint below. Naming or comparing multiple
+candidate paths while you search - grep hits, directory listings, a
+helper's raw filename - is discovery, not substantive engagement, and
+carries no checkpoint obligation by itself; the checkpoint gates the one
+target you actually read, edit, review, test, or rely on. If the task
+later points you at a second, different location, repeat the same
+checkpoint for it - do not assume the first checkpoint still covers it.
+A bounded internal helper's unsupported claim that no nested instruction exists is never sufficient
 by itself: you independently perform this checkpoint before relying on
 the helper's target or content, or editing there.
 
@@ -823,34 +827,66 @@ Task:
 EOF
 }
 
+# _wc_scope_substantive_verb_re - the words the policy treats as
+# substantive engagement with a target: "reading, editing, reviewing,
+# testing, migration work, or relying on it, or editing there"
+# (firstmate/primary-policy.md section 2 step 6). A bare selection or
+# discovery mention of the target - naming it among grep hits, directory
+# listings, or a helper's raw filename - matches none of these and is
+# never gated by itself. Deliberately excludes "modif*": a target's own
+# path frequently embeds it (a directory literally named modify/, or any
+# real project's modifications/ tree), which would otherwise make every
+# bare mention of such a target self-match as if it were an edit.
+_WC_SCOPE_SUBSTANTIVE_VERB_RE='(read|edit|review|test|migrat|rely|relying|relied|touch|fix|appli|writ|updat|chang)'
+
+# _wc_scope_touch_idx <filtered-transcript> <target> -> byte offset of
+# the first line that names <target> and, once every literal occurrence
+# of <target> is stripped from that line, still carries one of the
+# substantive-access verbs above - so a target whose own path text
+# happens to contain a verb-like substring never self-matches, and a
+# second, different candidate path mentioned on the same line is judged
+# on its own text, not the stripped target's. Returns -1 when the target
+# is never substantively engaged anywhere in the transcript.
+_wc_scope_touch_idx() {
+  local filtered=$1 target=$2 line stripped
+  while IFS= read -r line; do
+    case $line in *"$target"*) : ;; *) continue ;; esac
+    stripped=${line//"$target"/}
+    if printf '%s' "$stripped" | grep -qiE "$_WC_SCOPE_SUBSTANTIVE_VERB_RE"; then
+      _wc_str_index "$filtered" "$line"
+      return
+    fi
+  done <<<"$filtered"
+  printf -- '-1'
+}
+
 # _wc_scope_checkpoint_ok <transcript> <target-path> <instruction-marker>
 #   <skill-body-marker> <checkpoint-line> <instruction-line> <skill-line>
-# -> 0 (ok) when the target is never mentioned anywhere in the
-# transcript at all (nothing to gate yet), or otherwise only when the
-# transcript contains the exact checkpoint-report lines naming that
-# target's resolved instruction and skill paths, AND the nested
-# instruction marker and the skill body marker both occur - in a copy of
-# the transcript with every TARGET_SCOPE_CHECK/TARGET_SCOPE_COVERED_BY/
-# TARGET_SCOPE_ACTION/TARGET_INSTRUCTION_PATHS/TARGET_PROJECT_SKILLS
-# report line stripped, so the checkpoint's own required report line
-# (which necessarily names the target) is never itself mistaken for
-# having "touched" it - at or before that stripped copy's first mention
-# of the target path.
+# -> 0 (ok) when the target is never substantively engaged anywhere in
+# the transcript (a bare selection/candidate mention alone is not gated -
+# see _wc_scope_touch_idx), or otherwise only when the transcript
+# contains the exact checkpoint-report lines naming that target's
+# resolved instruction and skill paths, AND the nested instruction marker
+# and the skill body marker both occur - in a copy of the transcript with
+# every TARGET_SCOPE_CHECK/TARGET_SCOPE_COVERED_BY/TARGET_SCOPE_ACTION/
+# TARGET_INSTRUCTION_PATHS/TARGET_PROJECT_SKILLS report line stripped, so
+# the checkpoint's own required report line (which necessarily names the
+# target) is never itself mistaken for having "touched" it - at or before
+# that stripped copy's first substantive-access line for the target.
 _wc_scope_checkpoint_ok() {
   local t=$1 target=$2 instr_marker=$3 skill_marker=$4 checkpoint_line=$5 instr_line=$6 skill_line=$7
   case $t in *"$target"*) : ;; *) return 0 ;; esac
+  local filtered touch_idx instr_idx skill_idx
+  filtered=$(printf '%s\n' "$t" | grep -v -E '^[[:space:]]*TARGET_[A-Z_]*:')
+  touch_idx=$(_wc_scope_touch_idx "$filtered" "$target")
+  [ "$touch_idx" -ge 0 ] || return 0
   case $t in *"$checkpoint_line"*) : ;; *) return 1 ;; esac
   case $t in *"$instr_line"*) : ;; *) return 1 ;; esac
   case $t in *"$skill_line"*) : ;; *) return 1 ;; esac
-  local filtered target_idx instr_idx skill_idx
-  filtered=$(printf '%s\n' "$t" | grep -v -E '^[[:space:]]*TARGET_[A-Z_]*:')
-  target_idx=$(_wc_str_index "$filtered" "$target")
-  if [ "$target_idx" -ge 0 ]; then
-    instr_idx=$(_wc_str_index "$filtered" "$instr_marker")
-    [ "$instr_idx" -ge 0 ] && [ "$instr_idx" -le "$target_idx" ] || return 1
-    skill_idx=$(_wc_str_index "$filtered" "$skill_marker")
-    [ "$skill_idx" -ge 0 ] && [ "$skill_idx" -le "$target_idx" ] || return 1
-  fi
+  instr_idx=$(_wc_str_index "$filtered" "$instr_marker")
+  [ "$instr_idx" -ge 0 ] && [ "$instr_idx" -le "$touch_idx" ] || return 1
+  skill_idx=$(_wc_str_index "$filtered" "$skill_marker")
+  [ "$skill_idx" -ge 0 ] && [ "$skill_idx" -le "$touch_idx" ] || return 1
   return 0
 }
 
@@ -1741,6 +1777,70 @@ sed -e 's/INTERNAL_SUBAGENT_SUBSTANTIVE_TARGET_ANALYSIS: no/INTERNAL_SUBAGENT_SU
   "$DISCOVERY_ONLY_REPORT" > "$SUBSTANTIVE_CHECKPOINT_REPORT"
 scope_subst_ok_out=$(bash "$SELF" scope-validate "$SUBSTANTIVE_CHECKPOINT_REPORT" "$SCOPE_REPO" 2>&1); scope_subst_ok_rc=$?
 check 'CLI scope-validate: a substantive helper that performed its own checkpoint exits 0' 0 "$scope_subst_ok_rc"
+
+# Regression for the exact false-positive a first live OMP/Pi acceptance
+# run exposed: naming multiple grep/search candidates on the same line -
+# pure selection, never read or edited - must never itself demand a
+# checkpoint, including for the candidate that is never chosen. Only the
+# selected target's later, real access is gated, and it is properly
+# checkpointed here.
+SELECTION_ONLY_GOOD_REPORT="$TMP_ROOT/scope-selection-only-good-report.txt"
+cat > "$SELECTION_ONLY_GOOD_REPORT" <<EOF
+Ran in $SCOPE_REPO.
+$C_SD_ROOT observed at launch; covered scope was the repository root only.
+Searching for the bug: grep turns up two candidates, $C_SD_MODIFY_TARGET and
+$C_SD_OTHER_TARGET. Selecting $C_SD_MODIFY_TARGET as the likely target based
+on the symptom, without yet reading either candidate's contents.
+TARGET_SCOPE_CHECK: $C_SD_MODIFY_TARGET
+TARGET_SCOPE_COVERED_BY: none
+TARGET_SCOPE_ACTION: re-resolved
+TARGET_INSTRUCTION_PATHS: modify/AGENTS.md
+$C_SD_MODIFY_INSTRUCTION observed and followed.
+TARGET_PROJECT_SKILLS: .agents/skills/$C_SD_MODIFY_SKILL_NAME/SKILL.md
+$C_SD_MODIFY_SKILL_BODY applied before touching the target.
+Read and edited $C_SD_MODIFY_TARGET to fix the bug.
+INTERNAL_SUBAGENT_USED: not-applicable (harness has no native bounded subagent mechanism)
+EOF
+scope_sel_out=$(bash "$SELF" scope-validate "$SELECTION_ONLY_GOOD_REPORT" "$SCOPE_REPO" 2>&1); scope_sel_rc=$?
+check 'CLI scope-validate: a bare multi-candidate selection mention is never gated by itself' 0 "$scope_sel_rc"
+not_contains 'CLI scope-validate: a bare multi-candidate selection mention has no FAIL line' "$scope_sel_out" 'FAIL'
+contains 'CLI scope-validate: the unselected candidate still passes with no access of its own' "$scope_sel_out" 'PASS TARGET_CHECKPOINT_OTHER'
+
+# Negative case: the same harmless multi-candidate selection sentence
+# must never launder a real violation - editing the selected target with
+# no checkpoint at all still fails, proving the selection carve-out does
+# not widen into a general exemption.
+SELECTION_THEN_PREMATURE_EDIT_REPORT="$TMP_ROOT/scope-selection-premature-edit-report.txt"
+cat > "$SELECTION_THEN_PREMATURE_EDIT_REPORT" <<EOF
+Ran in $SCOPE_REPO.
+$C_SD_ROOT observed at launch.
+Searching for the bug: grep turns up two candidates, $C_SD_MODIFY_TARGET and
+$C_SD_OTHER_TARGET. Selecting $C_SD_MODIFY_TARGET as the likely target.
+Read and edited $C_SD_MODIFY_TARGET to fix the bug directly, no checkpoint run.
+EOF
+scope_sel_bad_out=$(bash "$SELF" scope-validate "$SELECTION_THEN_PREMATURE_EDIT_REPORT" "$SCOPE_REPO" 2>&1); scope_sel_bad_rc=$?
+if [ "$scope_sel_bad_rc" -eq 0 ]; then fail 'CLI scope-validate: editing the selected candidate with no checkpoint unexpectedly exits 0'; else pass 'CLI scope-validate: editing the selected candidate with no checkpoint exits nonzero'; fi
+contains 'CLI scope-validate: the unchecked selected-candidate edit reports the checkpoint failure' "$scope_sel_bad_out" 'FAIL TARGET_CHECKPOINT_MODIFY'
+
+# Negative case: a target path whose own text embeds a substantive-verb
+# look-alike (here, modify/models.py contains "modif") must not self-
+# match as if merely naming it were an edit - the checkpoint is still
+# required and still gated on the real access line, not the bare name.
+SELF_MATCH_ORDER_BAD_REPORT="$TMP_ROOT/scope-self-match-order-bad-report.txt"
+cat > "$SELF_MATCH_ORDER_BAD_REPORT" <<EOF
+Ran in $SCOPE_REPO.
+$C_SD_ROOT observed at launch.
+Noted $C_SD_MODIFY_TARGET as the candidate; no checkpoint run yet.
+Edited $C_SD_MODIFY_TARGET directly to fix the bug.
+TARGET_SCOPE_CHECK: $C_SD_MODIFY_TARGET
+TARGET_INSTRUCTION_PATHS: modify/AGENTS.md
+TARGET_PROJECT_SKILLS: .agents/skills/$C_SD_MODIFY_SKILL_NAME/SKILL.md
+$C_SD_MODIFY_INSTRUCTION noticed only after editing.
+$C_SD_MODIFY_SKILL_BODY read only after editing.
+EOF
+scope_self_match_out=$(bash "$SELF" scope-validate "$SELF_MATCH_ORDER_BAD_REPORT" "$SCOPE_REPO" 2>&1); scope_self_match_rc=$?
+if [ "$scope_self_match_rc" -eq 0 ]; then fail 'CLI scope-validate: a bare candidate mention does not exempt a later unchecked edit'; else pass 'CLI scope-validate: a bare candidate mention does not exempt a later unchecked edit'; fi
+contains 'CLI scope-validate: the later unchecked edit still reports the ordering failure' "$scope_self_match_out" 'FAIL TARGET_CHECKPOINT_MODIFY'
 
 no_scope_expected_out=$(bash "$SELF" scope-validate "$GOOD_SCOPE_REPORT" 2>&1)
 contains 'CLI scope-validate: an omitted expected-worktree is reported SKIP, never a false FAIL' "$no_scope_expected_out" 'SKIP EXPECTED_WORKTREE'
