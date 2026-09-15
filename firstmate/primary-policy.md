@@ -260,9 +260,12 @@ verified rather than rounding up.
 Passing output is necessary but not sufficient: it must also be tied to the
 assigned task worktree. The shared worker skill `verification-provenance`
 and its classifier (`firstmate/fm-verify-provenance.sh`, sourced by
-`tests/worker-context.sh`) accept worktree-local, correctly bind-mounted, or
-worktree-built-artifact evidence; reject evidence tied to a different
-checkout - a shared container mounted from another clone is the concrete
-failure mode this closes; and mark unprovable execution uncertain rather
-than guess a pass. An uncertain or wrong-tree result is not completion:
-recover with a worktree-correct command and report the corrected evidence.
+`tests/worker-context.sh`) reject evidence tied to a different checkout - a
+shared container mounted from another clone is the concrete failure mode this
+closes - and mark worker self-reports that merely name the expected checkout as
+uncertain rather than guess a pass. The supported accepting path today is the
+worktree-bound local runner, which reruns the verification command after
+`cd`ing to the assigned worktree; container-bind and artifact evidence remain
+fail-closed unless a future trusted inspector/build attestation observes them.
+An uncertain or wrong-tree result is not completion: recover with a
+worktree-correct command and report the corrected evidence.

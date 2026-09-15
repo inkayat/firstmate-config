@@ -42,34 +42,36 @@ labels every time):
 
 `firstmate/fm-verify-provenance.sh`'s `fm_provenance_classify` is the one
 deterministic classifier for these three fields; it never guesses a pass. The
-worker report is attacker-controlled, so an accepting classification also
-requires Firstmate/caller-supplied observed provenance (`FM_OBSERVED_*`) from an
-independent wrapper or inspector. Without that independently observed fact,
-truthful wrong-tree reports still reject as `wrong_tree`, but apparently correct
-self-reports classify as `uncertain` rather than pass.
+worker report is attacker-controlled: truthful wrong-tree reports reject as
+`wrong_tree`, but apparently correct self-reports classify as `uncertain` rather
+than pass. For the supported local fallback, Firstmate/caller must run the check
+through `firstmate/fm-verify-provenance.sh run-local`: `<worktree> <report-file>
+-- <command> [args...]`. The runner `cd`s to the assigned worktree before
+executing the command. Container-bind and artifact evidence require future
+trusted inspectors; this skill deliberately does not accept caller-authored
+observed files.
 
 Its five outcomes:
 
 | Outcome | Meaning |
 | --- | --- |
-| `worktree_local` | Accept - plain local run, reported path and caller-observed path both match |
-| `bind_correct` | Accept - container bind source, as reported and independently observed, is this worktree |
-| `artifact_correct` | Accept - artifact's reported and observed source path/commit both match |
+| `worktree_local` | Accept - the local runner executed the command from this worktree and the report agrees |
+| `bind_correct` | Reserved - a future trusted container inspector proved the bind source is this worktree |
+| `artifact_correct` | Reserved - a future trusted artifact identity check proved path/commit match |
 | `wrong_tree` | Reject - reported provenance resolves to a different checkout |
 | `uncertain` | Reject - a required field is missing, unrecognized, or unprovable; never accepted as a silent pass |
 
 ## Recovery
 
 A `wrong_tree` or `uncertain` classification is not completion. Recover by
-re-running the same check with worktree-correct provenance - a plain local
-command in the assigned worktree is always available as the fallback - and
-report the corrected fields. Do not round a rejected or uncertain result up
-to "verified."
+re-running the same check through the local runner in the assigned worktree; a
+plain local command is always the fallback. Do not round a rejected or uncertain
+result up to "verified."
 
 ## Boundaries
 
-This skill classifies **evidence for one already-run command**; it never
-intercepts arbitrary commands, manages containers, or orchestrates builds.
-Do not hardcode a specific container name, mount path, or CI system anywhere
-that cites this skill - the three labels above are the entire generic
+This skill classifies evidence for one command. Its only execution mechanism is
+the explicit local fallback runner; it does not manage containers or orchestrate
+builds. Do not hardcode a specific container name, mount path, or CI system
+anywhere that cites this skill - the three labels above are the entire generic
 contract.

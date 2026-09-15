@@ -300,7 +300,8 @@ default offline suite:
 tests/worker-context.sh                                   # default: run the offline suite
 tests/worker-context.sh prepare <directory>                # build a persistent fixture repo at <directory>/repo, print its path
 tests/worker-context.sh handoff <repo-dir>                  # print the compact, no-body Firstmate-spec handoff for that fixture
-tests/worker-context.sh validate <worker-report> [<worktree>]  # classify a real worker report/transcript; exit 0 only if every required proof passes
+tests/worker-context.sh validate <worker-report> [<worktree>]  # validate a report; self-reported provenance alone fails closed
+tests/worker-context.sh validate-local <worker-report> <worktree> -- <command> [args...]  # rerun verification through the worktree-bound local provenance runner, then validate
 tests/worker-context.sh internal-prepare <directory>        # write a disposable bounded-internal-delegation canary fixture INSIDE your own real task worktree (a native bounded subagent always shares the parent session's cwd), print the path
 tests/worker-context.sh internal-handoff <directory> <worktree>  # print the read-only task text for a real bounded internal subagent to run against that fixture
 ```
@@ -326,9 +327,10 @@ catalog source roots/count, and an explicit zero count of catalog entries
 under the official FirstMate distro root - a report that merely never
 mentions the forbidden skill name fails this check, it does not pass it
 for free. `validate` also proves bounded-internal-delegation scope/context
-evidence and verification-provenance classification when the report
-includes them (see "Bounded internal delegation" and "Verification
-provenance" below); it prints one PASS/FAIL/SKIP line per proof.
+evidence and fails closed on self-reported verification-provenance labels;
+`validate-local` is the passing local path because it reruns the command in
+the expected worktree (see "Bounded internal delegation" and "Verification
+provenance" below). Both print one PASS/FAIL/SKIP line per proof.
 
 ## Bounded internal delegation
 
@@ -362,12 +364,15 @@ Fresh, passing output is necessary but not sufficient: it must also be tied
 to the assigned task worktree, never a shared container or artifact bound
 to a different checkout. The shared worker skill `verification-provenance`
 and its one deterministic classifier, `firstmate/fm-verify-provenance.sh`
-(sourced by `tests/worker-context.sh`), accept worktree-local, correctly
-bind-mounted, or worktree-built-artifact evidence; reject evidence tied to
-a different checkout; and mark unprovable execution uncertain rather than
-guess a pass. It classifies evidence for one already-run command - it never
-intercepts arbitrary commands or manages containers - and carries no
-hardcoded container name, mount path, or CI system.
+(sourced by `tests/worker-context.sh`), reject evidence tied to a different
+checkout and mark worker self-reports that merely name the expected checkout
+as uncertain rather than guess a pass. The supported accepting path today is
+the worktree-bound local runner (`fm-verify-provenance.sh run-local` /
+`tests/worker-context.sh validate-local`), which reruns the verification
+command after `cd`ing to the assigned worktree. Container-bind and artifact
+evidence remain fail-closed unless a future trusted inspector/build
+attestation observes them; there is no hardcoded container name, mount path,
+or CI system.
 
 ## Routing in v0.1
 

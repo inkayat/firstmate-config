@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # fm-verify-provenance.sh - deterministic worktree-provenance classifier for
 # verification (test/build/lint) evidence. Sourced by tests/worker-context.sh;
-# also usable standalone: `fm-verify-provenance.sh classify <expected-worktree>
-# <report-file> [observed-provenance-file]`.
+# also usable standalone:
+#   fm-verify-provenance.sh classify <expected-worktree> <report-file>
+#   fm-verify-provenance.sh run-local <expected-worktree> <report-file> -- <command> [args...]
 #
 # Problem this closes: a fresh, green test/build/lint run only counts as
 # evidence for THIS task when it demonstrably ran against the assigned task
@@ -24,32 +25,23 @@
 #   VERIFY_ARTIFACT_SOURCE_COMMIT (artifact kind only) the commit the
 #     artifact's source tree was built from.
 #
-# Caller-observed evidence fields use the same values, but must come from an
-# independent wrapper/inspector rather than the worker's report text:
-#   FM_OBSERVED_PROVENANCE_KIND
-#   FM_OBSERVED_EXECUTION_REALPATH
-#   FM_OBSERVED_ARTIFACT_SOURCE_COMMIT (artifact kind only)
+# fm_provenance_classify <expected-worktree> <report-text> prints exactly one
+# of:
+#   wrong_tree - a kind and a realpath were both reported, but they do not
+#                resolve to the expected worktree (or, for artifact, the
+#                commit does not match).
+#   uncertain  - the kind or realpath is missing/unrecognized, the expected
+#                worktree cannot be resolved, or the worker's self-report is
+#                apparently correct but not independently observed.
 #
-# fm_provenance_classify <expected-worktree> <report-text> [observed-text]
-# prints exactly one of:
-#   worktree_local   - kind=local, reported and observed realpaths match the
-#                      expected worktree's own canonical realpath.
-#   bind_correct     - kind=container-bind, reported and observed realpaths match.
-#   artifact_correct - kind=artifact, reported and observed realpaths match AND
-#                      reported/observed commits match the expected worktree's
-#                      current HEAD.
-#   wrong_tree       - a kind and a realpath were both reported, but they do
-#                      not resolve to the expected worktree (or, for
-#                      artifact, the commit does not match), or the report
-#                      conflicts with independently observed provenance - the
-#                      concrete failure mode a shared container or artifact
-#                      bound to another checkout produces.
-#   uncertain        - the kind or the realpath is missing, the kind is not
-#                      one of the three recognized values, the expected
-#                      worktree itself cannot be resolved, or an apparently
-#                      correct worker report lacks independently observed
-#                      provenance to compare against - never silently treated
-#                      as a pass.
+# The accepting outcomes below are produced only by Firstmate/caller-owned
+# mechanisms that mechanically observe the verification boundary. Today this
+# file intentionally ships only a local runner; container bind inspection and
+# artifact identity remain fail-closed here rather than guessed from prose.
+#   worktree_local   - run-local executed the command from the expected worktree
+#                      and the worker report agrees.
+#   bind_correct     - reserved for a future trusted container inspector.
+#   artifact_correct - reserved for a future trusted artifact identity check.
 set -u
 
 _fvp_field() { printf '%s\n' "$1" | sed -n "s/^[[:space:]]*$2:[[:space:]]*//p" | tail -1; }
@@ -64,9 +56,9 @@ _fvp_canon() {
   if [ -d "$p" ]; then (cd "$p" 2>/dev/null && pwd -P) || printf '%s' "$p"; else printf '%s' "$p"; fi
 }
 
-fm_provenance_classify() {  # <expected-worktree> <report-text> [observed-text]
-  local expected=$1 report=$2 observed=${3:-}
-  local kind reported expected_real observed_kind observed_path commit_reported commit_expected commit_observed
+_fvp_classify_with_observed() {  # <expected-worktree> <report-text> <observed-text>
+  local expected=$1 report=$2 observed=$3
+  local kind reported expected_real observed_kind observed_path commit_reported commit_expected
   kind=$(_fvp_field "$report" VERIFY_PROVENANCE_KIND)
   reported=$(_fvp_field "$report" VERIFY_EXECUTION_REALPATH)
   [ -n "$kind" ] && [ -n "$reported" ] || { printf 'uncertain'; return 0; }
@@ -89,9 +81,7 @@ fm_provenance_classify() {  # <expected-worktree> <report-text> [observed-text]
       case $? in 0) printf 'worktree_local' ;; 1) printf 'wrong_tree' ;; *) printf 'uncertain' ;; esac
       ;;
     container-bind)
-      [ "$reported" = "$expected_real" ] || { printf 'wrong_tree'; return 0; }
-      _fvp_observed_matches container-bind
-      case $? in 0) printf 'bind_correct' ;; 1) printf 'wrong_tree' ;; *) printf 'uncertain' ;; esac
+      [ "$reported" = "$expected_real" ] && printf 'uncertain' || printf 'wrong_tree'
       ;;
     artifact)
       commit_reported=$(_fvp_field "$report" VERIFY_ARTIFACT_SOURCE_COMMIT)
@@ -101,21 +91,7 @@ fm_provenance_classify() {  # <expected-worktree> <report-text> [observed-text]
       elif [ "$reported" != "$expected_real" ] || [ "$commit_reported" != "$commit_expected" ]; then
         printf 'wrong_tree'
       else
-        _fvp_observed_matches artifact
-        case $? in
-          0)
-            commit_observed=$(_fvp_field "$observed" FM_OBSERVED_ARTIFACT_SOURCE_COMMIT)
-            if [ -z "$commit_observed" ]; then
-              printf 'uncertain'
-            elif [ "$commit_observed" = "$commit_expected" ]; then
-              printf 'artifact_correct'
-            else
-              printf 'wrong_tree'
-            fi
-            ;;
-          1) printf 'wrong_tree' ;;
-          *) printf 'uncertain' ;;
-        esac
+        printf 'uncertain'
       fi
       ;;
     *)
@@ -124,18 +100,50 @@ fm_provenance_classify() {  # <expected-worktree> <report-text> [observed-text]
   esac
 }
 
+fm_provenance_classify() {  # <expected-worktree> <report-text>
+  local expected=$1 report=$2
+  _fvp_classify_with_observed "$expected" "$report" ''
+}
+
+fm_provenance_run_local() {  # <expected-worktree> <report-text> -- <command> [args...]
+  local expected=$1 report=$2 expected_real observed classification rc
+  shift 2
+  [ "${1:-}" = -- ] || { printf 'usage: fm_provenance_run_local <expected-worktree> <report-text> -- <command> [args...]\n' >&2; return 2; }
+  shift
+  [ "$#" -gt 0 ] || { printf 'usage: fm_provenance_run_local <expected-worktree> <report-text> -- <command> [args...]\n' >&2; return 2; }
+
+  expected_real=$(cd "$expected" 2>/dev/null && pwd -P) || { printf 'uncertain'; return 1; }
+  (cd "$expected_real" && "$@") >&2
+  rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+
+  observed="FM_OBSERVED_PROVENANCE_KIND: local
+FM_OBSERVED_EXECUTION_REALPATH: $expected_real"
+  classification=$(_fvp_classify_with_observed "$expected_real" "$report" "$observed")
+  printf '%s' "$classification"
+  [ "$classification" = worktree_local ]
+}
+
 if [ "${BASH_SOURCE[0]:-}" = "${0:-}" ]; then
   case "${1:-}" in
     classify)
-      expected=${2:?"usage: $0 classify <expected-worktree> <report-file> [observed-provenance-file]"}
-      report_file=${3:?"usage: $0 classify <expected-worktree> <report-file> [observed-provenance-file]"}
+      expected=${2:?"usage: $0 classify <expected-worktree> <report-file>"}
+      report_file=${3:?"usage: $0 classify <expected-worktree> <report-file>"}
       report_text=$(cat "$report_file" 2>/dev/null || printf '')
-      observed_text=$(cat "${4:-/dev/null}" 2>/dev/null || printf '')
-      fm_provenance_classify "$expected" "$report_text" "$observed_text"
+      fm_provenance_classify "$expected" "$report_text"
+      printf '\n'
+      ;;
+    run-local)
+      expected=${2:?"usage: $0 run-local <expected-worktree> <report-file> -- <command> [args...]"}
+      report_file=${3:?"usage: $0 run-local <expected-worktree> <report-file> -- <command> [args...]"}
+      shift 3
+      report_text=$(cat "$report_file" 2>/dev/null || printf '')
+      fm_provenance_run_local "$expected" "$report_text" "$@"
       printf '\n'
       ;;
     *)
-      printf 'usage: %s classify <expected-worktree> <report-file> [observed-provenance-file]\n' "$0" >&2
+      printf 'usage: %s classify <expected-worktree> <report-file>\n' "$0" >&2
+      printf '   or: %s run-local <expected-worktree> <report-file> -- <command> [args...]\n' "$0" >&2
       exit 2
       ;;
   esac
