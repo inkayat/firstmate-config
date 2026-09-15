@@ -26,14 +26,24 @@
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=firstmate/fm-stack-manifest.sh
+. "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh"
+if ! stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv"; then
+  printf 'install: %s\n' "$SM_LOAD_ERROR" >&2
+  exit 1
+fi
 FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
-FIRSTMATE_ORIGIN="${FIRSTMATE_ORIGIN:-https://github.com/kunchenguid/firstmate.git}"
+FIRSTMATE_ORIGIN="${FIRSTMATE_ORIGIN:-$SM_FIRSTMATE_REPO}"
 FM_HOME="${FM_HOME:-$HOME/.firstmate}"
 FM_BACKEND=herdr
 ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
 SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
 SKILL_CACHE="${FM_SKILL_CACHE:-$HOME/.local/share/firstmate-config/skills-src}"
 BIN_DIR="${FM_BIN_DIR:-$HOME/.local/bin}"
+# Every git probe below inspects a repository it must not silently write to
+# (an existing official checkout it never updates); a clone still needs a
+# real write, which this setting does not affect.
+export GIT_OPTIONAL_LOCKS=0
 
 VERIFY=0
 [ "${1:-}" != --verify ] || VERIFY=1
@@ -79,12 +89,27 @@ if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
   dirty=$(git -C "$FIRSTMATE_ROOT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
   ok "at $head_sha, $dirty tracked modifications"
   [ "$dirty" = 0 ] || warn 'the official checkout has local modifications; this configuration expects it unmodified'
-elif would "clone $FIRSTMATE_ORIGIN into $FIRSTMATE_ROOT"; then
+  # Report-only: an already-present checkout is never updated, rewound, or
+  # re-pinned here, no matter how it relates to the validated baseline.
+  relation=$(stack_commit_relation "$FIRSTMATE_ROOT" "$SM_FIRSTMATE_COMMIT")
+  case $relation in
+    exact) ok "matches the validated baseline commit $SM_FIRSTMATE_COMMIT" ;;
+    descendant) warn "ahead of the validated baseline commit $SM_FIRSTMATE_COMMIT (unvalidated; not changed automatically)" ;;
+    ancestor) warn "behind the validated baseline commit $SM_FIRSTMATE_COMMIT (not updated automatically; run fm doctor for detail)" ;;
+    diverged) warn "history has diverged from the validated baseline commit $SM_FIRSTMATE_COMMIT" ;;
+    *) warn "relationship to the validated baseline commit $SM_FIRSTMATE_COMMIT is unknown (that commit is not in this checkout's local history)" ;;
+  esac
+elif would "clone $FIRSTMATE_ORIGIN into $FIRSTMATE_ROOT, pinned to $SM_FIRSTMATE_COMMIT"; then
   mkdir -p "$(dirname "$FIRSTMATE_ROOT")" || failf "cannot create $(dirname "$FIRSTMATE_ROOT")"
-  if git clone -q "$FIRSTMATE_ORIGIN" "$FIRSTMATE_ROOT"; then
-    changedf "cloned FirstMate into $FIRSTMATE_ROOT"
+  if git clone -q "$FIRSTMATE_ORIGIN" "$FIRSTMATE_ROOT" \
+     && git -C "$FIRSTMATE_ROOT" checkout -q "$SM_FIRSTMATE_COMMIT"; then
+    changedf "cloned FirstMate into $FIRSTMATE_ROOT, pinned to $SM_FIRSTMATE_COMMIT"
   else
-    failf "could not clone $FIRSTMATE_ORIGIN"
+    failf "could not clone $FIRSTMATE_ORIGIN and pin it to $SM_FIRSTMATE_COMMIT"
+    # Never leave a half-cloned or unpinned checkout behind for the next run
+    # to mistake for a genuine, present install: a partial clone/pin failure
+    # must not be reportable as success on a later run.
+    rm -rf "$FIRSTMATE_ROOT"
   fi
 fi
 

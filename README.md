@@ -26,6 +26,8 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `firstmate/crew-dispatch.json` | which harness takes which kind of task | symlinked to `$FM_HOME/config/crew-dispatch.json` |
 | `firstmate/captain-startup-models.tsv` | ordered Pi/FirstMate Captain startup model candidates | read by `bin/fm`, never installed as Pi's global default |
 | `firstmate/fm-captain-lib.sh` | the one authoritative Captain model availability path | sourced by both `bin/fm` and `bin/fm-doctor` |
+| `firstmate/stack-manifest.tsv` | the single source of truth for stack compatibility: official FirstMate repo/validated commit, Pi/OMP/Herdr min and tested versions | read by `install.sh` and `bin/fm-doctor` |
+| `firstmate/fm-stack-manifest.sh` | the one parsing/comparison owner for `stack-manifest.tsv` | sourced by `install.sh`, `bin/fm-doctor`, and `bin/fm-version` |
 | `roles/*/ROLE.md` | generic role definitions quoted into worker briefs | read by the captain |
 | `skills/*/SKILL.md` | our own global skills | symlinked into `~/.agents/skills/` |
 | `skills/external.lock` | external skill packs, pinned by commit | cloned to a machine-local cache, symlinked into `~/.agents/skills/` |
@@ -34,6 +36,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `tests/model-selection.sh` | captain startup model selection acceptance | - |
 | `tests/multi-project-captain.sh` | multi-project resolution/isolation/routing acceptance | - |
 | `tests/doctor.sh` | `fm doctor` acceptance: statuses, exit codes, JSON schema | - |
+| `tests/stack-manifest.sh` | stack compatibility manifest acceptance: `install.sh`/`fm-doctor`/`fm-version` sharing one baseline | - |
 
 ## Install
 
@@ -51,6 +54,10 @@ fm
 
 Rerunning `install.sh` is a reconcile, not a reinstall: it repairs symlinks,
 refreshes pinned skills, and leaves anything you have edited by hand alone.
+A missing official FirstMate checkout is cloned from `firstmate/stack-manifest.tsv`'s
+`firstmate_repo` and pinned to its `firstmate_validated_commit`; an
+already-present checkout is never touched, only its relationship to that
+validated commit is reported (see `fm doctor` "Stack compatibility" below).
 
 Verify an installation at any time:
 
@@ -59,6 +66,7 @@ tests/smoke.sh                     # launcher, install state, skills, herdr
 tests/smoke.sh --live              # the same, plus a captain that is currently running
 tests/multi-project-captain.sh     # project resolution, isolation, and routing
 tests/doctor.sh                    # fm doctor: statuses, exit codes, JSON schema
+tests/stack-manifest.sh            # stack compatibility manifest: install.sh/fm-doctor/fm-version
 ```
 
 ## fm version
@@ -68,9 +76,9 @@ fm version
 fm version --json
 ```
 
-Fast, read-only identity facts for bug reports: firstmate-config tag/commit/state, official FirstMate path/commit/state, Pi/OMP/Herdr versions, `FM_HOME`, platform, and architecture. Optional component versions are `unknown` when unavailable; diagnostics stay in `fm doctor`.
+Fast, read-only identity facts for bug reports: firstmate-config tag/commit/state, official FirstMate path/commit/state, Pi/OMP/Herdr versions, the validated FirstMate baseline commit from `firstmate/stack-manifest.tsv`, `FM_HOME`, platform, and architecture. Optional component versions are `unknown` when unavailable; this stays a compact identity report - compatibility verdicts (PASS/WARNING/FAIL) live only in `fm doctor`.
 
-JSON schema (`--json`, `schema_version: 1`) has `firstmate_config`, `firstmate`, `components`, `fm_home`, `platform`, and `architecture`.
+JSON schema (`--json`, `schema_version: 2`) has `firstmate_config`, `firstmate`, `components`, `stack_manifest` (`schema_version` and `firstmate_validated_commit`, both read from `firstmate/stack-manifest.tsv` - never a duplicated literal), `fm_home`, `platform`, and `architecture`.
 
 ## fm doctor
 
@@ -93,7 +101,9 @@ dirty state) runs with `GIT_OPTIONAL_LOCKS=0`, so a diagnostic run never
 writes an index refresh or ref lock into a repository it merely inspects.
 
 It reports, in order: SYSTEM (this repository's and the official checkout's
-path/version/commit/dirty state, `FM_HOME`, OS, cwd, current Git project
+path/version/commit/dirty state, whether `firstmate/stack-manifest.tsv`
+loaded, the official checkout's relationship to that manifest's validated
+commit, `FM_HOME`, OS, cwd, current Git project
 root), LAUNCHER/PATH (every `fm` discoverable on `PATH`, precedence against
 the one this repository installs, and the executable a plain `fm` currently
 resolves to), CAPTAIN (the configured startup model chain's per-candidate
@@ -104,8 +114,9 @@ honest stale/dead classification (`NOT_APPLICABLE` with nothing in flight,
 `UNKNOWN` otherwise: no safe bulk read-only classifier exists upstream
 without duplicating FirstMate's own per-task lifecycle logic) - read-only,
 via upstream's own `fm-lock.sh status` and `fm-supervision-lib.sh` when
-available, `UNKNOWN` otherwise), HARNESSES (Pi/omp installation, version,
-readable config), ROUTING (`crew-dispatch.json` structural validity via real
+available, `UNKNOWN` otherwise), HARNESSES (Pi/omp installation, version and
+its compatibility against `firstmate/stack-manifest.tsv`'s tested/minimum
+policy for that component, readable config), ROUTING (`crew-dispatch.json` structural validity via real
 JSON parsing only - `jq`, then `python3`, whichever is actually on the
 machine; with neither installed, validity is reported `UNKNOWN`, never a
 false `PASS` and never a brace-balance or field-scan standing in for a real
@@ -127,6 +138,26 @@ Every finding uses exactly one of: `PASS`, `WARNING`, `FAIL`, `DEFERRED`,
 `BLOCKED_AUTH`, `BLOCKED_QUOTA`, `NOT_APPLICABLE`, `UNKNOWN`. A blocked status
 is used only on reliable evidence; uncertainty is `UNKNOWN`, never a guessed
 failure.
+
+**Stack compatibility.** `firstmate/stack-manifest.tsv` is the single
+source of truth for what "compatible" means across
+`Pi Captain -> FirstMate -> Herdr -> Pi/OMP`: the official FirstMate
+repo/validated commit, and a min/tested version policy per component
+(`firstmate/fm-stack-manifest.sh` is the one parsing/comparison owner,
+shared with `install.sh` and `fm version`). For each component:
+an installed version exactly matching, or falling between, the policy's
+minimum and tested bounds is `PASS`; a version newer than tested but still
+meeting the minimum is `WARNING` (unvalidated, never an automatic `FAIL`);
+a version below the minimum is `FAIL`; a version that cannot be parsed is
+`UNKNOWN`, never a guessed verdict. The official FirstMate checkout's
+commit is classified the same way from local Git-graph evidence alone
+(`git merge-base --is-ancestor`, never a fetch): exactly the validated
+commit is `PASS`; a descendant (newer) is `WARNING`; an ancestor (older) or
+a diverged history is `FAIL`; a baseline commit absent from local history
+is `UNKNOWN`. These compatibility checks (`stack.manifest`,
+`firstmate.commit_compat`, `harnesses.pi_version`, `harnesses.omp_version`,
+`runtime.herdr_version`) are advisory: they can move the top-level `status`
+off `PASS`, but never the mandatory `exit_code` - see "Exit codes" below.
 
 **Exit codes.** `0` when the mandatory architecture is healthy, even with
 `WARNING`, `DEFERRED`, or non-mandatory `BLOCKED_*`/`FAIL` findings present
@@ -237,3 +268,8 @@ Deferred to a later release, and absent from this configuration: Pi with
 - **Project repositories** are never modified by anything here. A project's own
   `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md`, and project-local skills
   outrank every role and global skill this repository installs.
+- **Stack compatibility** is tracked exclusively in `firstmate/stack-manifest.tsv`:
+  the official FirstMate repo/validated commit and Pi/OMP/Herdr min/tested
+  versions - nothing else. No auth, credentials, machine paths, Betao
+  settings, project registry, Portail data, runtime task state, or Captain
+  model routing belongs there; those stay owned by the mechanisms above.

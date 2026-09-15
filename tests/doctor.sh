@@ -25,6 +25,26 @@ set -u
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOC="$CONFIG_ROOT/bin/fm-doctor"
 
+# Real, tracked manifest values - never duplicated as separate literals here.
+# The healthy fixture's fake pi/omp/herdr report exactly these tested
+# versions, so its new stack-compatibility checks (harnesses.pi_version,
+# harnesses.omp_version, runtime.herdr_version) genuinely PASS rather than
+# WARNING on an arbitrary "9.9.9-fake". firstmate.commit_compat cannot be
+# made to PASS this way (the healthy fixture's FIRSTMATE_ROOT is not a real
+# clone of the tracked validated commit, and constructing one would require
+# either network access or fabricating a Git object with a chosen hash,
+# which is not possible) - it honestly reports UNKNOWN there instead, which
+# is scenario 1's own explicit assertion below. A fully-PASS exact-baseline
+# scenario, including firstmate.commit_compat, lives in
+# tests/stack-manifest.sh, which builds a self-contained synthetic manifest
+# and a real local Git repo whose HEAD is genuinely that manifest's baseline.
+# shellcheck source=firstmate/fm-stack-manifest.sh
+. "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh"
+stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv" || {
+  printf 'doctor.sh: cannot load the tracked stack manifest: %s\n' "$SM_LOAD_ERROR" >&2
+  exit 1
+}
+
 failed=0
 pass() { printf 'ok   - %s\n' "$1"; }
 fail() { printf 'FAIL - %s\n' "$1" >&2; failed=1; }
@@ -137,8 +157,8 @@ if [ "${1:-}" = status ] && [ "${2:-}" = --json ]; then
       exit 0
       ;;
   esac
-  printf '{"client":{"version":"9.9.9-fake","protocol":19},"server":{"running":%s,"version":"9.9.9-fake","protocol":19,"compatible":%s}}\n' \
-    "${FM_TEST_HERDR_RUNNING:-true}" "${FM_TEST_HERDR_COMPATIBLE:-true}"
+  printf '{"client":{"version":"%s","protocol":19},"server":{"running":%s,"version":"%s","protocol":19,"compatible":%s}}\n' \
+    "${FM_TEST_HERDR_VERSION:-9.9.9-fake}" "${FM_TEST_HERDR_RUNNING:-true}" "${FM_TEST_HERDR_VERSION:-9.9.9-fake}" "${FM_TEST_HERDR_COMPATIBLE:-true}"
   exit 0
 fi
 exit 0
@@ -153,7 +173,7 @@ cat > "$FAKE_BIN/omp" <<'SH'
 #!/usr/bin/env bash
 available=",${FM_TEST_OMP_AVAILABLE-${FM_TEST_AVAILABLE-openai-codex/gpt-5.6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra}},"
 if [ "${1:-}" = --version ]; then
-  printf 'omp/9.9.9-fake\n'
+  printf 'omp/%s\n' "${FM_TEST_OMP_VERSION:-9.9.9-fake}"
   exit 0
 fi
 if [ "${1:-}" = models ]; then
@@ -316,15 +336,25 @@ run_doctor() { # [extra args to fm-doctor]
     FM_TEST_HERDR_RUNNING="${FM_TEST_HERDR_RUNNING:-true}" \
     FM_TEST_HERDR_COMPATIBLE="${FM_TEST_HERDR_COMPATIBLE:-true}" \
     FM_TEST_HERDR_MODE="${FM_TEST_HERDR_MODE:-normal}" \
+    FM_TEST_PI_VERSION="${FM_TEST_PI_VERSION:-$SM_PI_TESTED}" \
+    FM_TEST_OMP_VERSION="${FM_TEST_OMP_VERSION:-$SM_OMP_TESTED}" \
+    FM_TEST_HERDR_VERSION="${FM_TEST_HERDR_VERSION:-$SM_HERDR_TESTED}" \
     "${RUN_DOC:-$DOC}" "$@" )
 }
 
 # =============================================================================
-# 1. Healthy: PASS overall, exit 0
+# 1. Healthy: exit 0. Overall status is UNKNOWN, not PASS - the one honest
+#    gap in an otherwise fully-green fixture is firstmate.commit_compat: this
+#    fixture's FIRSTMATE_ROOT is not a real clone of the tracked validated
+#    commit (see the manifest-sourcing comment near the top of this file),
+#    so fm-doctor correctly reports UNKNOWN rather than guessing PASS or
+#    FAIL. Every other new stack-compatibility check genuinely PASSes here,
+#    because the fake pi/omp/herdr report exactly the tracked manifest's
+#    tested versions (see run_doctor's FM_TEST_*_VERSION defaults).
 # =============================================================================
 out=$(run_doctor); code=$?
 check 'healthy: exit code is 0' 0 "$code"
-contains 'healthy: overall status is PASS' "$out" 'DOCTOR PASS exit=0'
+contains 'healthy: overall status is UNKNOWN (only commit_compat is unproven offline)' "$out" 'DOCTOR UNKNOWN exit=0'
 contains 'healthy: launcher resolves ours first' "$out" "PASS          launcher.resolution"
 contains 'healthy: captain selects the preferred candidate' "$out" 'selected preferred candidate openai-codex/gpt-5.6-sol'
 contains 'healthy: herdr server reported running' "$out" 'PASS          runtime.herdr_server'
@@ -334,6 +364,13 @@ contains 'healthy: roles all readable' "$out" 'PASS          roles.tenth-man'
 contains 'healthy: skills fully installed' "$out" 'PASS          skills.global_installation'
 contains 'healthy: Fable/Qwen reported DEFERRED, not FAIL' "$out" 'DEFERRED      routing.fable_qwen_deferred'
 not_contains 'healthy: Fable/Qwen deferred check is never FAIL' "$out" 'FAIL          routing.fable_qwen_deferred'
+contains 'healthy: stack manifest loaded' "$out" 'PASS          stack.manifest'
+contains 'healthy: Pi version matches the tested baseline' "$out" "PASS          harnesses.pi_version"
+contains 'healthy: omp version matches the tested baseline' "$out" "PASS          harnesses.omp_version"
+contains 'healthy: herdr version matches the tested baseline' "$out" "PASS          runtime.herdr_version"
+contains 'healthy: FirstMate commit compat is honestly UNKNOWN, never a guessed PASS or FAIL' "$out" 'UNKNOWN       firstmate.commit_compat'
+not_contains 'healthy: FirstMate commit compat never falsely reports PASS' "$out" 'PASS          firstmate.commit_compat'
+not_contains 'healthy: FirstMate commit compat never falsely reports FAIL' "$out" 'FAIL          firstmate.commit_compat'
 
 # =============================================================================
 # 2. A later, non-shadowing competing `fm` -> WARNING, exit 0
@@ -408,6 +445,8 @@ cp "$CONFIG_ROOT/bin/fm-doctor" "$FAKE_CFG/bin/fm-doctor"
 ln -s "$CONFIG_ROOT/bin/fm" "$FAKE_CFG/bin/fm"
 chmod +x "$FAKE_CFG/bin/fm-doctor"
 cp "$CONFIG_ROOT/firstmate/fm-captain-lib.sh" "$FAKE_CFG/firstmate/fm-captain-lib.sh"
+cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$FAKE_CFG/firstmate/fm-stack-manifest.sh"
+cp "$CONFIG_ROOT/firstmate/stack-manifest.tsv" "$FAKE_CFG/firstmate/stack-manifest.tsv"
 cp "$CONFIG_ROOT/firstmate/captain-startup-models.tsv" "$FAKE_CFG/firstmate/captain-startup-models.tsv"
 cp "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$FAKE_CFG/firstmate/crew-dispatch.json"
 printf '# role\n' > "$FAKE_CFG/roles/senior-fullstack/ROLE.md"
@@ -514,7 +553,7 @@ esac
 for key in schema_version status exit_code timestamp system firstmate launcher captain runtime harnesses routing roles skills projects checks; do
   contains "JSON: top-level key '$key' present" "$json" "\"$key\":"
 done
-contains 'JSON: status is PASS for the healthy fixture' "$json" '"status":"PASS"'
+contains 'JSON: top-level status is UNKNOWN for the healthy fixture (commit_compat is the one honest gap)' "$json" '"schema_version":1,"status":"UNKNOWN",'
 contains 'JSON: exit_code is 0 for the healthy fixture' "$json" '"exit_code":0'
 contains 'JSON: a check row carries id/status/summary' "$json" '"id":"launcher.resolution","status":"PASS"'
 contains 'JSON: system carries fm_home' "$json" "\"fm_home\":\"$FAKE_FM_HOME\""

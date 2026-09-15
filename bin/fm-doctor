@@ -75,6 +75,14 @@ OMP_TURNEND_EXT="$FIRSTMATE_ROOT/.omp/extensions/fm-primary-turnend-guard.ts"
 # shellcheck source=firstmate/fm-captain-lib.sh
 . "$CONFIG_ROOT/firstmate/fm-captain-lib.sh"
 
+# The one parsing/comparison owner for stack compatibility, shared with
+# install.sh. Never fork manifest parsing or version comparison between them.
+# shellcheck source=firstmate/fm-stack-manifest.sh
+. "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh"
+STACK_MANIFEST="$CONFIG_ROOT/firstmate/stack-manifest.tsv"
+stack_manifest_load "$STACK_MANIFEST"
+STACK_MANIFEST_LOADED=$?
+
 usage() { sed -n '2,/^set -u$/p' "$self" | sed -e 's/^# \{0,1\}//' -e '/^set -u$/d'; }
 
 JSON_MODE=0
@@ -197,6 +205,11 @@ CONFIG_VERSION=$(git -C "$CONFIG_ROOT" describe --tags --always --dirty 2>/dev/n
 CONFIG_COMMIT=$(git -C "$CONFIG_ROOT" rev-parse --short HEAD 2>/dev/null || printf unknown)
 CONFIG_DIRTY=$(git_dirty_count "$CONFIG_ROOT")
 add_check firstmate.config PASS "firstmate-config at $CONFIG_VERSION (commit $CONFIG_COMMIT, $CONFIG_DIRTY modification(s))" "$CONFIG_ROOT"
+if [ "$STACK_MANIFEST_LOADED" -eq 0 ]; then
+  add_check stack.manifest PASS "stack compatibility manifest loaded (schema $SM_SCHEMA_VERSION)" "$STACK_MANIFEST"
+else
+  add_check stack.manifest FAIL "$SM_LOAD_ERROR" "$STACK_MANIFEST"
+fi
 
 FIRSTMATE_BROKEN=0
 if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
@@ -207,6 +220,14 @@ if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
   else
     add_check firstmate.official WARNING "official FirstMate at $FIRSTMATE_COMMIT has $FIRSTMATE_DIRTY local modification(s); this configuration expects it unmodified" "$FIRSTMATE_ROOT"
   fi
+  FIRSTMATE_RELATION=$(stack_commit_relation "$FIRSTMATE_ROOT" "$SM_FIRSTMATE_COMMIT")
+  case $FIRSTMATE_RELATION in
+    exact) add_check firstmate.commit_compat PASS "matches the validated baseline commit ${SM_FIRSTMATE_COMMIT:0:12}" "$SM_FIRSTMATE_COMMIT" ;;
+    descendant) add_check firstmate.commit_compat WARNING "ahead of the validated baseline commit ${SM_FIRSTMATE_COMMIT:0:12}; unvalidated" "$SM_FIRSTMATE_COMMIT" ;;
+    ancestor) add_check firstmate.commit_compat FAIL "behind the validated baseline commit ${SM_FIRSTMATE_COMMIT:0:12}" "$SM_FIRSTMATE_COMMIT" ;;
+    diverged) add_check firstmate.commit_compat FAIL "history has diverged from the validated baseline commit ${SM_FIRSTMATE_COMMIT:0:12}" "$SM_FIRSTMATE_COMMIT" ;;
+    *) add_check firstmate.commit_compat UNKNOWN "relationship to the validated baseline commit ${SM_FIRSTMATE_COMMIT:-unknown} cannot be determined from local history" "$SM_FIRSTMATE_COMMIT" ;;
+  esac
 else
   FIRSTMATE_COMMIT=unknown
   FIRSTMATE_DIRTY=unknown
@@ -384,6 +405,13 @@ else
   else
     add_check runtime.herdr_server UNKNOWN "herdr status --json produced no recognizable 'running' field; server health cannot be determined without guessing" "$HERDR_STATUS_JSON"
   fi
+  HERDR_VER=$(stack_version_extract "$HERDR_SERVER_VERSION")
+  case $(stack_component_compat "$HERDR_VER" "$SM_HERDR_MIN" "$SM_HERDR_TESTED") in
+    PASS) add_check runtime.herdr_version PASS "herdr server $HERDR_VER satisfies the validated stack policy (tested $SM_HERDR_TESTED)" "" ;;
+    WARNING) add_check runtime.herdr_version WARNING "herdr server $HERDR_VER is newer than the tested baseline $SM_HERDR_TESTED; unvalidated" "" ;;
+    FAIL) add_check runtime.herdr_version FAIL "herdr server $HERDR_VER is below the required minimum $SM_HERDR_MIN" "" ;;
+    *) add_check runtime.herdr_version UNKNOWN "could not parse a version from herdr's reported server version: ${HERDR_SERVER_VERSION:-<empty>}" "" ;;
+  esac
 fi
 
 STATE_DIR="$FM_HOME/state"
@@ -485,6 +513,13 @@ J_RUNTIME=$(printf '{"herdr":{"cli_present":%s,"running":%s,"compatible":%s,"ser
 if command -v "$PI_BIN" >/dev/null 2>&1; then
   pi_version=$("$PI_BIN" --version 2>/dev/null | head -1)
   add_check harnesses.pi PASS "Pi installed (${pi_version:-unknown version})" "$(command -v "$PI_BIN")"
+  pi_ver=$(stack_version_extract "$pi_version")
+  case $(stack_component_compat "$pi_ver" "$SM_PI_MIN" "$SM_PI_TESTED") in
+    PASS) add_check harnesses.pi_version PASS "Pi $pi_ver satisfies the validated stack policy (tested $SM_PI_TESTED)" "" ;;
+    WARNING) add_check harnesses.pi_version WARNING "Pi $pi_ver is newer than the tested baseline $SM_PI_TESTED; unvalidated" "" ;;
+    FAIL) add_check harnesses.pi_version FAIL "Pi $pi_ver is below the required minimum $SM_PI_MIN" "" ;;
+    *) add_check harnesses.pi_version UNKNOWN "could not parse a version from Pi's --version output: ${pi_version:-<empty>}" "" ;;
+  esac
 else
   add_check harnesses.pi FAIL "Pi executable '$PI_BIN' is not on PATH" ""
 fi
@@ -492,6 +527,13 @@ fi
 if command -v omp >/dev/null 2>&1; then
   omp_version=$(omp --version 2>/dev/null | head -1)
   add_check harnesses.omp PASS "omp installed (${omp_version:-unknown version})" "$(command -v omp)"
+  omp_ver=$(stack_version_extract "$omp_version")
+  case $(stack_component_compat "$omp_ver" "$SM_OMP_MIN" "$SM_OMP_TESTED") in
+    PASS) add_check harnesses.omp_version PASS "omp $omp_ver satisfies the validated stack policy (tested $SM_OMP_TESTED)" "" ;;
+    WARNING) add_check harnesses.omp_version WARNING "omp $omp_ver is newer than the tested baseline $SM_OMP_TESTED; unvalidated" "" ;;
+    FAIL) add_check harnesses.omp_version FAIL "omp $omp_ver is below the required minimum $SM_OMP_MIN" "" ;;
+    *) add_check harnesses.omp_version UNKNOWN "could not parse a version from omp's --version output: ${omp_version:-<empty>}" "" ;;
+  esac
 else
   add_check harnesses.omp FAIL "omp executable is not on PATH" ""
 fi

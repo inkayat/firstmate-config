@@ -16,6 +16,14 @@ FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
 FM_HOME="${FM_HOME:-$HOME/.firstmate}"
 export GIT_OPTIONAL_LOCKS=0
 
+# The one parsing owner for stack compatibility, shared with install.sh and
+# bin/fm-doctor. fm-version reads only compact identity metadata from it
+# (the validated FirstMate baseline commit) - never a compatibility verdict;
+# that stays in `fm doctor`.
+# shellcheck source=firstmate/fm-stack-manifest.sh
+. "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh"
+stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv" || true
+
 JSON=0
 case ${1:-} in --json) JSON=1 ;; '') ;; --help|-h) printf 'Usage: fm version [--json]\n'; exit 0 ;; *) printf 'fm-version: unknown argument '\''%s'\''; see fm version --help\n' "$1" >&2; exit 1 ;; esac
 [ -d "$CONFIG_ROOT" ] || { printf 'fm-version: cannot establish firstmate-config path\n' >&2; exit 1; }
@@ -37,15 +45,18 @@ fm_state=$(git_state "$FIRSTMATE_ROOT")
 pi_version=$(version_cmd "${FM_PI_BIN:-pi}")
 omp_version=$(version_cmd "${FM_OMP_BIN:-omp}")
 herdr_version=$(version_cmd herdr)
+manifest_schema=${SM_SCHEMA_VERSION:-unknown}
+manifest_baseline=${SM_FIRSTMATE_COMMIT:-unknown}
 platform=$(uname -s 2>/dev/null || printf unknown)
 arch=$(uname -m 2>/dev/null || printf unknown)
 
 if [ "$JSON" -eq 1 ]; then
   printf '{'
-  printf '"schema_version":1,'
+  printf '"schema_version":2,'
   printf '"firstmate_config":{"path":%s,"tag":%s,"commit":%s,"state":%s},' "$(jstr "$CONFIG_ROOT")" "$(jstr "$cfg_tag")" "$(jstr "$cfg_commit")" "$(jstr "$cfg_state")"
   printf '"firstmate":{"path":%s,"commit":%s,"state":%s},' "$(jstr "$FIRSTMATE_ROOT")" "$(jstr "$fm_commit")" "$(jstr "$fm_state")"
   printf '"components":{"pi":%s,"omp":%s,"herdr":%s},' "$(jstr "$pi_version")" "$(jstr "$omp_version")" "$(jstr "$herdr_version")"
+  printf '"stack_manifest":{"schema_version":%s,"firstmate_validated_commit":%s},' "$(jstr "$manifest_schema")" "$(jstr "$manifest_baseline")"
   printf '"fm_home":%s,"platform":%s,"architecture":%s' "$(jstr "$FM_HOME")" "$(jstr "$platform")" "$(jstr "$arch")"
   printf '}\n'
 else
@@ -54,6 +65,7 @@ else
   printf 'Pi: %s\n' "$pi_version"
   printf 'OMP: %s\n' "$omp_version"
   printf 'Herdr: %s\n' "$herdr_version"
+  printf 'Validated FirstMate baseline: %s (stack manifest schema %s)\n' "$manifest_baseline" "$manifest_schema"
   printf 'FM_HOME: %s\n' "$FM_HOME"
   printf 'Platform: %s %s\n' "$platform" "$arch"
 fi

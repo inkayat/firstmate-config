@@ -1,0 +1,40 @@
+# firstmate-config stack compatibility manifest.
+#
+# The single source of truth for stable compatibility information across
+# Pi Captain -> official FirstMate -> Herdr -> Pi / OMP, on macOS and
+# Betao/Omarchy Linux. install.sh and bin/fm-doctor both read this file
+# through firstmate/fm-stack-manifest.sh, the one parsing/comparison owner -
+# never duplicate these values as separate hardcoded constants in a script
+# or a test.
+#
+# Deliberately excluded (see README "Boundaries" and AGENTS.md): auth,
+# credentials, machine paths, Betao settings, the project registry, Portail
+# data, runtime task state, and Captain model routing - those stay owned by
+# crew-dispatch.json, captain-startup-models.tsv, and machine-local state.
+#
+# min and tested are equal for every component below: this installation has
+# one locally-verified known-good version per component, not a separately
+# proven lower bound. A future release that has actually validated a wider
+# supported range can lower min below tested; recording a lower min now
+# without that evidence would just be a guess, which fm-doctor's own status
+# rules (README "fm doctor") forbid.
+#
+# firstmate_validated_commit is the full commit hash, not a short one:
+# fm-doctor and install.sh reason about it with `git merge-base
+# --is-ancestor` (firstmate/fm-stack-manifest.sh:stack_commit_relation),
+# which needs an unambiguous object id.
+#
+# To move a pin: verify the new values against a real installation, change
+# them below, and commit. This file is tracked; nothing here is
+# machine-local state.
+#
+# Format, tab-separated key<TAB>value:
+schema_version	1
+firstmate_repo	https://github.com/kunchenguid/firstmate.git
+firstmate_validated_commit	8b10b61e3feace8f275c6d0b3e490cdf7ab1f67d
+pi_min_version	0.85.1
+pi_tested_version	0.85.1
+omp_min_version	18.1.21
+omp_tested_version	18.1.21
+herdr_min_version	0.8.0
+herdr_tested_version	0.8.0
