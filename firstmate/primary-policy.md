@@ -6,8 +6,43 @@ project's own instructions.
 
 ## 1. Authority
 
-The project being worked on is the source of truth. Resolve it per task, in
-this order, and stop at the first rule that answers the question:
+### Which project
+
+Every delegated task names or implies exactly one project. Resolve it
+independently per task, in this order, stopping at the first rule that
+answers the question:
+
+1. an explicit path or project name in the request
+2. a name that matches an entry in `data/projects.md`, the existing
+   FirstMate project registry (`bin/fm-project-mode.sh` is its parser and
+   standing-posture lookup) - reuse it; never add a second project database,
+   custom daemon, or resolver service for this
+3. `$FM_FORK_ORIGIN_CWD`, the directory `fm` was launched from, as a
+   default-project hint, and only when that directory is itself a Git
+   project - `fm --check`/`fm --print-command` already report this as
+   `FM_FORK_ORIGIN_IS_PROJECT`, so there is no need to re-derive it with a
+   separate `git` call
+
+Ask one concise question when the project is still ambiguous after those
+three steps. Never guess a project silently.
+
+This session always runs from the official FirstMate checkout, regardless of
+where `fm` was launched, so session start loads only FirstMate's own
+`AGENTS.md` as the global orchestrator contract. No project's `AGENTS.md`,
+`CLAUDE.md`, or project-local skills are ever preloaded as global authority
+at startup - each is resolved fresh, per task, by the steps above. Launching
+`fm` from inside a project never binds this session to it: a later task
+naming a different project resolves independently by the same three steps,
+and concurrent tasks may target different projects at once. Each task is
+dispatched into its own isolated task worktree (`AGENTS.md` section 7),
+never the captain's own checkout, so nothing one task reads leaks into
+another's.
+
+### Instruction precedence within that project
+
+The project being worked on is the source of truth. Resolve its instructions
+per task, in this order, and stop at the first rule that answers the
+question:
 
 1. a precedence or resolution rule the project documents for itself
 2. a more specific subtree over a broader one - the nearest instruction file to

@@ -28,6 +28,8 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `skills/external.lock` | external skill packs, pinned by commit | cloned to a machine-local cache, symlinked into `~/.agents/skills/` |
 | `install.sh` | idempotent installer | - |
 | `tests/smoke.sh` | acceptance smoke | - |
+| `tests/model-selection.sh` | captain startup model selection acceptance | - |
+| `tests/multi-project-captain.sh` | multi-project resolution/isolation/routing acceptance | - |
 
 ## Install
 
@@ -49,8 +51,9 @@ refreshes pinned skills, and leaves anything you have edited by hand alone.
 Verify an installation at any time:
 
 ```sh
-tests/smoke.sh          # launcher, install state, skills, herdr
-tests/smoke.sh --live   # the same, plus a captain that is currently running
+tests/smoke.sh                     # launcher, install state, skills, herdr
+tests/smoke.sh --live              # the same, plus a captain that is currently running
+tests/multi-project-captain.sh     # project resolution, isolation, and routing
 ```
 
 ## Captain startup model
@@ -65,6 +68,29 @@ unavailable model/provider, reliably reported quota exhaustion, or unsupported
 configured effort.
 The launcher prints the preferred candidate, selected candidate, and fallback
 reason when it did not use the preferred candidate.
+
+## Multi-project captain
+
+One `fm` launch starts one project-neutral Captain session: Pi always runs
+from the official checkout, never from wherever `fm` was invoked, so no
+project's `AGENTS.md`, `CLAUDE.md`, or project-local skills are ever
+preloaded as global authority. `firstmate/primary-policy.md` section 1
+("Which project") resolves the target independently for every delegated
+task, in order:
+
+1. an explicit path or project name in the request
+2. a name in FirstMate's own `data/projects.md` registry
+   (`bin/fm-project-mode.sh`) - the only project database this configuration
+   uses
+3. the launch directory (`FM_FORK_ORIGIN_CWD`) as a default-project hint,
+   used only when `bin/fm` reports `FM_FORK_ORIGIN_IS_PROJECT=true` for it
+
+The captain asks when a project is still ambiguous after those three steps.
+Launching `fm` from inside one project never binds the session to it or
+blocks dispatch to another; concurrent tasks may target different projects,
+each in its own isolated task worktree, with no local context crossing
+between them. See `tests/multi-project-captain.sh` for the acceptance
+evidence.
 
 ## Routing in v0.1
 

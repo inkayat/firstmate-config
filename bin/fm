@@ -33,9 +33,16 @@
 #
 # Working directory. Pi runs IN the checkout, because AGENTS.md is a
 # working-directory context file and a captain whose harness never loaded it is
-# not a Firstmate captain. Your shell's directory is untouched, and the
-# directory you launched from is passed through as FM_FORK_ORIGIN_CWD so the
-# captain can resolve the project you meant instead of guessing.
+# not a Firstmate captain. This makes every Captain session project-neutral: no
+# project's AGENTS.md, CLAUDE.md, or project-local skills are ever preloaded as
+# global authority at startup, and launching from inside a project never binds
+# the session to it. Your shell's directory is untouched, and the directory you
+# launched from is passed through as FM_FORK_ORIGIN_CWD plus the precomputed
+# FM_FORK_ORIGIN_IS_PROJECT (true only when that directory is itself a Git
+# project) so the captain can use it as a default-project HINT for one task
+# instead of guessing or re-deriving Git-ness itself - never as a binding.
+# firstmate/primary-policy.md "Which project" owns the full precedence this
+# hint sits inside; nothing here resolves a project on the captain's behalf.
 #
 # Usage:
 #   fm                    launch the captain
@@ -64,6 +71,14 @@ FM_BACKEND="${FM_BACKEND:-herdr}"
 PI_BIN="${FM_PI_BIN:-pi}"
 EXT_MODE="${FM_PI_EXTENSIONS:-auto}"
 ORIGIN_CWD=$PWD
+# The launch directory is only ever a default-project HINT (primary-policy.md
+# "Which project"), and only when it is itself a Git project. Computed once,
+# cheaply, with the one tool this launcher already requires, so the captain
+# never has to shell out to re-derive it per task.
+ORIGIN_IS_PROJECT=false
+if command -v git >/dev/null 2>&1 && git -C "$ORIGIN_CWD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  ORIGIN_IS_PROJECT=true
+fi
 
 WATCH_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
 TURNEND_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
@@ -173,6 +188,7 @@ print_resolution() {
   printf 'FM_HOME=%s\n' "$FM_HOME"
   printf 'FM_BACKEND=%s\n' "$FM_BACKEND"
   printf 'FM_FORK_ORIGIN_CWD=%s\n' "$ORIGIN_CWD"
+  printf 'FM_FORK_ORIGIN_IS_PROJECT=%s\n' "$ORIGIN_IS_PROJECT"
   printf 'PI_CWD=%s\n' "$FIRSTMATE_ROOT"
   printf 'PI_BIN=%s\n' "$PI_BIN"
   printf 'PI_EXTENSIONS=%s\n' "$1"
@@ -222,6 +238,7 @@ cd "$FIRSTMATE_ROOT" || die "cannot enter $FIRSTMATE_ROOT"
 
 export FM_HOME FM_BACKEND
 export FM_FORK_ORIGIN_CWD="$ORIGIN_CWD"
+export FM_FORK_ORIGIN_IS_PROJECT="$ORIGIN_IS_PROJECT"
 export FM_CONFIG_ROOT="$CONFIG_ROOT"
 
 # Machine-local record of what this captain was actually launched with. macOS
@@ -238,6 +255,7 @@ export FM_CONFIG_ROOT="$CONFIG_ROOT"
   printf 'fm_home=%s\n' "$FM_HOME"
   printf 'fm_backend=%s\n' "$FM_BACKEND"
   printf 'origin_cwd=%s\n' "$ORIGIN_CWD"
+  printf 'origin_is_project=%s\n' "$ORIGIN_IS_PROJECT"
   printf 'pi_cwd=%s\n' "$FIRSTMATE_ROOT"
   printf 'pi_extensions=%s\n' "$mode"
   printf 'preferred_model=%s\n' "$PREFERRED_MODEL"
