@@ -84,10 +84,14 @@ started from - make the following an explicit, compact part of that task's
    explicitly wherever more than one exists, so the worker never has to
    guess which contradictory file is authoritative;
 3. the exact project-local skill path(s) the task requires, each paired with
-   a read-and-apply requirement, not merely a name to notice, for example:
+   a read-and-apply requirement, not merely a name to notice. Give every
+   path bare and worktree-relative - never the primary/source checkout's
+   absolute path, which does not exist yet from the worker's side and
+   which the worker must never read from instead of its own worktree - for
+   example:
 
        Required project skill:
-         <worktree>/.agents/skills/django-migrations/SKILL.md
+         .agents/skills/django-migrations/SKILL.md
        Requirement:
          Read and apply this skill before reading, writing, reviewing, or
          editing migrations.
@@ -101,9 +105,12 @@ started from - make the following an explicit, compact part of that task's
        Requirement:
          Apply before declaring the task complete.
 
-5. a pre-work requirement: before substantive work, read every path named
-   above and report a missing, unreadable, or conflicting path instead of
-   silently falling back to a different scope or a global default;
+5. a pre-work requirement: before substantive work, confirm `pwd -P`
+   equals `git rev-parse --show-toplevel` (standing at the worker's own
+   isolated worktree root, not a parent or the primary checkout), then
+   read every path named above relative to that root and report a missing,
+   unreadable, or conflicting path instead of silently falling back to a
+   different scope or a global default;
 6. a requirement that scope expansion re-triggers step 2 for the newly
    touched subtree before editing there.
 

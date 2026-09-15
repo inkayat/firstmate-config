@@ -303,8 +303,13 @@ tests/worker-context.sh validate <worker-report> [<worktree>]  # classify a real
 ```
 
 `prepare` builds the fixture once; `handoff` prints the paths/precedence/
-required-actions text to hand a real delegated worker (never a canary body
-marker, so a worker that only echoes it back cannot pass `validate`);
+required-actions text to hand a real delegated worker - every path bare
+and worktree-relative, never the source/primary checkout's absolute path
+(which does not exist from the worker's side, since its own isolated
+worktree is created later by `fm-spawn`), with an explicit instruction to
+verify `pwd -P` against `git rev-parse --show-toplevel` first. It also
+never prints a canary body marker, so a worker that only echoes it back
+cannot pass `validate`;
 `validate` proves, from that worker's own report, the expected worktree,
 root-override authority, absence of the markers it must shadow, nested-
 scope application, the project skill's body-only marker applied before

@@ -172,33 +172,51 @@ EOF
 }
 
 # fixture_handoff <repo-dir> - prints the compact, Firstmate-spec-shaped
-# handoff for the fixture at <repo-dir>: applicable instruction paths and
-# which wins at each scope, required project-local/shared skill paths each
-# paired with a read-and-apply requirement, and the governed task. Never
-# prints a body-only marker (C_PROJECT_SKILL_BODY, C_SHARED_SKILL_BODY) or
-# any other canary constant: a worker that only echoes this text back can
-# never pass fixture_validate_live, since only an actual read of the named
-# files surfaces those markers.
+# handoff for the fixture prepared at <repo-dir>: applicable instruction
+# paths and which wins at each scope, required project-local/shared skill
+# paths each paired with a read-and-apply requirement, and the governed
+# task. <repo-dir> is used only to validate the fixture exists; its
+# absolute path is NEVER printed. The worker's actual isolated task
+# worktree does not exist yet when this handoff is generated (fm-spawn
+# creates it later, at a different path than any source/primary checkout),
+# so every path below is bare and worktree-relative, with an explicit
+# instruction to verify `pwd -P` against `git rev-parse --show-toplevel`
+# before resolving them - never read the source/primary checkout instead
+# of the worker's own worktree. Also never prints a body-only marker
+# (C_PROJECT_SKILL_BODY, C_SHARED_SKILL_BODY) or any other canary constant:
+# a worker that only echoes this text back can never pass
+# fixture_validate_live, since only an actual read of the named files
+# surfaces those markers.
 fixture_handoff() {
   local repo=$1
+  if [ ! -f "$repo/AGENTS.override.md" ]; then
+    printf 'fixture_handoff: %s is missing AGENTS.override.md; not a prepared fixture\n' "$repo" >&2
+    return 1
+  fi
   cat <<EOF
-Selected project subtree: $repo (task worktree; work only inside it)
+Task worktree: your current isolated task worktree - never the primary or
+source checkout this fixture was prepared from, which does not exist from
+your side and must never be read instead.
+
+Before reading anything below, verify you are standing at that worktree's
+root: run pwd -P and git rev-parse --show-toplevel and confirm they are
+equal. Every path below is bare and relative to that root.
 
 Applicable instruction paths, nearest scope first, name given where more
 than one file exists at a scope:
-  $repo/AGENTS.override.md   - wins at the repository root
-  $repo/AGENTS.md            - shadowed by AGENTS.override.md at this scope; not authoritative
-  $repo/CLAUDE.md            - not authoritative while AGENTS.md exists at this scope
-  $repo/sub/AGENTS.md        - wins only for files under sub/
+  AGENTS.override.md   - wins at the repository root
+  AGENTS.md            - shadowed by AGENTS.override.md at this scope; not authoritative
+  CLAUDE.md            - not authoritative while AGENTS.md exists at this scope
+  sub/AGENTS.md        - wins only for files under sub/
 
 Required project skill:
-  $repo/.agents/skills/migration-canary/SKILL.md
+  .agents/skills/migration-canary/SKILL.md
 Requirement:
   Read and apply this skill before reading, writing, reviewing, or editing
-  anything under $repo/migrations/.
+  anything under migrations/.
 
 Required project skill (name collision with a global shared skill):
-  $repo/.agents/skills/architecture-review/SKILL.md
+  .agents/skills/architecture-review/SKILL.md
 Requirement:
   This project-local skill overrides the global shared skill of the same
   name for this task; apply the project-local version, never a global
@@ -210,14 +228,15 @@ Requirement:
   Apply before declaring the task complete.
 
 Pre-work requirement:
-  Read every path named above before substantive work. Report any missing,
-  unreadable, or conflicting path instead of silently falling back to a
-  different scope or a global default. Re-check applicable instructions
-  before editing outside this subtree if scope expands.
+  Read every path named above, resolved from your current worktree root,
+  before substantive work. Report any missing, unreadable, or conflicting
+  path instead of silently falling back to a different scope or a global
+  default. Re-check applicable instructions before editing outside this
+  subtree if scope expands.
 
 Task:
-  1. Add a NOT NULL constraint to $repo/migrations/0001_init.sql.
-  2. Add a short note to $repo/sub/notes.md explaining the change.
+  1. Add a NOT NULL constraint to migrations/0001_init.sql.
+  2. Add a short note to sub/notes.md explaining the change.
   3. Report what you read and applied, then declare the task complete.
 EOF
 }
@@ -558,6 +577,25 @@ for marker in "$C_ROOT_OVERRIDE" "$C_ROOT_AGENTS_SHADOWED" "$C_ROOT_CLAUDE_NEVER
   "$C_PROJECT_SKILL_BODY" "$C_SHARED_SKILL_BODY" "$C_PROJECT_WINS" "$C_GLOBAL_LEAK" "$C_CAPTAIN_ONLY"; do
   not_contains "CLI handoff: never quotes the canary marker '$marker'" "$handoff_out" "$marker"
 done
+
+# The source fixture's absolute path must never leak into the handoff: the
+# worker's isolated task worktree does not exist yet when the handoff is
+# generated, and reading the primary/source checkout instead of that
+# worktree is exactly the violation this proves absent. A unique token in
+# the source path makes a leak unmistakable, not just plausible.
+SOURCE_DIR="$TMP_ROOT/SOURCE-ONLY-$$-do-not-leak"
+mkdir -p "$SOURCE_DIR"
+fixture_prepare "$SOURCE_DIR"
+SOURCE_REPO="$SOURCE_DIR/repo"
+source_handoff_out=$(bash "$SELF" handoff "$SOURCE_REPO" 2>&1)
+not_contains 'CLI handoff: never prints the source/primary checkout absolute path' "$source_handoff_out" "$SOURCE_REPO"
+not_contains 'CLI handoff: never prints the unique source-path token' "$source_handoff_out" 'SOURCE-ONLY'
+contains 'CLI handoff: names AGENTS.override.md as a bare worktree-relative path' "$source_handoff_out" 'AGENTS.override.md'
+contains 'CLI handoff: names sub/AGENTS.md as a bare worktree-relative path' "$source_handoff_out" 'sub/AGENTS.md'
+contains 'CLI handoff: names the migration skill as a bare worktree-relative path' "$source_handoff_out" '.agents/skills/migration-canary/SKILL.md'
+contains 'CLI handoff: names the migration file as a bare worktree-relative path' "$source_handoff_out" 'migrations/0001_init.sql'
+contains 'CLI handoff: instructs verifying pwd -P against the current worktree' "$source_handoff_out" 'pwd -P'
+contains 'CLI handoff: instructs verifying against git rev-parse --show-toplevel' "$source_handoff_out" 'git rev-parse --show-toplevel'
 
 GOOD_REPORT="$TMP_ROOT/cli-good-report.txt"
 cat > "$GOOD_REPORT" <<EOF
