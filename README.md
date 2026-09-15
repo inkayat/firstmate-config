@@ -20,6 +20,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | --- | --- | --- |
 | `bin/fm` | the launcher: `cd anywhere && fm` | symlinked onto `PATH` |
 | `bin/fm-doctor` | read-only architecture diagnostics: `fm doctor` / `fm doctor --json` | invoked by `bin/fm doctor` |
+| `bin/fm-version` | compact read-only identity/version summary: `fm version` / `fm version --json` | invoked by `bin/fm version` |
 | `firstmate/primary-policy.md` | the captain's operating policy | read by the captain, path named from `data/captain.md` |
 | `firstmate/captain.md` | first-run template for the captain's own notes | copied to `$FM_HOME/data/captain.md` **only when absent** |
 | `firstmate/crew-dispatch.json` | which harness takes which kind of task | symlinked to `$FM_HOME/config/crew-dispatch.json` |
@@ -59,6 +60,17 @@ tests/smoke.sh --live              # the same, plus a captain that is currently 
 tests/multi-project-captain.sh     # project resolution, isolation, and routing
 tests/doctor.sh                    # fm doctor: statuses, exit codes, JSON schema
 ```
+
+## fm version
+
+```sh
+fm version
+fm version --json
+```
+
+Fast, read-only identity facts for bug reports: firstmate-config tag/commit/state, official FirstMate path/commit/state, Pi/OMP/Herdr versions, `FM_HOME`, platform, and architecture. Optional component versions are `unknown` when unavailable; diagnostics stay in `fm doctor`.
+
+JSON schema (`--json`, `schema_version: 1`) has `firstmate_config`, `firstmate`, `components`, `fm_home`, `platform`, and `architecture`.
 
 ## fm doctor
 

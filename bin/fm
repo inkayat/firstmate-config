@@ -50,6 +50,8 @@
 #   fm --print-command    print the resolved environment and command
 #   fm doctor             run read-only architecture diagnostics
 #   fm doctor --json      the same diagnostics as machine-readable JSON
+#   fm version            print compact installed stack identity/version facts
+#   fm version --json     the same facts as machine-readable JSON
 #   fm --help
 set -u
 
@@ -95,6 +97,13 @@ FALLBACK_REASON=
 
 die() { printf 'fm: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,/^set -u$/p' "$self" | sed -e 's/^# \{0,1\}//' -e '/^set -u$/d'; }
+
+case ${1:-} in
+  version)
+    shift
+    exec "$CONFIG_ROOT/bin/fm-version" "$@"
+    ;;
+esac
 
 # One authoritative availability function/path, shared with bin/fm-doctor.
 # shellcheck source=firstmate/fm-captain-lib.sh

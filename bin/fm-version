@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# fm-version - fast, read-only identity summary. Not a health check.
+set -u
+
+ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
+# shellcheck source=/dev/null
+[ ! -f "$ENV_FILE" ] || . "$ENV_FILE"
+
+self=${BASH_SOURCE[0]}
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case $target in /*) self=$target ;; *) self="$(cd "$(dirname "$self")" && pwd)/$target" ;; esac
+done
+CONFIG_ROOT="$(cd "$(dirname "$self")/.." && pwd)"
+FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
+FM_HOME="${FM_HOME:-$HOME/.firstmate}"
+export GIT_OPTIONAL_LOCKS=0
+
+JSON=0
+case ${1:-} in --json) JSON=1 ;; '') ;; --help|-h) printf 'Usage: fm version [--json]\n'; exit 0 ;; *) printf 'fm-version: unknown argument '\''%s'\''; see fm version --help\n' "$1" >&2; exit 1 ;; esac
+[ -d "$CONFIG_ROOT" ] || { printf 'fm-version: cannot establish firstmate-config path\n' >&2; exit 1; }
+[ -n "$FIRSTMATE_ROOT" ] || { printf 'fm-version: cannot establish official FirstMate path\n' >&2; exit 1; }
+
+jesc(){ local s=${1:-}; s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/\\n}; s=${s//$'\r'/\\r}; s=${s//$'\t'/\\t}; printf '%s' "$s"; }
+jstr(){ printf '"%s"' "$(jesc "$1")"; }
+
+git_commit(){ git -C "$1" rev-parse --short HEAD 2>/dev/null || printf unknown; }
+git_tag(){ git -C "$1" describe --tags --exact-match 2>/dev/null || git -C "$1" describe --tags --always 2>/dev/null || printf unknown; }
+git_state(){ [ -d "$1/.git" ] || git -C "$1" rev-parse --git-dir >/dev/null 2>&1 || { printf unknown; return; }; [ -z "$(git -C "$1" status --porcelain 2>/dev/null)" ] && printf clean || printf dirty; }
+version_cmd(){ command -v "$1" >/dev/null 2>&1 || { printf unknown; return; }; "$1" --version 2>/dev/null | awk 'NR==1{print; found=1} END{if(!found) print "unknown"}'; }
+
+cfg_tag=$(git_tag "$CONFIG_ROOT")
+cfg_commit=$(git_commit "$CONFIG_ROOT")
+cfg_state=$(git_state "$CONFIG_ROOT")
+fm_commit=$(git_commit "$FIRSTMATE_ROOT")
+fm_state=$(git_state "$FIRSTMATE_ROOT")
+pi_version=$(version_cmd "${FM_PI_BIN:-pi}")
+omp_version=$(version_cmd "${FM_OMP_BIN:-omp}")
+herdr_version=$(version_cmd herdr)
+platform=$(uname -s 2>/dev/null || printf unknown)
+arch=$(uname -m 2>/dev/null || printf unknown)
+
+if [ "$JSON" -eq 1 ]; then
+  printf '{'
+  printf '"schema_version":1,'
+  printf '"firstmate_config":{"path":%s,"tag":%s,"commit":%s,"state":%s},' "$(jstr "$CONFIG_ROOT")" "$(jstr "$cfg_tag")" "$(jstr "$cfg_commit")" "$(jstr "$cfg_state")"
+  printf '"firstmate":{"path":%s,"commit":%s,"state":%s},' "$(jstr "$FIRSTMATE_ROOT")" "$(jstr "$fm_commit")" "$(jstr "$fm_state")"
+  printf '"components":{"pi":%s,"omp":%s,"herdr":%s},' "$(jstr "$pi_version")" "$(jstr "$omp_version")" "$(jstr "$herdr_version")"
+  printf '"fm_home":%s,"platform":%s,"architecture":%s' "$(jstr "$FM_HOME")" "$(jstr "$platform")" "$(jstr "$arch")"
+  printf '}\n'
+else
+  printf 'firstmate-config: %s (%s, %s) %s\n' "$cfg_tag" "$cfg_commit" "$cfg_state" "$CONFIG_ROOT"
+  printf 'official FirstMate: %s (%s, %s)\n' "$FIRSTMATE_ROOT" "$fm_commit" "$fm_state"
+  printf 'Pi: %s\n' "$pi_version"
+  printf 'OMP: %s\n' "$omp_version"
+  printf 'Herdr: %s\n' "$herdr_version"
+  printf 'FM_HOME: %s\n' "$FM_HOME"
+  printf 'Platform: %s %s\n' "$platform" "$arch"
+fi
