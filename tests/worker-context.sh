@@ -83,6 +83,8 @@ ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
 # shellcheck source=/dev/null
 [ ! -f "$ENV_FILE" ] || . "$ENV_FILE"
 FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
+# shellcheck source=firstmate/fm-verify-provenance.sh
+. "$CONFIG_ROOT/firstmate/fm-verify-provenance.sh"
 
 failed=0
 pass() { printf 'ok   - %s\n' "$1"; }
@@ -264,6 +266,36 @@ Skill-catalog evidence requirement:
       here only as the comparison root, never to scan its filesystem
       yourself>
 
+Bounded internal delegation evidence requirement (report only if your
+harness has a native bounded subagent mechanism; otherwise report
+INTERNAL_SUBAGENT_USED: not-applicable with one reason line - never force
+a mechanism your harness lacks):
+  If you spawn any task-local scout, researcher, reviewer, or helper
+  through your harness's own native mechanism, it must stay read-only,
+  under this same task/project/worktree, create no separate Firstmate
+  task, and never recurse past your harness's own native bound. Report:
+    INTERNAL_SUBAGENT_USED: yes | no | not-applicable
+    (when yes, also report all of:)
+    INTERNAL_SUBAGENT_ID: <its registry/session id>
+    INTERNAL_SUBAGENT_HARNESS: <harness name>
+    INTERNAL_SUBAGENT_MODEL: <model>
+    INTERNAL_SUBAGENT_EFFORT: <effort>
+    INTERNAL_SUBAGENT_PURPOSE: <why it was spawned, one line>
+    INTERNAL_SUBAGENT_MODE: read-only | mutating
+    INTERNAL_SUBAGENT_SAME_WORKTREE: true | false
+    INTERNAL_SUBAGENT_SAME_PROJECT: true | false
+    INTERNAL_SUBAGENT_FIRSTMATE_TASK_CREATED: none | <task id>
+    INTERNAL_SUBAGENT_CONTEXT_INHERITED: <what it inherited from you,
+      e.g. same cwd/worktree, shared local:// root - never re-derived>
+
+Verification provenance evidence requirement (report for the command whose
+output you cite as verification evidence):
+    VERIFY_PROVENANCE_KIND: local | container-bind | artifact
+    VERIFY_EXECUTION_REALPATH: <canonical host path proving the claim -
+      see the verification-provenance skill for exactly what to run per
+      kind>
+    VERIFY_ARTIFACT_SOURCE_COMMIT: <artifact kind only>
+
 Pre-work requirement:
   Read every path named above, resolved from your current worktree root,
   before substantive work. Report any missing, unreadable, or conflicting
@@ -274,8 +306,13 @@ Pre-work requirement:
 Task:
   1. Add a NOT NULL constraint to migrations/0001_init.sql.
   2. Add a short note to sub/notes.md explaining the change.
-  3. Report what you read and applied, plus the skill-catalog evidence
-     above, then declare the task complete.
+  3. Run a verification command for the change and report the verification
+     provenance evidence above for it.
+  4. Report the bounded-internal-delegation evidence above (yes/no/not-
+     applicable).
+  5. Report what you read and applied, plus the skill-catalog evidence,
+     verification provenance, and internal-delegation evidence above, then
+     declare the task complete.
 EOF
 }
 
@@ -425,6 +462,67 @@ fixture_validate_live() {
     _req OFFICIAL_INTERNAL_SKILL_COUNT_ZERO 1
   fi
 
+  # Bounded internal delegation (README.md "Bounded internal delegation",
+  # firstmate/primary-policy.md section 6). A worker that never reports
+  # INTERNAL_SUBAGENT_USED at all fails outright - silence is not
+  # "not-applicable". "not-applicable" and "no" both skip the detail
+  # checks below (nothing to prove); "yes" requires every scope/context
+  # field to be present AND correct: read-only, same worktree, same
+  # project, and no separate Firstmate task created.
+  local subagent_used mode same_wt same_proj fm_task
+  subagent_used=$(_wc_field "$t" INTERNAL_SUBAGENT_USED)
+  case $subagent_used in
+    yes*|no*|not-applicable*) _req INTERNAL_SUBAGENT_EVIDENCE_REPORTED 0 ;;
+    *) _req INTERNAL_SUBAGENT_EVIDENCE_REPORTED 1 ;;
+  esac
+  case $subagent_used in
+    yes*)
+      mode=$(_wc_field "$t" INTERNAL_SUBAGENT_MODE)
+      same_wt=$(_wc_field "$t" INTERNAL_SUBAGENT_SAME_WORKTREE)
+      same_proj=$(_wc_field "$t" INTERNAL_SUBAGENT_SAME_PROJECT)
+      fm_task=$(_wc_field "$t" INTERNAL_SUBAGENT_FIRSTMATE_TASK_CREATED)
+      case $mode in read-only) _req INTERNAL_SUBAGENT_READ_ONLY 0 ;; *) _req INTERNAL_SUBAGENT_READ_ONLY 1 ;; esac
+      case $same_wt in true) _req INTERNAL_SUBAGENT_SAME_WORKTREE 0 ;; *) _req INTERNAL_SUBAGENT_SAME_WORKTREE 1 ;; esac
+      case $same_proj in true) _req INTERNAL_SUBAGENT_SAME_PROJECT 0 ;; *) _req INTERNAL_SUBAGENT_SAME_PROJECT 1 ;; esac
+      case $fm_task in none) _req INTERNAL_SUBAGENT_NO_FIRSTMATE_TASK 0 ;; *) _req INTERNAL_SUBAGENT_NO_FIRSTMATE_TASK 1 ;; esac
+      if [ -n "$(_wc_field "$t" INTERNAL_SUBAGENT_ID)" ] && [ -n "$(_wc_field "$t" INTERNAL_SUBAGENT_HARNESS)" ] \
+        && [ -n "$(_wc_field "$t" INTERNAL_SUBAGENT_PURPOSE)" ] && [ -n "$(_wc_field "$t" INTERNAL_SUBAGENT_CONTEXT_INHERITED)" ]; then
+        _req INTERNAL_SUBAGENT_IDENTITY_REPORTED 0
+      else
+        _req INTERNAL_SUBAGENT_IDENTITY_REPORTED 1
+      fi
+      ;;
+    *)
+      for label in INTERNAL_SUBAGENT_READ_ONLY INTERNAL_SUBAGENT_SAME_WORKTREE INTERNAL_SUBAGENT_SAME_PROJECT \
+        INTERNAL_SUBAGENT_NO_FIRSTMATE_TASK INTERNAL_SUBAGENT_IDENTITY_REPORTED; do
+        printf 'SKIP %-28s (%s)\n' "$label" "no internal subagent reported ($subagent_used)"
+      done
+      ;;
+  esac
+
+  # Verification provenance (skills/verification-provenance/SKILL.md,
+  # firstmate/fm-verify-provenance.sh). Missing/unparseable evidence fails
+  # the reported-evidence check outright; a present-but-wrong-tree or
+  # unprovable classification fails the classification check - neither is
+  # ever rounded up to a pass.
+  local kind exec_path provenance
+  kind=$(_wc_field "$t" VERIFY_PROVENANCE_KIND)
+  exec_path=$(_wc_field "$t" VERIFY_EXECUTION_REALPATH)
+  if [ -n "$kind" ] && [ -n "$exec_path" ]; then
+    _req VERIFY_PROVENANCE_EVIDENCE_REPORTED 0
+  else
+    _req VERIFY_PROVENANCE_EVIDENCE_REPORTED 1
+  fi
+  if [ -z "$expected" ]; then
+    printf 'SKIP %-28s (no expected worktree given)\n' VERIFY_PROVENANCE_CLASSIFICATION
+  else
+    provenance=$(fm_provenance_classify "$expected" "$t")
+    case $provenance in
+      worktree_local|bind_correct|artifact_correct) _req VERIFY_PROVENANCE_CLASSIFICATION 0 ;;
+      *) _req VERIFY_PROVENANCE_CLASSIFICATION 1 ;;
+    esac
+  fi
+
   return $all_ok
 }
 
@@ -542,6 +640,61 @@ else
 fi
 
 # =============================================================================
+# 2b. fm_provenance_classify unit tests (offline, deterministic): every
+#     classification branch, plus the reject-then-recover sequence the
+#     Captain's intent requires explicitly demonstrated.
+# =============================================================================
+PROV_WT="$TMP_ROOT/provenance-worktree"
+mkdir -p "$PROV_WT"
+git -C "$PROV_WT" init -q
+git -C "$PROV_WT" -c user.email=wc@example.invalid -c user.name=wc commit -q --allow-empty -m fixture
+PROV_COMMIT=$(git -C "$PROV_WT" rev-parse HEAD)
+PROV_WT_REAL=$(cd "$PROV_WT" && pwd -P)
+OTHER_CHECKOUT="$TMP_ROOT/other-checkout-do-not-match"
+mkdir -p "$OTHER_CHECKOUT"
+
+check 'provenance: local run in the assigned worktree is accepted' worktree_local \
+  "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: local
+VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL")"
+
+check 'provenance: container correctly bound to the assigned worktree is accepted' bind_correct \
+  "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: container-bind
+VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL")"
+
+check 'provenance: artifact built from the assigned worktree at its current commit is accepted' artifact_correct \
+  "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: artifact
+VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL
+VERIFY_ARTIFACT_SOURCE_COMMIT: $PROV_COMMIT")"
+
+check 'provenance: a shared container bound to a different checkout is rejected' wrong_tree \
+  "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: container-bind
+VERIFY_EXECUTION_REALPATH: $OTHER_CHECKOUT")"
+
+check 'provenance: an artifact built from a different commit is rejected' wrong_tree \
+  "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: artifact
+VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL
+VERIFY_ARTIFACT_SOURCE_COMMIT: 0000000000000000000000000000000000dead")"
+
+check 'provenance: missing evidence is uncertain, never a silent pass' uncertain \
+  "$(fm_provenance_classify "$PROV_WT" "Ran the tests. All green.")"
+
+check 'provenance: an unrecognized kind is uncertain' uncertain \
+  "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: teleported
+VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL")"
+
+# Recovery: a rejected wrong-tree result followed by a worktree-correct
+# re-run must classify as accepted - the concrete "recover with a
+# worktree-correct command" requirement, proven as a sequence rather than
+# asserted in prose.
+first=$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: container-bind
+VERIFY_EXECUTION_REALPATH: $OTHER_CHECKOUT")
+second=$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: local
+VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL")
+check 'provenance recovery: the first, wrong-tree attempt is rejected' wrong_tree "$first"
+check 'provenance recovery: the corrected re-run is accepted' worktree_local "$second"
+
+
+# =============================================================================
 # 3. Real, zero-inference probe of Pi's installed native resource loader
 #    against the fixture: root/nested/override precedence, project-trust
 #    gating, and project-local-over-global skill dedup. No AgentSession, no
@@ -631,6 +784,31 @@ EOF
 fi
 
 # =============================================================================
+# 3b. Real, zero-inference filesystem check (no model call, no AgentSession):
+#     Pi's installed bundled tool set ships no task/agent/subagent tool, so
+#     "a Pi worker does not spawn workers" (README.md "Bounded internal
+#     delegation", firstmate/primary-policy.md section 6) is verified rather
+#     than assumed. Mirrors README.md's Codex tripwire: if a future Pi
+#     release adds one, this check starts failing and the policy text and
+#     `not-applicable` fixtures above need updating together.
+# =============================================================================
+if [ -z "$PI_PKG_ROOT" ]; then
+  pass 'Pi native task-tool absence probe: skipped (pi/node unavailable or internal module layout changed)'
+elif [ ! -d "$PI_PKG_ROOT/dist/core/tools" ]; then
+  pass 'Pi native task-tool absence probe: skipped (bundled tools directory layout changed)'
+else
+  pi_tool_names=$(find "$PI_PKG_ROOT/dist/core/tools" -maxdepth 1 -name '*.js' ! -name '*.d.ts*' -exec basename {} \; | sort)
+  case $pi_tool_names in
+    *task*|*agent*|*subagent*|*delegat*)
+      fail "Pi native task-tool absence probe: unexpected delegation-shaped tool file found: $pi_tool_names"
+      ;;
+    *)
+      pass 'Pi native task-tool absence probe: bundled tool set has no task/agent/subagent/delegate file'
+      ;;
+  esac
+fi
+
+# =============================================================================
 # 4. Real, zero-inference read of OMP's own installed documentation: grounds
 #    the documented discovery gap (no AGENTS.override.md support) this
 #    contract exists to cover. `omp read` never starts a session or a model
@@ -711,6 +889,9 @@ PROJECT_SKILL_RESOLVED_PATH: $CLI_DIR/repo/.agents/skills/$C_PROJECT_SKILL_NAME/
 SHARED_SKILL_RESOLVED_PATH: $HOME/.agents/skills/$C_SHARED_SKILL_NAME/SKILL.md
 SKILL_CATALOG_SOURCES: 3 source root(s): $HOME/.pi/agent/skills, $CLI_DIR/repo/.agents/skills, $HOME/.agents/skills
 OFFICIAL_INTERNAL_SKILL_COUNT: 0
+INTERNAL_SUBAGENT_USED: not-applicable (harness has no native bounded subagent mechanism)
+VERIFY_PROVENANCE_KIND: local
+VERIFY_EXECUTION_REALPATH: $CLI_DIR/repo
 EOF
 val_out=$(bash "$SELF" validate "$GOOD_REPORT" "$CLI_DIR/repo" 2>&1); val_rc=$?
 check 'CLI validate: a fully compliant report exits 0' 0 "$val_rc"
@@ -793,6 +974,74 @@ contains 'CLI validate: a shared skill resolved inside the worktree fails' "$val
 no_expected_out=$(bash "$SELF" validate "$GOOD_REPORT" 2>&1)
 contains 'CLI validate: an omitted expected-worktree is reported SKIP, never a false FAIL' "$no_expected_out" 'SKIP EXPECTED_WORKTREE'
 contains 'CLI validate: an omitted expected-worktree also SKIPs the project-skill-origin check' "$no_expected_out" 'SKIP PROJECT_SKILL_PATH_UNDER_WORKTREE'
+
+# Bounded internal delegation: a fully compliant read-only, same-task-scope
+# helper is accepted; each individual scope/context violation is rejected
+# on its own specific check, never merely a generic failure.
+VALID_SUBAGENT_REPORT="$TMP_ROOT/cli-valid-subagent-report.txt"
+cat "$GOOD_REPORT" > "$VALID_SUBAGENT_REPORT"
+cat >> "$VALID_SUBAGENT_REPORT" <<EOF
+INTERNAL_SUBAGENT_USED: yes
+INTERNAL_SUBAGENT_ID: fixture-scout-1
+INTERNAL_SUBAGENT_HARNESS: omp
+INTERNAL_SUBAGENT_MODEL: anthropic/claude-sonnet-5
+INTERNAL_SUBAGENT_EFFORT: medium
+INTERNAL_SUBAGENT_PURPOSE: read-only review of one narrow file before finalizing
+INTERNAL_SUBAGENT_MODE: read-only
+INTERNAL_SUBAGENT_SAME_WORKTREE: true
+INTERNAL_SUBAGENT_SAME_PROJECT: true
+INTERNAL_SUBAGENT_FIRSTMATE_TASK_CREATED: none
+INTERNAL_SUBAGENT_CONTEXT_INHERITED: same cwd as parent, no isolated workspace
+EOF
+val_subagent_out=$(bash "$SELF" validate "$VALID_SUBAGENT_REPORT" "$CLI_DIR/repo" 2>&1); val_subagent_rc=$?
+check 'CLI validate: a compliant bounded internal subagent report exits 0' 0 "$val_subagent_rc"
+not_contains 'CLI validate: a compliant bounded internal subagent report has no FAIL line' "$val_subagent_out" 'FAIL'
+
+MUTATING_SUBAGENT_REPORT="$TMP_ROOT/cli-mutating-subagent-report.txt"
+sed 's/INTERNAL_SUBAGENT_MODE: read-only/INTERNAL_SUBAGENT_MODE: mutating/' "$VALID_SUBAGENT_REPORT" > "$MUTATING_SUBAGENT_REPORT"
+val_mut_out=$(bash "$SELF" validate "$MUTATING_SUBAGENT_REPORT" "$CLI_DIR/repo" 2>&1); val_mut_rc=$?
+if [ "$val_mut_rc" -eq 0 ]; then fail 'CLI validate: a mutating internal subagent unexpectedly exits 0'; else pass 'CLI validate: a mutating internal subagent exits nonzero'; fi
+contains 'CLI validate: a mutating internal subagent fails the read-only check' "$val_mut_out" 'FAIL INTERNAL_SUBAGENT_READ_ONLY'
+
+CROSS_WORKTREE_SUBAGENT_REPORT="$TMP_ROOT/cli-cross-worktree-subagent-report.txt"
+sed 's/INTERNAL_SUBAGENT_SAME_WORKTREE: true/INTERNAL_SUBAGENT_SAME_WORKTREE: false/' "$VALID_SUBAGENT_REPORT" > "$CROSS_WORKTREE_SUBAGENT_REPORT"
+val_cross_out=$(bash "$SELF" validate "$CROSS_WORKTREE_SUBAGENT_REPORT" "$CLI_DIR/repo" 2>&1); val_cross_rc=$?
+if [ "$val_cross_rc" -eq 0 ]; then fail 'CLI validate: a cross-worktree internal subagent unexpectedly exits 0'; else pass 'CLI validate: a cross-worktree internal subagent exits nonzero'; fi
+contains 'CLI validate: a cross-worktree internal subagent fails the same-worktree check' "$val_cross_out" 'FAIL INTERNAL_SUBAGENT_SAME_WORKTREE'
+
+SEPARATE_TASK_SUBAGENT_REPORT="$TMP_ROOT/cli-separate-task-subagent-report.txt"
+sed 's/INTERNAL_SUBAGENT_FIRSTMATE_TASK_CREATED: none/INTERNAL_SUBAGENT_FIRSTMATE_TASK_CREATED: task-9999/' "$VALID_SUBAGENT_REPORT" > "$SEPARATE_TASK_SUBAGENT_REPORT"
+val_sep_out=$(bash "$SELF" validate "$SEPARATE_TASK_SUBAGENT_REPORT" "$CLI_DIR/repo" 2>&1); val_sep_rc=$?
+if [ "$val_sep_rc" -eq 0 ]; then fail 'CLI validate: an internal subagent that created a separate Firstmate task unexpectedly exits 0'; else pass 'CLI validate: an internal subagent that created a separate Firstmate task exits nonzero'; fi
+contains 'CLI validate: creating a separate Firstmate task fails the no-task check' "$val_sep_out" 'FAIL INTERNAL_SUBAGENT_NO_FIRSTMATE_TASK'
+
+# GOOD_REPORT itself already reports INTERNAL_SUBAGENT_USED: not-applicable
+# (Pi's case) and still exits 0 with the detail checks skipped, not failed.
+contains 'CLI validate: not-applicable skips the detail checks rather than failing them' "$val_out" 'SKIP INTERNAL_SUBAGENT_READ_ONLY'
+
+# Verification provenance at the CLI layer: reject a shared container bound
+# to a different checkout, then demonstrate recovery with a corrected,
+# worktree-correct re-run - same underlying compliant report both times,
+# varying only the provenance fields, so the recovery is a clean A/B.
+WRONG_TREE_REPORT="$TMP_ROOT/cli-wrong-tree-report.txt"
+sed "s#VERIFY_PROVENANCE_KIND: local#VERIFY_PROVENANCE_KIND: container-bind#; s#VERIFY_EXECUTION_REALPATH: $CLI_DIR/repo#VERIFY_EXECUTION_REALPATH: $TMP_ROOT/a-different-checkout-entirely#" \
+  "$GOOD_REPORT" > "$WRONG_TREE_REPORT"
+val_wt_out=$(bash "$SELF" validate "$WRONG_TREE_REPORT" "$CLI_DIR/repo" 2>&1); val_wt_rc=$?
+if [ "$val_wt_rc" -eq 0 ]; then fail 'CLI validate: a shared container bound to another checkout unexpectedly exits 0'; else pass 'CLI validate: a shared container bound to another checkout exits nonzero'; fi
+contains 'CLI validate: wrong-tree provenance fails the classification check' "$val_wt_out" 'FAIL VERIFY_PROVENANCE_CLASSIFICATION'
+
+val_recovered_out=$(bash "$SELF" validate "$GOOD_REPORT" "$CLI_DIR/repo" 2>&1); val_recovered_rc=$?
+check 'CLI validate: recovery with a worktree-correct re-run exits 0' 0 "$val_recovered_rc"
+not_contains 'CLI validate: the recovered report has no FAIL line' "$val_recovered_out" 'FAIL'
+
+UNCERTAIN_REPORT="$TMP_ROOT/cli-uncertain-report.txt"
+cat > "$UNCERTAIN_REPORT" <<EOF
+Ran in $CLI_DIR/repo. Tests passed.
+INTERNAL_SUBAGENT_USED: no
+EOF
+val_uncertain_out=$(bash "$SELF" validate "$UNCERTAIN_REPORT" "$CLI_DIR/repo" 2>&1); val_uncertain_rc=$?
+if [ "$val_uncertain_rc" -eq 0 ]; then fail 'CLI validate: unreported provenance unexpectedly exits 0'; else pass 'CLI validate: unreported provenance exits nonzero'; fi
+contains 'CLI validate: unreported provenance fails the evidence-reported check' "$val_uncertain_out" 'FAIL VERIFY_PROVENANCE_EVIDENCE_REPORTED'
 
 usage_out=$(bash "$SELF" bogus-subcommand 2>&1); usage_rc=$?
 if [ "$usage_rc" -eq 0 ]; then fail 'CLI: an unknown subcommand unexpectedly exits 0'; else pass 'CLI: an unknown subcommand exits nonzero'; fi

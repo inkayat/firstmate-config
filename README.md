@@ -28,6 +28,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `firstmate/fm-captain-lib.sh` | the one authoritative Captain model availability path | sourced by both `bin/fm` and `bin/fm-doctor` |
 | `firstmate/stack-manifest.tsv` | the single source of truth for stack compatibility: official FirstMate repo/validated commit, Pi/OMP/Herdr min and tested versions | read by `install.sh` and `bin/fm-doctor` |
 | `firstmate/fm-stack-manifest.sh` | the one parsing/comparison owner for `stack-manifest.tsv` | sourced by `install.sh`, `bin/fm-doctor`, and `bin/fm-version` |
+| `firstmate/fm-verify-provenance.sh` | the one deterministic worktree-provenance classifier for verification evidence | sourced by `tests/worker-context.sh`; the shared worker skill `verification-provenance` documents its contract |
 | `roles/*/ROLE.md` | generic role definitions quoted into worker briefs | read by the captain |
 | `skills/*/SKILL.md` | our own global skills | symlinked into `~/.agents/skills/` |
 | `skills/external.lock` | external skill packs, pinned by commit | cloned to a machine-local cache, symlinked into `~/.agents/skills/` |
@@ -322,7 +323,44 @@ the real global root, never the worktree), its own harness-native skill-
 catalog source roots/count, and an explicit zero count of catalog entries
 under the official FirstMate distro root - a report that merely never
 mentions the forbidden skill name fails this check, it does not pass it
-for free. `validate` prints one PASS/FAIL/SKIP line per proof.
+for free. `validate` also proves bounded-internal-delegation scope/context
+evidence and verification-provenance classification when the report
+includes them (see "Bounded internal delegation" and "Verification
+provenance" below); it prints one PASS/FAIL/SKIP line per proof.
+
+## Bounded internal delegation
+
+Firstmate owns macro orchestration (project, role, harness, model/effort,
+task lifecycle, worktree ownership); `firstmate/primary-policy.md` section 6
+draws that line and the bounded exception to it. A harness may perform
+bounded micro orchestration - a task-local scout, researcher, reviewer, or
+helper - through its own native mechanism, never through Firstmate's
+dispatch scripts, always inside the same parent task, project, and
+worktree, and never as a substitute for the parent's own responsibility for
+implementation, verification, and completion. omp's bundled `task` tool
+(bounded by `task.maxRecursionDepth` and the tracked `.omp/fm-worker-
+overlay.yml` posture overlay in the official checkout) is the currently
+verified native mechanism; Pi ships no equivalent today (verified: its
+bundled tool set has no task/agent/subagent tool), so it stays not
+applicable rather than forced to acquire one. `tests/worker-context.sh`'s
+live `validate` path is extended to require positive evidence for this -
+the helper's identity, model/effort, purpose, read-only-versus-mutating
+behavior, project/worktree scope, and inherited-context evidence - recorded
+from the harness's own existing session metadata, never a new telemetry
+mechanism.
+
+## Verification provenance
+
+Fresh, passing output is necessary but not sufficient: it must also be tied
+to the assigned task worktree, never a shared container or artifact bound
+to a different checkout. The shared worker skill `verification-provenance`
+and its one deterministic classifier, `firstmate/fm-verify-provenance.sh`
+(sourced by `tests/worker-context.sh`), accept worktree-local, correctly
+bind-mounted, or worktree-built-artifact evidence; reject evidence tied to
+a different checkout; and mark unprovable execution uncertain rather than
+guess a pass. It classifies evidence for one already-run command - it never
+intercepts arbitrary commands or manages containers - and carries no
+hardcoded container name, mount path, or CI system.
 
 ## Routing in v0.1
 

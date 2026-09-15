@@ -203,9 +203,52 @@ they are Captain/FirstMate-only, per section 2.
 
 ## 6. Orchestration boundary
 
-Firstmate is the only orchestrator. Workers do not spawn workers. Runtime and
-sessions belong to Herdr; task lifecycle belongs to Firstmate's own scripts.
-Do not invent a parallel mechanism for anything `bin/` already owns.
+Firstmate is the only **macro** orchestrator: project selection, role,
+harness, model and effort, task lifecycle, and worktree ownership are
+decided and owned by Firstmate's own scripts (`bin/`) alone. A worker never
+switches to another registered project, creates an independent Firstmate
+task, escalates its own authority, or modifies a primary checkout outside
+the task it was given. Runtime and sessions belong to Herdr; task lifecycle
+belongs to Firstmate's own scripts. Do not invent a parallel mechanism for
+anything `bin/` already owns.
+
+Within that boundary, a harness MAY perform bounded **micro** orchestration:
+a task-local scout, researcher, reviewer, or helper spawned through the
+harness's own native, bounded mechanism - never through Firstmate's own
+dispatch scripts, and never as a substitute for them. Every such helper
+must, without exception:
+
+- stay under the same parent task, project, and task worktree as the worker
+  that spawned it - never an isolated workspace, another checkout, or a
+  different project;
+- inherit the parent's task boundary rather than re-deriving or widening
+  it, and never create a new Firstmate task, register a project, or
+  acquire authority the parent does not already hold;
+- respect the harness's own native recursion/depth bound rather than a
+  Firstmate-invented one. omp's bundled `task` tool is the currently
+  verified example: `task.maxRecursionDepth` bounds nesting, and the
+  tracked worker posture overlay (`.omp/fm-worker-overlay.yml` in the
+  official checkout) already applies to every Firstmate-launched omp
+  session, including one performing this micro-orchestration - no
+  additional Firstmate-owned recursion controller is needed or wanted. Pi
+  currently exposes no equivalent native mechanism (verified: its bundled
+  tool set ships no task/agent/subagent tool), so "a Pi worker does not
+  spawn workers" stays literally true until Pi ships one - never force Pi
+  to acquire a mechanism it lacks.
+
+The parent worker remains solely responsible for implementation,
+verification, the final result, and task completion. A micro-orchestrated
+helper's output is evidence the parent reviews and owns - it is never a
+delegate that discharges the parent's own responsibility, and it never
+creates or claims macro-level task completion on the parent's behalf.
+
+Record, using the harness's own existing session/transcript metadata rather
+than a new telemetry mechanism or command, whenever a helper like this is
+used: its identity, its model and effort, why it was spawned, whether it is
+read-only or mutating, its project/worktree scope, and evidence that it
+inherited (rather than re-derived) the parent's context.
+`tests/worker-context.sh`'s live `validate` path is the acceptance
+mechanism for this evidence.
 
 ## 7. Completion
 
@@ -213,3 +256,13 @@ A task is done when its stated outcome is demonstrated, not when the diff looks
 right. Require the worker to report the command it ran and what it observed.
 An unverified claim of completion is an open task. Say plainly what was not
 verified rather than rounding up.
+
+Passing output is necessary but not sufficient: it must also be tied to the
+assigned task worktree. The shared worker skill `verification-provenance`
+and its classifier (`firstmate/fm-verify-provenance.sh`, sourced by
+`tests/worker-context.sh`) accept worktree-local, correctly bind-mounted, or
+worktree-built-artifact evidence; reject evidence tied to a different
+checkout - a shared container mounted from another clone is the concrete
+failure mode this closes; and mark unprovable execution uncertain rather
+than guess a pass. An uncertain or wrong-tree result is not completion:
+recover with a worktree-correct command and report the corrected evidence.
