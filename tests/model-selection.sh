@@ -36,7 +36,7 @@ chmod +x "$fake_bin/herdr"
 
 cat > "$fake_bin/pi" <<'SH'
 #!/usr/bin/env bash
-available=",${FM_TEST_AVAILABLE:-openai-codex/gpt-5.6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra},"
+available=",${FM_TEST_AVAILABLE-openai-codex/gpt-5.6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra},"
 model_base() { printf '%s' "${1#*/}"; }
 provider_of() { printf '%s' "${1%%/*}"; }
 is_available() { case "$available" in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
@@ -48,6 +48,14 @@ thinking_for() {
     *) printf 'yes' ;;
   esac
 }
+if [ "${1:-}" = list ]; then
+  if [ "${FM_TEST_SONNET_INSTALLED:-yes}" = yes ]; then
+    printf 'User packages:\n  npm:pi-claude-code-provider\n    /tmp/pi-claude-code-provider\n'
+  else
+    printf 'No packages installed.\n'
+  fi
+  exit 0
+fi
 if [ "${1:-}" = --list-models ]; then
   model=${2:-}
   if is_available "$model"; then
@@ -64,10 +72,12 @@ if [ "${1:-}" = auth ] && [ "${2:-}" = check ]; then
     [ "$1" != --model ] || { model=$2; shift; }
     shift || true
   done
-  if is_available "$model"; then
-    printf '{"status":"ready","provider":"%s","authType":"test"}\n' "$(provider_of "$model")"
+  if ! is_available "$model"; then
+    printf '{"status":"not_ready","provider":"%s","reason":"credentials_not_configured"}\n' "$(provider_of "$model")"
+  elif [ "$model" = pi-claude-code-provider/sonnet ]; then
+    printf '{"status":"invalid","provider":"pi-claude-code-provider/sonnet","reason":"invalid_state"}\n'
   else
-    printf '{"status":"missing","provider":"%s","reason":"missing_auth"}\n' "$(provider_of "$model")"
+    printf '{"status":"ready","provider":"%s","authType":"test"}\n' "$(provider_of "$model")"
   fi
   exit 0
 fi
@@ -76,6 +86,26 @@ exit 64
 SH
 chmod +x "$fake_bin/pi"
 
+cat > "$fake_bin/claude" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = auth ] && [ "${2:-}" = status ] || exit 64
+case ${FM_TEST_SONNET_AUTH:-ready} in
+  ready)
+    printf '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"max"}\n'
+    ;;
+  unavailable)
+    printf '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}\n'
+    exit 1
+    ;;
+  unknown)
+    printf 'temporary status failure\n' >&2
+    exit 1
+    ;;
+  *) exit 64 ;;
+esac
+SH
+chmod +x "$fake_bin/claude"
+
 run_fm() {
   PATH="$fake_bin:$PATH" \
   HOME="$TMP_ROOT/home-dir" \
@@ -83,6 +113,12 @@ run_fm() {
   FIRSTMATE_ROOT="$fake_firstmate" \
   FM_HOME="$fake_home" \
   FM_PI_EXTENSIONS=explicit \
+  FM_TEST_AVAILABLE="${FM_TEST_AVAILABLE-openai-codex/gpt-5.6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra}" \
+  FM_TEST_SOL_THINKING="${FM_TEST_SOL_THINKING:-yes}" \
+  FM_TEST_SONNET_THINKING="${FM_TEST_SONNET_THINKING:-yes}" \
+  FM_TEST_ASTRA_THINKING="${FM_TEST_ASTRA_THINKING:-yes}" \
+  FM_TEST_SONNET_INSTALLED="${FM_TEST_SONNET_INSTALLED:-yes}" \
+  FM_TEST_SONNET_AUTH="${FM_TEST_SONNET_AUTH:-ready}" \
   "$FM" --print-command
 }
 
@@ -95,14 +131,32 @@ check 'Pi command carries the selected model' 'openai-codex/gpt-5.6-sol' "$(prin
 check 'Pi command carries selected effort' 'high' "$(printf '%s\n' "$(field "$out" COMMAND)" | awk '{for (i=1;i<=NF;i++) if ($i=="--thinking") print $(i+1)}')"
 
 out=$(FM_TEST_AVAILABLE='pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra' run_fm 2>&1) || { fail "fallback to Sonnet command failed: $out"; out=''; }
-check 'unavailable Sol selects Claude Sonnet' 'pi-claude-code-provider/sonnet' "$(field "$out" SELECTED_MODEL)"
+check 'unavailable Sol selects usable Claude Sonnet despite broker invalid_state' 'pi-claude-code-provider/sonnet' "$(field "$out" SELECTED_MODEL)"
 check 'Claude Sonnet keeps high effort' 'high' "$(field "$out" SELECTED_EFFORT)"
 contains 'fallback reason is visible' "$(field "$out" FALLBACK_REASON)" 'openai-codex/gpt-5.6-sol'
+
+out=$(FM_TEST_AVAILABLE='pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra' FM_TEST_SONNET_AUTH=unavailable run_fm 2>&1) || { fail "authoritative Sonnet auth failure command failed: $out"; out=''; }
+check 'authoritative Claude Sonnet auth failure skips to Astra' 'openai-codex/gpt-6-astra' "$(field "$out" SELECTED_MODEL)"
+contains 'authoritative Sonnet auth failure remains visible' "$(field "$out" FALLBACK_REASON)" 'pi-claude-code-provider/sonnet'
+
+out=$(FM_TEST_AVAILABLE='pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra' FM_TEST_SONNET_AUTH=unknown run_fm 2>&1) || { fail "unknown Sonnet auth command failed: $out"; out=''; }
+check 'unknown non-authoritative Sonnet auth does not reject an installed catalog model' 'pi-claude-code-provider/sonnet' "$(field "$out" SELECTED_MODEL)"
+check 'unknown Sonnet selection exposes its availability state' 'UNKNOWN' "$(field "$out" SELECTED_AVAILABILITY)"
 
 out=$(FM_TEST_AVAILABLE='openai-codex/gpt-6-astra' run_fm 2>&1) || { fail "fallback to Astra command failed: $out"; out=''; }
 check 'unavailable Sol and Sonnet selects Astra' 'openai-codex/gpt-6-astra' "$(field "$out" SELECTED_MODEL)"
 check 'Astra keeps xhigh effort' 'xhigh' "$(field "$out" SELECTED_EFFORT)"
 contains 'both unavailable candidates are named' "$(field "$out" FALLBACK_REASON)" 'pi-claude-code-provider/sonnet'
+
+if out=$(FM_TEST_AVAILABLE='' run_fm 2>&1); then
+  fail 'all unavailable candidates should fail startup'
+else
+  pass 'all unavailable candidates fail startup'
+  contains 'all-unavailable failure is clear' "$out" 'no configured captain startup model is available'
+  contains 'all-unavailable failure names Sol' "$out" 'openai-codex/gpt-5.6-sol'
+  contains 'all-unavailable failure names Sonnet' "$out" 'pi-claude-code-provider/sonnet'
+  contains 'all-unavailable failure names Astra' "$out" 'openai-codex/gpt-6-astra'
+fi
 
 out=$(FM_TEST_SOL_THINKING=no run_fm 2>&1) || { fail "unsupported effort fallback command failed: $out"; out=''; }
 check 'unsupported effort does not downgrade and skips candidate' 'pi-claude-code-provider/sonnet' "$(field "$out" SELECTED_MODEL)"

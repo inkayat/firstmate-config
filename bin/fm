@@ -85,6 +85,8 @@ TURNEND_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
 MODEL_CHAIN="$CONFIG_ROOT/firstmate/captain-startup-models.tsv"
 SELECTED_MODEL=
 SELECTED_EFFORT=
+SELECTED_AVAILABILITY=
+SELECTED_AVAILABILITY_REASON=
 PREFERRED_MODEL=
 PREFERRED_EFFORT=
 FALLBACK_REASON=
@@ -95,45 +97,106 @@ usage() { sed -n '2,/^set -u$/p' "$self" | sed -e 's/^# \{0,1\}//' -e '/^set -u$
 model_provider() { printf '%s' "${1%%/*}"; }
 model_name() { printf '%s' "${1#*/}"; }
 
-effort_supported_by_model() { # <model> <effort>
-  local model=$1 effort=$2 out thinking
-  case $effort in off|minimal|low|medium|high|xhigh|max) ;; *) return 1 ;; esac
-  [ "$effort" != off ] || return 0
-  out=$("$PI_BIN" --list-models "$model" 2>/dev/null) || return 1
-  thinking=$(printf '%s\n' "$out" | awk -v p="$(model_provider "$model")" -v m="$(model_name "$model")" '$1 == p && $2 == m {print $5; exit}')
-  [ "$thinking" = yes ]
+json_string_field() { # <json> <field>
+  printf '%s' "$1" | tr '\n' ' ' | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1
 }
 
-model_available_reason() { # <model> <effort> ; prints reason when unavailable
-  local model=$1 effort=$2 out status reason
-  out=$("$PI_BIN" --list-models "$model" 2>/dev/null) || { printf 'model/provider unavailable'; return 1; }
-  if ! printf '%s\n' "$out" | awk -v p="$(model_provider "$model")" -v m="$(model_name "$model")" '$1 == p && $2 == m {found=1} END {exit found ? 0 : 1}'; then
-    printf 'model/provider unavailable'
-    return 1
-  fi
-  if ! effort_supported_by_model "$model" "$effort"; then
-    printf 'unsupported configured effort %s' "$effort"
-    return 1
-  fi
+json_bool_field() { # <json> <field>
+  printf '%s' "$1" | tr '\n' ' ' | sed -E -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*(true|false).*/\1/p" | head -1
+}
+
+broker_auth_availability() { # <model> ; prints STATE<TAB>reason
+  local model=$1 out status reason
   out=$("$PI_BIN" auth check --model "$model" --json --no-refresh 2>&1) || true
-  status=$(printf '%s' "$out" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-  [ "$status" = ready ] && return 0
-  reason=$(printf '%s' "$out" | sed -n 's/.*"reason"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-  [ -n "$reason" ] || reason=${status:-authentication unavailable}
-  printf '%s' "$reason"
-  return 1
+  status=$(json_string_field "$out" status)
+  reason=$(json_string_field "$out" reason)
+  case $status in
+    ready) printf 'AVAILABLE\t' ;;
+    not_ready|missing)
+      case $reason in
+        provider_not_found|credentials_not_configured|credential_not_available|missing_auth)
+          printf 'UNAVAILABLE\t%s' "$reason"
+          ;;
+        *) printf 'UNKNOWN\t%s' "${reason:-authentication status unknown}" ;;
+      esac
+      ;;
+    *) printf 'UNKNOWN\t%s' "${reason:-${status:-authentication status unknown}}" ;;
+  esac
+}
+
+claude_provider_installed() {
+  local out
+  out=$("$PI_BIN" list 2>/dev/null) || return 1
+  printf '%s\n' "$out" | grep -Eq '(^|[/@:])pi-claude-code-provider([[:space:]]|$)'
+}
+
+claude_provider_auth_availability() { # prints STATE<TAB>reason
+  local claude_bin out logged_in auth_method api_provider subscription
+  if ! claude_provider_installed; then
+    printf 'UNAVAILABLE\tprovider package not installed'
+    return
+  fi
+  claude_bin=${PI_CLAUDE_CODE_PROVIDER_PATH:-claude}
+  if ! command -v "$claude_bin" >/dev/null 2>&1; then
+    printf 'UNAVAILABLE\tClaude Code executable unavailable'
+    return
+  fi
+  out=$("$claude_bin" auth status 2>&1) || true
+  logged_in=$(json_bool_field "$out" loggedIn)
+  auth_method=$(json_string_field "$out" authMethod)
+  api_provider=$(json_string_field "$out" apiProvider)
+  subscription=$(json_string_field "$out" subscriptionType)
+  if [ "$logged_in" = false ]; then
+    printf 'UNAVAILABLE\tClaude Code is not logged in'
+  elif [ "$logged_in" = true ] && [ "$auth_method" = claude.ai ] && [ "$api_provider" = firstParty ]; then
+    case $subscription in
+      pro|max|team|enterprise) printf 'AVAILABLE\t' ;;
+      '') printf 'UNKNOWN\tClaude Code subscription status unknown' ;;
+      *) printf 'UNAVAILABLE\tunsupported Claude subscription type %s' "$subscription" ;;
+    esac
+  elif [ "$logged_in" = true ] && { [ -n "$auth_method" ] || [ -n "$api_provider" ]; }; then
+    printf 'UNAVAILABLE\tClaude Code requires a first-party claude.ai subscription'
+  else
+    printf 'UNKNOWN\tClaude Code authentication status unknown'
+  fi
+}
+
+model_availability() { # <model> <effort> ; prints STATE<TAB>reason
+  local model=$1 effort=$2 out thinking
+  case $effort in
+    off|minimal|low|medium|high|xhigh|max) ;;
+    *) printf 'UNAVAILABLE\tunsupported configured effort %s' "$effort"; return ;;
+  esac
+  out=$("$PI_BIN" --list-models "$model" 2>/dev/null) || { printf 'UNAVAILABLE\tmodel/provider unavailable'; return; }
+  thinking=$(printf '%s\n' "$out" | awk -v p="$(model_provider "$model")" -v m="$(model_name "$model")" '$1 == p && $2 == m {print $5; exit}')
+  if [ -z "$thinking" ]; then
+    printf 'UNAVAILABLE\tmodel/provider unavailable'
+    return
+  fi
+  if [ "$effort" != off ] && [ "$thinking" != yes ]; then
+    printf 'UNAVAILABLE\tunsupported configured effort %s' "$effort"
+    return
+  fi
+  case $(model_provider "$model") in
+    pi-claude-code-provider) claude_provider_auth_availability ;;
+    *) broker_auth_availability "$model" ;;
+  esac
 }
 
 resolve_model_chain() {
-  local model effort reason reasons=()
+  local model effort result state reason reasons=()
   [ -f "$MODEL_CHAIN" ] || die "missing captain startup model chain: $MODEL_CHAIN"
   while IFS="$(printf '\t')" read -r model effort _rest || [ -n "${model:-}" ]; do
     case ${model:-} in ''|\#*) continue ;; esac
     [ -n "${PREFERRED_MODEL:-}" ] || { PREFERRED_MODEL=$model; PREFERRED_EFFORT=$effort; }
-    reason=$(model_available_reason "$model" "$effort")
-    if [ -z "$reason" ]; then
+    result=$(model_availability "$model" "$effort")
+    state=${result%%$'\t'*}
+    reason=${result#*$'\t'}
+    if [ "$state" != UNAVAILABLE ]; then
       SELECTED_MODEL=$model
       SELECTED_EFFORT=$effort
+      SELECTED_AVAILABILITY=$state
+      [ "$state" != UNKNOWN ] || SELECTED_AVAILABILITY_REASON=$reason
       break
     fi
     reasons+=("$model $effort: $reason")
@@ -196,6 +259,8 @@ print_resolution() {
   printf 'PREFERRED_EFFORT=%s\n' "$PREFERRED_EFFORT"
   printf 'SELECTED_MODEL=%s\n' "$SELECTED_MODEL"
   printf 'SELECTED_EFFORT=%s\n' "$SELECTED_EFFORT"
+  printf 'SELECTED_AVAILABILITY=%s\n' "$SELECTED_AVAILABILITY"
+  [ -z "$SELECTED_AVAILABILITY_REASON" ] || printf 'SELECTED_AVAILABILITY_REASON=%s\n' "$SELECTED_AVAILABILITY_REASON"
   [ -z "$FALLBACK_REASON" ] || printf 'FALLBACK_REASON=%s\n' "$FALLBACK_REASON"
   printf 'SCRUBBED_ENV=%s\n' "${SCRUB[*]}"
 }
@@ -232,6 +297,11 @@ resolve_model_chain
 
 printf 'FirstMate Captain model preference: %s (%s)\n' "$PREFERRED_MODEL" "$PREFERRED_EFFORT"
 printf 'FirstMate Captain model selected: %s (%s)\n' "$SELECTED_MODEL" "$SELECTED_EFFORT"
+if [ -n "$SELECTED_AVAILABILITY_REASON" ]; then
+  printf 'FirstMate Captain availability: %s (%s)\n' "$SELECTED_AVAILABILITY" "$SELECTED_AVAILABILITY_REASON"
+else
+  printf 'FirstMate Captain availability: %s\n' "$SELECTED_AVAILABILITY"
+fi
 [ -z "$FALLBACK_REASON" ] || printf 'FirstMate Captain fallback: %s\n' "$FALLBACK_REASON"
 
 cd "$FIRSTMATE_ROOT" || die "cannot enter $FIRSTMATE_ROOT"
@@ -262,6 +332,8 @@ export FM_CONFIG_ROOT="$CONFIG_ROOT"
   printf 'preferred_effort=%s\n' "$PREFERRED_EFFORT"
   printf 'selected_model=%s\n' "$SELECTED_MODEL"
   printf 'selected_effort=%s\n' "$SELECTED_EFFORT"
+  printf 'selected_availability=%s\n' "$SELECTED_AVAILABILITY"
+  [ -z "$SELECTED_AVAILABILITY_REASON" ] || printf 'selected_availability_reason=%s\n' "$SELECTED_AVAILABILITY_REASON"
   [ -z "$FALLBACK_REASON" ] || printf 'fallback_reason=%s\n' "$FALLBACK_REASON"
 } > "$FM_HOME/state/.fm-launch" 2>/dev/null || true
 

@@ -63,11 +63,19 @@ candidate to Pi with `--model` and `--thinking` only for the FirstMate Captain
 process it starts.
 It does not write Pi's standalone default and it does not affect worker routing.
 
-Fallback is availability-only: a candidate is skipped for missing auth,
-unavailable model/provider, reliably reported quota exhaustion, or unsupported
-configured effort.
-The launcher prints the preferred candidate, selected candidate, and fallback
-reason when it did not use the preferred candidate.
+Fallback is availability-only and tri-state: `AVAILABLE` and `UNKNOWN`
+candidates remain eligible, while only an authoritative `UNAVAILABLE` result is
+skipped.
+An exact catalog entry and supported effort establish the model path but do not
+alone prove authentication; an unrecognized broker result stays `UNKNOWN`
+rather than becoming a false negative.
+For `pi-claude-code-provider`, Pi's `auth check` does not load extension
+providers, so the launcher uses the provider's zero-inference `claude auth
+status` preflight and confirms the package is installed.
+It never starts a paid model turn merely to probe availability.
+The launcher prints the preferred candidate, selected candidate, selected
+availability state, and fallback reason when it did not use the preferred
+candidate.
 
 ## Multi-project captain
 
