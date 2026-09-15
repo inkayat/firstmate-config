@@ -88,15 +88,16 @@ heartbeat, wake queue, and in-flight task count - read-only, via upstream's
 own `fm-lock.sh status` and `fm-supervision-lib.sh` when available, `UNKNOWN`
 otherwise), HARNESSES (Pi/omp installation, version, primary extensions, and
 readable config), ROUTING (`crew-dispatch.json` structural validity via real
-JSON parsing - `jq`, then `python3`, then a dependency-free string-aware awk
-fallback, whichever is actually on the machine - and cheap per-lane model
-availability discovered through each lane's own harness catalog: `pi
---list-models` for a `pi` lane, `omp models --json` for an `omp` lane, never
-one harness's detector standing in for the other's, plus Fable/Qwen's
-intentionally `DEFERRED` status), ROLES and SKILLS (readable role files;
-global skill installation count, missing entries, broken links, unreadable
-`SKILL.md`), and PROJECTS (registered names from FirstMate's own
-`data/projects.md` via `fm-project-mode.sh`, the confident current project
+JSON parsing only - `jq`, then `python3`, whichever is actually on the
+machine; with neither installed, validity is reported `UNKNOWN`, never a
+false `PASS` and never a brace-balance or field-scan standing in for a real
+parse - and cheap per-lane model availability discovered through each lane's
+own harness catalog: `pi --list-models` for a `pi` lane, `omp models --json`
+for an `omp` lane, never one harness's detector standing in for the other's,
+plus Fable/Qwen's intentionally `DEFERRED` status), ROLES and SKILLS
+(readable role files; global skill installation count, missing entries,
+broken links, unreadable `SKILL.md`), and PROJECTS (registered names from
+FirstMate's own `data/projects.md` via `fm-project-mode.sh`, the confident current project
 when the working directory is that project's own registered clone under
 `$FM_HOME/projects` - matched by real canonical path, never by directory
 basename, so an unrelated checkout that happens to share a project's
@@ -129,13 +130,14 @@ while `exit_code` stays `0`.
 its own `commit`), `launcher` (including `resolved`, the executable a plain
 `fm` currently resolves to), `captain`, `runtime` (including a `heartbeat`
 object distinct from `watcher`), `harnesses`, `routing` (including
-`parse_method`, whichever crew-dispatch JSON parser tier actually ran),
-`roles`, `skills`, `projects`, and `checks` - an array of
+`parse_method` - `jq`, `python3`, or `none` when neither is installed -
+and `valid: null` rather than `true`/`false` whenever `parse_method` is
+`none`), `roles`, `skills`, `projects`, and `checks` - an array of
 `{id, status, summary, detail?}` rows, one per finding named above. Rendering
 this schema never depends on `jq`, `python3`, or any optional tool. Parsing
-`crew-dispatch.json` itself prefers `jq`, then `python3`, then a
-dependency-free awk fallback - whichever is actually installed - never a
-hard requirement.
+`crew-dispatch.json` itself requires a real parser, `jq` or `python3`,
+whichever is actually installed; with neither present, `fm-doctor` reports
+`routing.crew_dispatch_valid` as `UNKNOWN` rather than guessing.
 
 ## Captain startup model
 

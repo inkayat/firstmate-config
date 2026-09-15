@@ -11,11 +11,15 @@
 # copy of bin/fm-doctor under a fake CONFIG_ROOT so the real repository is
 # never touched.
 #
-# The hermetic PATH used by run_doctor deliberately omits jq and python3, so
-# every scenario below exercises fm-doctor's dependency-free awk crew-dispatch
-# parser by default; scenario 12 adds a real jq to the PATH (only when one is
-# actually installed on the machine running these tests) to prove the jq tier
-# too.
+# fm-doctor has no dependency-free JSON parser: crew-dispatch.json is parsed
+# only via jq or python3, and reports UNKNOWN, never a false PASS, when
+# neither is on PATH. The hermetic PATH used by run_doctor therefore includes
+# python3 by default (when present on this host - it ships with Xcode CLT on
+# macOS and virtually every Linux distribution, matching bin/fm-doctor's own
+# assumption) but deliberately omits jq, so most scenarios exercise the
+# python3 tier; scenario 11 adds a real jq to the PATH (only when one is
+# actually installed on the machine running these tests) to prove the jq
+# tier too, and scenario 13 removes every parser to prove the UNKNOWN path.
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,26 +32,17 @@ check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected '$2', got 
 contains() { case $2 in *"$3"*) pass "$1" ;; *) fail "$1 (missing '$3' in '$2')" ;; esac; }
 not_contains() { case $2 in *"$3"*) fail "$1 (unexpectedly found '$3' in '$2')" ;; *) pass "$1" ;; esac; }
 
-# Zero-dependency JSON brace/bracket balance check: the last-resort tier when
-# neither jq nor python3 is on the test runner's own PATH.
-json_balanced() {
-  printf '%s' "$1" | awk '
-    BEGIN { d = 0 }
-    { for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); if (c == "{" || c == "[") d++; if (c == "}" || c == "]") d-- } }
-    END { exit (d == 0) ? 0 : 1 }
-  '
-}
-
-# Real JSON parsing of fm-doctor's own --json output, on whatever parser this
-# test runner actually has (independent of run_doctor's hermetic child PATH,
-# which deliberately has neither): jq, then python3, then the balance check.
+# Real JSON parsing of fm-doctor's own --json output, on whatever real parser
+# this test runner actually has (independent of run_doctor's hermetic child
+# PATH): jq, then python3. Neither present -> returns 2 (skip), never a brace
+# balance count standing in for a successful parse.
 json_parse_ok() { # <json>
   if command -v jq >/dev/null 2>&1; then
     printf '%s' "$1" | jq -e . >/dev/null 2>&1
   elif command -v python3 >/dev/null 2>&1; then
     printf '%s' "$1" | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null 2>&1
   else
-    json_balanced "$1"
+    return 2
   fi
 }
 
@@ -198,6 +193,30 @@ fm_supervision_status() { # <state-dir> [grace]
 }
 SH
 
+# Fixture native fm-project-mode.sh: mirrors the upstream mechanical-consumer
+# interface (bin/fm-project-mode.sh <project-name>, no flags) so a regression
+# that passes --raw or anything beyond the bare project name fails the
+# moment this fixture runs. Records every argument it received (one name per
+# line, in $FAKE_FIRSTMATE/bin/fm-project-mode.log) and returns a distinct,
+# deterministic posture per known project name, so a caller that mixes up
+# which project it asked about is also caught.
+cat > "$FAKE_FIRSTMATE/bin/fm-project-mode.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+[ "$#" -eq 1 ] || { echo "fixture fm-project-mode.sh: expected exactly one argument (project name), got $#: $*" >&2; exit 2; }
+name=$1
+case $name in
+  --*) echo "fixture fm-project-mode.sh: received a flag-like argument '$name'; the native interface takes the project name only" >&2; exit 2 ;;
+esac
+printf '%s\n' "$name" >> "$(dirname "$0")/fm-project-mode.log"
+case $name in
+  project-a) printf '%s\n' 'local-only off' ;;
+  project-b) printf '%s\n' 'direct-PR on' ;;
+  *) printf '%s\n' 'no-mistakes off' ;;
+esac
+SH
+chmod +x "$FAKE_FIRSTMATE/bin/fm-project-mode.sh"
+
 # A fake $HOME with every skill this repository configures actually seeded,
 # so the healthy scenario's SKILLS section genuinely passes.
 seed_skills_root() { # <skills-root> <config-root>
@@ -245,17 +264,29 @@ HEALTHY_AVAILABLE="openai-codex/gpt-5.6-sol,pi-claude-code-provider/sonnet,opena
 # needs, never a whole real bin directory. On macOS, /usr/bin itself ships a
 # real `fm` (Apple's Foundation Models CLI, a genuine real-world PATH
 # collision), so the ambient PATH and even a whole system directory are both
-# unsafe defaults for a deterministic fixture. jq and python3 are
-# deliberately excluded, so every scenario below exercises fm-doctor's
-# dependency-free awk crew-dispatch parser unless a scenario opts a real jq
-# back in.
+# unsafe defaults for a deterministic fixture.
+#
+# SYS_BIN_CORE carries no JSON parser at all (scenario 13's UNKNOWN
+# regression uses it directly). SYS_BIN adds python3, when this host
+# actually has one, since fm-doctor requires jq or python3 for real
+# crew-dispatch parsing and most scenarios below need a working parse tier;
+# jq is deliberately excluded from both, so it stays scenario 11's own
+# opt-in proof of the jq tier.
+SYS_BIN_CORE="$TMP_ROOT/sysbin-core"
+mkdir -p "$SYS_BIN_CORE"
+for _tool in bash git uname sed awk grep wc date find stat readlink basename dirname tr head cat mkdir env; do
+  _p=$(command -v "$_tool" 2>/dev/null) || continue
+  ln -s "$_p" "$SYS_BIN_CORE/$_tool"
+done
+
 SYS_BIN="$TMP_ROOT/sysbin"
 mkdir -p "$SYS_BIN"
-for _tool in bash git uname sed awk grep wc date find stat readlink basename dirname tr head cat mkdir env; do
+for _tool in bash git uname sed awk grep wc date find stat readlink basename dirname tr head cat mkdir env python3; do
   _p=$(command -v "$_tool" 2>/dev/null) || continue
   ln -s "$_p" "$SYS_BIN/$_tool"
 done
 SYS_PATH=$SYS_BIN
+SYS_PATH_NO_PARSER=$SYS_BIN_CORE
 
 run_doctor() { # [extra args to fm-doctor]
   ( cd "${RUN_CWD:-$TMP_ROOT}" && \
@@ -335,16 +366,24 @@ contains 'all candidates unavailable: no usable Captain is explained' "$out" 'no
 # =============================================================================
 # 6. Invalid crew-dispatch.json -> FAIL, nonzero exit (mandatory, isolated)
 # =============================================================================
-BROKEN_FM_HOME="$TMP_ROOT/fm-home-broken-dispatch"
-mkdir -p "$BROKEN_FM_HOME/state" "$BROKEN_FM_HOME/data" "$BROKEN_FM_HOME/config" "$BROKEN_FM_HOME/projects"
-printf '{"rules": [ { "when": "x", "use": [ { "harness": "pi", "model": "a/b", "effort": "yolo" } ] }' > "$BROKEN_FM_HOME/config/crew-dispatch.json"
-RUN_FM_HOME=$BROKEN_FM_HOME
-out=$(run_doctor); code=$?
-unset RUN_FM_HOME
-if [ "$code" -eq 0 ]; then fail "invalid crew-dispatch: expected nonzero exit, got 0"; else pass 'invalid crew-dispatch: exit code is nonzero'; fi
-contains 'invalid crew-dispatch: routing check reports FAIL' "$out" 'FAIL          routing.crew_dispatch_valid'
-contains 'invalid crew-dispatch: parsed via the dependency-free tier' "$out" 'parsed via awk'
-contains 'invalid crew-dispatch: other mandatory checks stay healthy' "$out" 'PASS          captain.selection'
+# Requires a real parser (python3 here; jq is scenario 11's own opt-in): with
+# neither available, fm-doctor correctly reports UNKNOWN rather than FAIL, so
+# this scenario's mandatory-nonzero-exit proof needs the parser present.
+SYS_PY=$(command -v python3 2>/dev/null || printf '')
+if [ -n "$SYS_PY" ]; then
+  BROKEN_FM_HOME="$TMP_ROOT/fm-home-broken-dispatch"
+  mkdir -p "$BROKEN_FM_HOME/state" "$BROKEN_FM_HOME/data" "$BROKEN_FM_HOME/config" "$BROKEN_FM_HOME/projects"
+  printf '{"rules": [ { "when": "x", "use": [ { "harness": "pi", "model": "a/b", "effort": "yolo" } ] }' > "$BROKEN_FM_HOME/config/crew-dispatch.json"
+  RUN_FM_HOME=$BROKEN_FM_HOME
+  out=$(run_doctor); code=$?
+  unset RUN_FM_HOME
+  if [ "$code" -eq 0 ]; then fail "invalid crew-dispatch: expected nonzero exit, got 0"; else pass 'invalid crew-dispatch: exit code is nonzero'; fi
+  contains 'invalid crew-dispatch: routing check reports FAIL' "$out" 'FAIL          routing.crew_dispatch_valid'
+  contains 'invalid crew-dispatch: parsed via python3' "$out" 'parsed via python3'
+  contains 'invalid crew-dispatch: other mandatory checks stay healthy' "$out" 'PASS          captain.selection'
+else
+  pass 'invalid crew-dispatch: skipped (no jq or python3 on the test runner)'
+fi
 
 # =============================================================================
 # 7. Missing role/skill statuses -> reported FAIL, but non-mandatory: exit 0
@@ -388,7 +427,7 @@ mkdir -p "$proj_a" "$proj_b"
   && git add -A && git -c user.email=t@example.invalid -c user.name=t commit -qm init )
 cat > "$MP_FM_HOME/data/projects.md" <<'MD'
 - project-a [local-only] - fixture project A (added 2026-01-01)
-- project-b [local-only] - fixture project B (added 2026-01-01)
+- project-b [direct-PR +yolo] - fixture project B (added 2026-01-01)
 MD
 
 RUN_FM_HOME=$MP_FM_HOME RUN_CWD=$proj_a
@@ -435,11 +474,29 @@ contains 'multi-project JSON: current.name is project-a' "$json_a" '"name":"proj
 contains 'multi-project JSON: agents_md_present is true for project-a' "$json_a" '"agents_md_present":true'
 not_contains 'multi-project JSON: never carries file contents' "$json_a" 'AGENTS-A-SECRET-MARKER'
 
+# The native fm-project-mode.sh interface takes the bare project name only
+# (no --raw or any other flag); the shared fixture script above records
+# every argument it actually received and returns a distinct posture per
+# project, so a caller that passes the wrong argument or mixes up which
+# project it asked about is caught here.
+PROJECT_MODE_LOG="$FAKE_FIRSTMATE/bin/fm-project-mode.log"
+project_mode_log=$(cat "$PROJECT_MODE_LOG" 2>/dev/null || printf '')
+not_contains 'native project-mode fixture: never invoked with --raw or any flag' "$project_mode_log" '--raw'
+contains 'native project-mode fixture: invoked with the bare project-a name' "$project_mode_log" 'project-a'
+contains 'native project-mode fixture: invoked with the bare project-b name' "$project_mode_log" 'project-b'
+contains 'multi-project JSON: records project-a exact posture from the native script' "$json_a" '"name":"project-a","mode":"local-only","yolo":"off"'
+contains 'multi-project JSON: records project-b exact, distinct posture from the native script' "$json_a" '"name":"project-b","mode":"direct-PR","yolo":"on"'
+
 # =============================================================================
 # 9. Valid, documented JSON schema
 # =============================================================================
 json=$(run_doctor --json)
-if json_parse_ok "$json"; then pass 'JSON: parses with a real JSON parser'; else fail 'JSON: failed to parse'; fi
+json_parse_ok "$json"; jpo_rc=$?
+case $jpo_rc in
+  0) pass 'JSON: parses with a real JSON parser' ;;
+  2) pass 'JSON: parse check skipped (no jq or python3 on the test runner itself)' ;;
+  *) fail 'JSON: failed to parse' ;;
+esac
 for key in schema_version status exit_code timestamp system firstmate launcher captain runtime harnesses routing roles skills projects checks; do
   contains "JSON: top-level key '$key' present" "$json" "\"$key\":"
 done
@@ -496,6 +553,23 @@ unset FM_TEST_OMP_AVAILABLE
 check 'harness-scoped routing: exit code stays 0 (non-mandatory)' 0 "$code"
 contains 'harness-scoped routing: the pi lane is checked through pi and is available' "$out" 'PASS          routing.model.pi.openai-codex/gpt-6-astra'
 contains 'harness-scoped routing: the omp lane for the same model is checked independently through omp and is unavailable' "$out" 'FAIL          routing.model.omp.openai-codex/gpt-6-astra'
+
+# =============================================================================
+# 13. No JSON parser available -> crew-dispatch validity UNKNOWN, exit 0
+# =============================================================================
+# Neither jq nor python3 on PATH: fm-doctor must never fall back to a
+# brace-balance or sed scan and call that a parse. It reports UNKNOWN, never
+# a false PASS and never a false FAIL, and uncertainty never forces exit 1.
+RUN_PATH="$LAUNCHER_OK:$FAKE_BIN:$SYS_PATH_NO_PARSER"
+out=$(run_doctor); code=$?
+json_noparser=$(run_doctor --json)
+unset RUN_PATH
+check 'no parser: exit code stays 0 (uncertainty is not failure)' 0 "$code"
+contains 'no parser: routing check reports UNKNOWN, never a false PASS' "$out" 'UNKNOWN       routing.crew_dispatch_valid'
+not_contains 'no parser: routing check never falsely reports PASS' "$out" 'PASS          routing.crew_dispatch_valid'
+not_contains 'no parser: routing check never falsely reports FAIL from a missing tool alone' "$out" 'FAIL          routing.crew_dispatch_valid'
+contains 'no parser JSON: parse_method reports none' "$json_noparser" '"parse_method":"none"'
+contains 'no parser JSON: crew_dispatch valid is null, never coerced true or false' "$json_noparser" '"valid":null'
 
 printf '\nDOCTOR TESTS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]
