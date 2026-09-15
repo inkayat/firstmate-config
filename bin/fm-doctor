@@ -829,7 +829,9 @@ fi
 SKILL_MISSING=()
 SKILL_BROKEN=()
 SKILL_UNREADABLE=()
+SKILL_OFFICIAL_LEAK=()
 SKILL_INSTALLED=0
+FIRSTMATE_REAL=$(real_dir "$FIRSTMATE_ROOT")
 for name in "${SKILL_EXPECTED[@]}"; do
   [ -n "$name" ] || continue
   target="$SKILLS_ROOT/$name"
@@ -841,6 +843,12 @@ for name in "${SKILL_EXPECTED[@]}"; do
     SKILL_UNREADABLE+=("$name")
   else
     SKILL_INSTALLED=$((SKILL_INSTALLED + 1))
+    if [ -n "$FIRSTMATE_REAL" ]; then
+      resolved=$(real_dir "$target")
+      case $resolved in
+        "$FIRSTMATE_REAL"/*|"$FIRSTMATE_REAL") SKILL_OFFICIAL_LEAK+=("$name") ;;
+      esac
+    fi
   fi
 done
 
@@ -850,9 +858,22 @@ else
   add_check skills.global_installation FAIL "$SKILL_INSTALLED/${#SKILL_EXPECTED[@]} installed; missing: ${SKILL_MISSING[*]:-none}; broken links: ${SKILL_BROKEN[*]:-none}; unreadable: ${SKILL_UNREADABLE[*]:-none}" "$SKILLS_ROOT"
 fi
 
-J_SKILLS=$(printf '{"root":%s,"expected":%s,"installed":%s,"missing":%s,"broken_links":%s,"unreadable":%s}' \
+# Official FirstMate internal skills ($FIRSTMATE_ROOT/.agents/skills/*) are
+# Captain/FirstMate-only (primary-policy.md section 2, README "Worker
+# context and skill classes"): the shared worker skill root a delegated
+# task actually reads must never resolve into them.
+if [ -z "$FIRSTMATE_REAL" ]; then
+  add_check skills.no_official_internal_leak NOT_APPLICABLE "official FirstMate checkout path could not be resolved" "$FIRSTMATE_ROOT"
+elif [ "${#SKILL_OFFICIAL_LEAK[@]}" -eq 0 ]; then
+  add_check skills.no_official_internal_leak PASS "no installed shared skill resolves into the official FirstMate checkout" "$SKILLS_ROOT"
+else
+  add_check skills.no_official_internal_leak FAIL "shared skill(s) resolve into the official FirstMate checkout ($FIRSTMATE_REAL), which is Captain/FirstMate-only: ${SKILL_OFFICIAL_LEAK[*]}" "$FIRSTMATE_REAL"
+fi
+
+J_SKILLS=$(printf '{"root":%s,"expected":%s,"installed":%s,"missing":%s,"broken_links":%s,"unreadable":%s,"official_internal_leak":%s}' \
   "$(jstr "$SKILLS_ROOT")" "${#SKILL_EXPECTED[@]}" "$SKILL_INSTALLED" \
-  "$(json_array "${SKILL_MISSING[@]}")" "$(json_array "${SKILL_BROKEN[@]}")" "$(json_array "${SKILL_UNREADABLE[@]}")")
+  "$(json_array "${SKILL_MISSING[@]}")" "$(json_array "${SKILL_BROKEN[@]}")" "$(json_array "${SKILL_UNREADABLE[@]}")" \
+  "$(json_array "${SKILL_OFFICIAL_LEAK[@]}")")
 
 # =============================================================================
 # PROJECTS

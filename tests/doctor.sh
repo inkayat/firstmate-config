@@ -210,6 +210,11 @@ printf 'fixture\n' > "$FAKE_FIRSTMATE/.pi/extensions/fm-primary-pi-watch.ts"
 printf 'fixture\n' > "$FAKE_FIRSTMATE/.pi/extensions/fm-primary-turnend-guard.ts"
 printf 'fixture\n' > "$FAKE_FIRSTMATE/.omp/extensions/fm-primary-omp-watch.ts"
 printf 'fixture\n' > "$FAKE_FIRSTMATE/.omp/extensions/fm-primary-turnend-guard.ts"
+# An official-internal skill this fixture checkout ships (Captain/FirstMate-
+# only, per firstmate/primary-policy.md section 2). Scenario 19 proves the
+# shared skill root never resolves into it.
+mkdir -p "$FAKE_FIRSTMATE/.agents/skills/fixture-internal-only"
+printf 'fixture official-internal-only skill\n' > "$FAKE_FIRSTMATE/.agents/skills/fixture-internal-only/SKILL.md"
 cat > "$FAKE_FIRSTMATE/bin/fm-supervision-lib.sh" <<'SH'
 fm_supervision_status() { # <state-dir> [grace]
   local state=$1
@@ -362,6 +367,7 @@ contains 'healthy: FM_HOME is explicitly reported' "$out" "FM_HOME=$FAKE_FM_HOME
 contains 'healthy: an explicit heartbeat check is reported' "$out" 'runtime.heartbeat'
 contains 'healthy: roles all readable' "$out" 'PASS          roles.tenth-man'
 contains 'healthy: skills fully installed' "$out" 'PASS          skills.global_installation'
+contains 'healthy: no official-internal skill leakage' "$out" 'PASS          skills.no_official_internal_leak'
 contains 'healthy: Fable/Qwen reported DEFERRED, not FAIL' "$out" 'DEFERRED      routing.fable_qwen_deferred'
 not_contains 'healthy: Fable/Qwen deferred check is never FAIL' "$out" 'FAIL          routing.fable_qwen_deferred'
 contains 'healthy: stack manifest loaded' "$out" 'PASS          stack.manifest'
@@ -715,6 +721,26 @@ GITWRAP
 else
   pass 'git read-only: no system git available to wrap (skipped)'
 fi
+
+# =============================================================================
+# 19. Official FirstMate internal skill leaking into the shared skill root ->
+#     reported FAIL, but non-mandatory: exit 0. Proves the shared root a
+#     worker actually reads never silently resolves into the official
+#     checkout's Captain/FirstMate-only .agents/skills (primary-policy.md
+#     section 2, README "Worker context and skill classes").
+# =============================================================================
+FAKE_HOME19="$TMP_ROOT/home-official-leak"
+mkdir -p "$FAKE_HOME19/.agents/skills"
+seed_skills_root "$FAKE_HOME19/.agents/skills" "$CONFIG_ROOT"
+rm -rf "$FAKE_HOME19/.agents/skills/architecture-review"
+ln -s "$FAKE_FIRSTMATE/.agents/skills/fixture-internal-only" "$FAKE_HOME19/.agents/skills/architecture-review"
+RUN_HOME="$FAKE_HOME19"
+out=$(run_doctor); code=$?
+unset RUN_HOME
+check 'official leak: exit code stays 0 (non-mandatory)' 0 "$code"
+contains 'official leak: reported FAIL' "$out" 'FAIL          skills.no_official_internal_leak'
+contains 'official leak: names the leaking skill' "$out" 'architecture-review'
+contains 'official leak: names the official FirstMate root' "$out" "$FAKE_FIRSTMATE"
 
 printf '\nDOCTOR TESTS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]

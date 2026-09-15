@@ -55,23 +55,70 @@ every global skill in this configuration. Where a global skill and a project
 rule disagree, the project wins and the conflict is worth one sentence in the
 brief so the worker does not rediscover it.
 
+Full chain, never a later tier overriding an earlier one: project-native
+instructions, then applicable project-local skills, then this role/task
+policy, then global/shared worker skills.
+
 If two Tier-1 project rules genuinely contradict each other and nothing
 resolves it, stop and ask. Do not pick one silently.
 
 ## 2. Before delegating
 
-For every delegated task, in the repository the work will happen in:
+Pi and OMP do not share one native discovery contract - their instruction
+search roots, override support, and skill precedence differ. "The harness
+discovers project instructions natively" is not a complete guarantee across
+harnesses by itself: it discovers *something*, not necessarily the specific
+resolution already computed in section 1. Never hand a worker a generic
+"follow project instructions and use appropriate skills" sentence and call
+that sufficient.
 
-- read the applicable instruction files resolved by section 1, nearest scope
-  first, and the project-local skills that apply to the work
-- state in the brief which files you read and which rules bind this task
-- name the role, the harness, and the skills the worker should load
-- carry anything the worker cannot rediscover cheaply: conventions, a known
-  trap, the verification command that actually proves the change
+For every delegated task, resolved against the worker's own isolated task
+worktree - its instructions and skills, never the primary checkout the task
+started from - make the following an explicit, compact part of that task's
+`## Firstmate spec`:
 
-The harness discovers project instructions natively once it is working in the
-project. Your job is to resolve the authority question and hand over the
-conclusion, not to copy the project's documentation into the brief.
+1. the selected project and task subtree;
+2. the applicable instruction paths, relative to the worktree root, and
+   which one wins at each scope under section 1's precedence - name
+   `AGENTS.override.md`, root/nested `AGENTS.md`, and `CLAUDE.md`
+   explicitly wherever more than one exists, so the worker never has to
+   guess which contradictory file is authoritative;
+3. the exact project-local skill path(s) the task requires, each paired with
+   a read-and-apply requirement, not merely a name to notice, for example:
+
+       Required project skill:
+         <worktree>/.agents/skills/django-migrations/SKILL.md
+       Requirement:
+         Read and apply this skill before reading, writing, reviewing, or
+         editing migrations.
+
+4. the exact selected shared worker skill path(s) - at most what section 5
+   already allows - each with the same read-and-apply requirement, never a
+   copied body, for example:
+
+       Selected shared worker skill:
+         verification-before-completion
+       Requirement:
+         Apply before declaring the task complete.
+
+5. a pre-work requirement: before substantive work, read every path named
+   above and report a missing, unreadable, or conflicting path instead of
+   silently falling back to a different scope or a global default;
+6. a requirement that scope expansion re-triggers step 2 for the newly
+   touched subtree before editing there.
+
+This is a semantic contract, not a copy of the project's documentation:
+name paths and the resolution, never paste file bodies or skill bodies into
+the brief, and never enumerate every installed global skill. The worker's
+own read of the named paths, and its report of what it found, is the
+evidence discovery happened - not the harness's generic native loader by
+itself.
+
+Official FirstMate internal skills (`$FIRSTMATE_ROOT/.agents/skills/*`) are
+never a selected shared worker skill and never belong in step 4: they are
+Captain/FirstMate-only. Shared worker skills live at the normal shared root
+(`~/.agents/skills`, both Pi- and OMP-visible); project-local skills live
+under the project's own tracked directories inside the worktree.
 
 Never copy project knowledge into this configuration repository. It resolves
 per task, in place.
@@ -142,6 +189,10 @@ Select them; do not dump them. Per task, at most two workflow or methodology
 skills and at most one reference skill, fewer by preference, and none at all
 when the task does not need one. A project-local skill always wins over a
 global skill covering the same ground.
+
+Official FirstMate internal skills (the official checkout's own
+`.agents/skills`) are never a global skill choice for a delegated task -
+they are Captain/FirstMate-only, per section 2.
 
 ## 6. Orchestration boundary
 

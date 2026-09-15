@@ -23,13 +23,19 @@
 # real `treehouse`-pooled worktrees, resolving each project through
 # upstream's own `projects/<name>` shorthand - the one project-name-to-path
 # mechanism firstmate already provides, never a second resolver invented
-# here. Only the two harness executables (`pi`, `omp`) are faked, and each
-# fake writes a report from inside the real launched process showing exactly
-# what it can see. A third, unregistered project name is dispatched the same
-# way and refused by that same real seam - the honest "ask, don't guess"
-# signal, not a simulated one. A temporary $HOME fixture makes global-skill
-# availability deterministic instead of depending on the operator's real
-# installed skills.
+# here. Only the two harness executables (`pi`, `omp`) are faked - a plain
+# `cat`/`ls` reporting its own launch cwd, never a stand-in for either
+# harness's own native instruction/skill loader. What this proves is real
+# dispatch/isolation plumbing: which worktree `fm-spawn.sh` actually launched
+# each lane into, and that one project's files never leak into the other's
+# worktree. It does NOT exercise Pi's or OMP's own native context/skill
+# discovery (trust gating, search-root precedence, override handling) -
+# `tests/worker-context.sh` is the offline acceptance for that, against each
+# harness's real installed loader/documentation. A third, unregistered
+# project name is dispatched the same way and refused by that same real seam
+# - the honest "ask, don't guess" signal, not a simulated one. A temporary
+# $HOME fixture makes global-skill availability deterministic instead of
+# depending on the operator's real installed skills.
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -305,7 +311,7 @@ EOF
     done
   }
 
-  # A Pi worker targets Project A.
+  # The fake-pi lane dispatches to Project A.
   spawn_a_out=$(run_spawn task-mpc-a projects/project-a pi 2>&1)
   spawn_a_status=$?
   if [ "$spawn_a_status" -ne 0 ]; then
@@ -323,14 +329,14 @@ EOF
     fi
     wait_for_report "$wt_a/worker-report.txt"
     report_a=$(cat "$wt_a/worker-report.txt" 2>/dev/null)
-    contains 'the real Pi worker in Project A saw Project A own AGENTS.md rule' "$report_a" 'ALWAYS use tabs'
-    not_contains 'the real Pi worker in Project A never saw Project B conflicting AGENTS.md rule' "$report_a" 'ALWAYS use spaces'
-    contains 'the real Pi worker in Project A saw Project A own project-local skill' "$report_a" 'only-in-a'
-    not_contains 'Project B local skill never reached the real Pi worker in Project A' "$report_a" 'only-in-b'
-    contains 'the global skill fixture is available to the real Pi worker in Project A' "$report_a" 'GLOBAL_SKILL=present'
+    contains "Project A's dispatched worktree cwd contains Project A's own AGENTS.md rule (dispatch/isolation, not pi native discovery)" "$report_a" 'ALWAYS use tabs'
+    not_contains "Project A's dispatched worktree cwd never contains Project B's conflicting AGENTS.md rule" "$report_a" 'ALWAYS use spaces'
+    contains "Project A's dispatched worktree cwd contains Project A's own project-local skill" "$report_a" 'only-in-a'
+    not_contains "Project B's local skill never reaches Project A's dispatched worktree cwd" "$report_a" 'only-in-b'
+    contains "the global skill fixture is visible from Project A's dispatched worktree cwd" "$report_a" 'GLOBAL_SKILL=present'
   fi
 
-  # An OMP worker targets Project B.
+  # The fake-omp lane dispatches to Project B.
   spawn_b_out=$(run_spawn task-mpc-b projects/project-b omp 2>&1)
   spawn_b_status=$?
   if [ "$spawn_b_status" -ne 0 ]; then
@@ -348,11 +354,11 @@ EOF
     fi
     wait_for_report "$wt_b/worker-report.txt"
     report_b=$(cat "$wt_b/worker-report.txt" 2>/dev/null)
-    contains 'the real OMP worker in Project B saw Project B own AGENTS.md rule' "$report_b" 'ALWAYS use spaces'
-    not_contains 'the real OMP worker in Project B never saw Project A conflicting AGENTS.md rule' "$report_b" 'ALWAYS use tabs'
-    contains 'the real OMP worker in Project B saw Project B own project-local skill' "$report_b" 'only-in-b'
-    not_contains 'Project A local skill never reached the real OMP worker in Project B' "$report_b" 'only-in-a'
-    contains 'the global skill fixture is available to the real OMP worker in Project B' "$report_b" 'GLOBAL_SKILL=present'
+    contains "Project B's dispatched worktree cwd contains Project B's own AGENTS.md rule (dispatch/isolation, not omp native discovery)" "$report_b" 'ALWAYS use spaces'
+    not_contains "Project B's dispatched worktree cwd never contains Project A's conflicting AGENTS.md rule" "$report_b" 'ALWAYS use tabs'
+    contains "Project B's dispatched worktree cwd contains Project B's own project-local skill" "$report_b" 'only-in-b'
+    not_contains "Project A's local skill never reaches Project B's dispatched worktree cwd" "$report_b" 'only-in-a'
+    contains "the global skill fixture is visible from Project B's dispatched worktree cwd" "$report_b" 'GLOBAL_SKILL=present'
   fi
 
   if [ -n "${wt_a:-}" ] && [ -n "${wt_b:-}" ] && [ "$wt_a" = "$wt_b" ]; then

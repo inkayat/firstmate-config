@@ -37,6 +37,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `tests/multi-project-captain.sh` | multi-project resolution/isolation/routing acceptance | - |
 | `tests/doctor.sh` | `fm doctor` acceptance: statuses, exit codes, JSON schema | - |
 | `tests/stack-manifest.sh` | stack compatibility manifest acceptance: `install.sh`/`fm-doctor`/`fm-version` sharing one baseline | - |
+| `tests/worker-context.sh` | delegated-worker context/skill-class acceptance: compact handoff fixture, offline Pi native-loader evidence, official-internal-skill negative check | - |
 
 ## Install
 
@@ -67,6 +68,7 @@ tests/smoke.sh --live              # the same, plus a captain that is currently 
 tests/multi-project-captain.sh     # project resolution, isolation, and routing
 tests/doctor.sh                    # fm doctor: statuses, exit codes, JSON schema
 tests/stack-manifest.sh            # stack compatibility manifest: install.sh/fm-doctor/fm-version
+tests/worker-context.sh            # delegated-worker context/skill-class handoff fixtures
 ```
 
 ## fm version
@@ -160,8 +162,10 @@ is `UNKNOWN`. `harnesses.pi_version`, `harnesses.omp_version`,
 never the `exit_code`), but a hard-minimum `FAIL` (an installed version
 below its component's minimum) or a known-incompatible `firstmate.commit_compat`
 `FAIL` (the official checkout behind the validated baseline, or diverged
-from it) is a genuine mandatory break - see "Exit codes" below. `stack.manifest`
-itself (whether the manifest loaded at all) stays advisory.
+from it) is a genuine mandatory break - see "Exit codes" below. A missing or
+invalid `stack.manifest` (unparseable, missing a required key, or failing
+the loader's own value validation) is itself a mandatory break too: every
+other stack-compatibility check depends on it having loaded.
 
 **Exit codes.** `0` when the mandatory architecture is healthy, even with
 `WARNING`, `DEFERRED`, or non-mandatory `BLOCKED_*`/`FAIL` findings present
@@ -244,6 +248,52 @@ blocks dispatch to another; concurrent tasks may target different projects,
 each in its own isolated task worktree, with no local context crossing
 between them. See `tests/multi-project-captain.sh` for the acceptance
 evidence.
+
+## Worker context and skill classes
+
+Pi and OMP do not share one native discovery contract - their instruction
+search roots, `AGENTS.override.md` support, and skill precedence differ.
+`firstmate/primary-policy.md` section 2 ("Before delegating") is where that
+gap is closed: every delegated task's `## Firstmate spec` carries an
+explicit, compact handoff - the resolved project/subtree, which worktree-
+relative instruction file wins at each scope, the exact project-local and
+selected shared-worker skill paths each paired with a read-and-apply
+requirement, and a pre-work requirement to report a missing, unreadable, or
+conflicting path rather than silently substituting a different scope. It
+never pastes a file or skill body into the brief, and it always resolves
+paths against the worker's own isolated task worktree, never the primary
+checkout the task started from.
+
+Three skill populations exist and are never interchangeable:
+
+- **Official FirstMate internal skills** (`$FIRSTMATE_ROOT/.agents/skills/*`)
+  are Captain/FirstMate-only. `metadata.internal: true` hides them from
+  installers such as skills.sh, not from a harness's own native loader when
+  it happens to run inside the official checkout - so they are never named
+  as a selected shared worker skill in a brief, and `fm doctor`'s
+  `skills.no_official_internal_leak` check reports, as static evidence,
+  whether any shared skill this repository installs resolves into that tree.
+- **firstmate-config shared worker skills** (`skills/*/SKILL.md` and the
+  pinned packs in `skills/external.lock`) are symlinked into the normal
+  shared root (`~/.agents/skills`) and are visible to both Pi and OMP by
+  their native global-skill discovery.
+- **Project-local skills** live under the project's own tracked directories
+  (`.claude/skills`, `.agents/skills`, `.agent/skills`) inside the worktree
+  the task actually runs in. A gitignored or uncommitted file from a
+  different clone, or a relative link pointing outside the worktree, is not
+  guaranteed to travel with it.
+
+`tests/worker-context.sh` is the offline acceptance for this contract: a
+disposable fixture repository with deliberately conflicting root/nested/
+override instructions, a project-local skill fixture with a body-only
+canary, a project-local-vs-shared-skill name collision, and an
+official-internal-skill negative check, plus a real, zero-inference probe
+of Pi's installed native resource loader against that fixture (pre-
+implementation evidence, not a substitute for a live delegated Pi/OMP run).
+It also exposes a deterministic `fixture_prepare`/`fixture_validate`
+interface so the same fixture can be run once for real through a live
+Herdr -> Pi worker and a live Herdr -> OMP worker, and the resulting
+transcripts checked for the same canaries.
 
 ## Routing in v0.1
 
