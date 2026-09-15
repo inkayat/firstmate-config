@@ -646,6 +646,283 @@ fixture_validate_live() {
 }
 
 # =============================================================================
+# Scoped-instruction target-discovery checkpoint fixture
+# (firstmate/primary-policy.md section 2, step 6; README.md "Worker
+# context and skill classes"). An open-ended task whose concrete target
+# is not covered by the launch-time scope: the root carries only a
+# generic instruction with no project-local skill requirement, and two
+# separate nested subtrees (modify/, other/) each carry their own
+# AGENTS.md and mandatory project-local skill. Proves that a worker (or
+# any bounded internal helper) discovering a concrete file/subtree
+# outside its resolved-scope list must re-run instruction resolution for
+# that target - including a second, later target after an A -> B scope
+# change - before substantive work, and that a helper's unsupported "no
+# nested instruction" claim never substitutes for the worker's own
+# re-resolution. This is additive to, and never a replacement for, the
+# root/nested/override precedence machinery fixture_prepare/
+# fixture_validate_live already proves.
+# =============================================================================
+C_SD_ROOT='ROOT_SCOPE_ONLY_CANARY'
+C_SD_MODIFY_INSTRUCTION='MODIFY_SCOPE_INSTRUCTION_CANARY'
+C_SD_MODIFY_SKILL_NAME='modify-canary'
+C_SD_MODIFY_SKILL_BODY='MODIFY_SCOPE_SKILL_BODY_CANARY'
+C_SD_MODIFY_TARGET='modify/models.py'
+C_SD_OTHER_INSTRUCTION='OTHER_SCOPE_INSTRUCTION_CANARY'
+C_SD_OTHER_SKILL_NAME='other-canary'
+C_SD_OTHER_SKILL_BODY='OTHER_SCOPE_SKILL_BODY_CANARY'
+C_SD_OTHER_TARGET='other/views.py'
+
+# fixture_scope_prepare <dir> - builds <dir>/repo for the open-ended
+# target-discovery scenario. Never deleted by this function; the caller
+# owns the directory's lifetime.
+fixture_scope_prepare() {
+  local dir=$1 repo="$1/repo"
+  mkdir -p "$repo/modify" "$repo/other" \
+    "$repo/.agents/skills/$C_SD_MODIFY_SKILL_NAME" \
+    "$repo/.agents/skills/$C_SD_OTHER_SKILL_NAME"
+
+  cat > "$repo/AGENTS.md" <<EOF
+Rule: $C_SD_ROOT applies at the repository root. No project-local skill is
+required at the root; nested subtrees below carry their own instructions.
+EOF
+
+  cat > "$repo/modify/AGENTS.md" <<EOF
+Rule: $C_SD_MODIFY_INSTRUCTION applies to files under modify/.
+
+Required project skill:
+  .agents/skills/$C_SD_MODIFY_SKILL_NAME/SKILL.md
+Requirement:
+  Read and apply this skill before reading, writing, reviewing, or editing
+  anything under modify/.
+EOF
+
+  cat > "$repo/.agents/skills/$C_SD_MODIFY_SKILL_NAME/SKILL.md" <<EOF
+---
+name: $C_SD_MODIFY_SKILL_NAME
+description: Fixture project-local skill required before touching modify/.
+---
+# Modify canary
+
+$C_SD_MODIFY_SKILL_BODY: read and apply this skill before reading, writing,
+reviewing, or editing anything under modify/.
+EOF
+
+  printf -- '-- fixture target, read-only\n' > "$repo/$C_SD_MODIFY_TARGET"
+
+  cat > "$repo/other/AGENTS.md" <<EOF
+Rule: $C_SD_OTHER_INSTRUCTION applies to files under other/.
+
+Required project skill:
+  .agents/skills/$C_SD_OTHER_SKILL_NAME/SKILL.md
+Requirement:
+  Read and apply this skill before reading, writing, reviewing, or editing
+  anything under other/.
+EOF
+
+  cat > "$repo/.agents/skills/$C_SD_OTHER_SKILL_NAME/SKILL.md" <<EOF
+---
+name: $C_SD_OTHER_SKILL_NAME
+description: Fixture project-local skill required before touching other/.
+---
+# Other canary
+
+$C_SD_OTHER_SKILL_BODY: read and apply this skill before reading, writing,
+reviewing, or editing anything under other/.
+EOF
+
+  printf -- '-- fixture second target, read-only\n' > "$repo/$C_SD_OTHER_TARGET"
+
+  git -C "$repo" init -q
+  git -C "$repo" add -A
+  git -C "$repo" -c user.email=wc@example.invalid -c user.name=wc commit -q -m fixture
+}
+
+# fixture_scope_handoff <repo-dir> - prints the compact, no-body handoff
+# for the open-ended target-discovery fixture at <repo-dir>. Unlike
+# fixture_handoff, the launch-covered scope names only the repository
+# root: the concrete file(s) needing a change are deliberately never
+# named here, and neither nested subtree's instruction/skill path is
+# ever named - discovering them is exactly what the task requires.
+# <repo-dir> is used only to validate the fixture exists; its absolute
+# path is NEVER printed.
+fixture_scope_handoff() {
+  local repo=$1
+  if [ ! -f "$repo/AGENTS.md" ]; then
+    printf 'fixture_scope_handoff: %s is missing AGENTS.md; not a prepared fixture\n' "$repo" >&2
+    return 1
+  fi
+  cat <<EOF
+Task worktree: your current isolated task worktree - never the primary or
+source checkout this fixture was prepared from, which does not exist from
+your side and must never be read instead.
+
+Before reading anything below, verify you are standing at that worktree's
+root: run pwd -P and git rev-parse --show-toplevel and confirm they are
+equal.
+
+Covered scope at launch (this is the only scope resolved so far):
+  AGENTS.md   - repository root; applies everywhere by default
+
+This task is open-ended: the concrete file(s) needing a change are not
+named above and are not yet covered by the scope above. A validation bug
+report points at the project's data-model definitions; locate the
+responsible file yourself (grep, read directory listings, or a bounded
+internal helper, as you prefer) and fix it.
+
+Target-discovery checkpoint (firstmate/primary-policy.md section 2, step
+6): keep a small resolved-scope list, seeded with the root scope above.
+The first time you, or any bounded internal helper, discover or select a
+concrete file/subtree not already on that list, before any substantive
+reading, editing, reviewing, or testing of it you must: resolve the
+nearest instruction file for that subtree (AGENTS.override.md, then
+AGENTS.md, then CLAUDE.md); read and apply any project-local skill it
+requires; add the newly resolved scope/instruction/skill paths to your
+list; and report the checkpoint below. If the task later points you at a
+second, different location, repeat the same checkpoint for it - do not
+assume the first checkpoint still covers it. A bounded internal helper's
+unsupported claim that no nested instruction exists is never sufficient
+by itself: you independently perform this checkpoint before relying on
+the helper's target or content, or editing there.
+
+Report, once per newly discovered target:
+  TARGET_SCOPE_CHECK: <worktree-relative path you selected>
+  TARGET_SCOPE_COVERED_BY: <previously covered scope, or none>
+  TARGET_SCOPE_ACTION: re-resolved | already-covered
+  TARGET_INSTRUCTION_PATHS: <worktree-relative instruction paths you
+    considered for that target, and which one wins - no bodies>
+  TARGET_PROJECT_SKILLS: <worktree-relative SKILL.md path(s) newly
+    required for that target, or none>
+
+Bounded internal helper evidence requirement (report only if your harness
+has a native bounded subagent mechanism; otherwise report
+INTERNAL_SUBAGENT_USED: not-applicable with one reason line):
+  If you spawn a task-local scout, researcher, or helper to find the
+  target, report:
+    INTERNAL_SUBAGENT_USED: yes | no | not-applicable
+    (when yes, also report all of:)
+    INTERNAL_SUBAGENT_SUBSTANTIVE_TARGET_ANALYSIS: yes | no
+      (yes only if the helper did more than return a bare filename, e.g.
+      it read or analyzed content under the target it found)
+    INTERNAL_SUBAGENT_TARGET_CHECKPOINT_PERFORMED: yes | no | not-applicable
+      (required to be yes whenever the helper's own analysis was
+      substantive; a discovery-only helper may report not-applicable)
+
+Pre-work requirement:
+  Perform the target-discovery checkpoint above before any substantive
+  work on a newly discovered target. Report a missing, unreadable, or
+  conflicting path instead of silently falling back to a different scope
+  or a global default.
+
+Task:
+  1. Find the file responsible for the data-model validation bug and fix
+     it, performing the target-discovery checkpoint above before touching
+     it.
+  2. Report the checkpoint labels above for every newly discovered
+     target, the bounded-internal-helper evidence, and declare the task
+     complete only after both are satisfied.
+EOF
+}
+
+# _wc_scope_checkpoint_ok <transcript> <target-path> <instruction-marker>
+#   <skill-body-marker> <checkpoint-line> <instruction-line> <skill-line>
+# -> 0 (ok) when the target is never mentioned anywhere in the
+# transcript at all (nothing to gate yet), or otherwise only when the
+# transcript contains the exact checkpoint-report lines naming that
+# target's resolved instruction and skill paths, AND the nested
+# instruction marker and the skill body marker both occur - in a copy of
+# the transcript with every TARGET_SCOPE_CHECK/TARGET_SCOPE_COVERED_BY/
+# TARGET_SCOPE_ACTION/TARGET_INSTRUCTION_PATHS/TARGET_PROJECT_SKILLS
+# report line stripped, so the checkpoint's own required report line
+# (which necessarily names the target) is never itself mistaken for
+# having "touched" it - at or before that stripped copy's first mention
+# of the target path.
+_wc_scope_checkpoint_ok() {
+  local t=$1 target=$2 instr_marker=$3 skill_marker=$4 checkpoint_line=$5 instr_line=$6 skill_line=$7
+  case $t in *"$target"*) : ;; *) return 0 ;; esac
+  case $t in *"$checkpoint_line"*) : ;; *) return 1 ;; esac
+  case $t in *"$instr_line"*) : ;; *) return 1 ;; esac
+  case $t in *"$skill_line"*) : ;; *) return 1 ;; esac
+  local filtered target_idx instr_idx skill_idx
+  filtered=$(printf '%s\n' "$t" | grep -v -E '^[[:space:]]*TARGET_[A-Z_]*:')
+  target_idx=$(_wc_str_index "$filtered" "$target")
+  if [ "$target_idx" -ge 0 ]; then
+    instr_idx=$(_wc_str_index "$filtered" "$instr_marker")
+    [ "$instr_idx" -ge 0 ] && [ "$instr_idx" -le "$target_idx" ] || return 1
+    skill_idx=$(_wc_str_index "$filtered" "$skill_marker")
+    [ "$skill_idx" -ge 0 ] && [ "$skill_idx" -le "$target_idx" ] || return 1
+  fi
+  return 0
+}
+
+# fixture_scope_validate_live <transcript-file> [expected-worktree] - the
+# required-proof gate for the target-discovery checkpoint contract. Gates
+# both nested subtrees this fixture defines (modify/, other/)
+# independently, so an A -> B scope change requires its own passing
+# checkpoint for B even after A already passed; a target never mentioned
+# in the transcript at all is not gated. Prints one "PASS <LABEL>",
+# "FAIL <LABEL>", or "SKIP <LABEL> (reason)" line per required proof;
+# returns 0 only when every required proof passes.
+fixture_scope_validate_live() {
+  local report=$1 expected=${2:-} t all_ok=0
+  if [ ! -r "$report" ]; then
+    printf 'FAIL WORKTREE_REPORT_READABLE   worker report not readable: %s\n' "$report"
+    return 1
+  fi
+  t=$(cat "$report")
+
+  _req() { # <label> <ok:0|1>
+    if [ "$2" -eq 0 ]; then printf 'PASS %-36s\n' "$1"; else printf 'FAIL %-36s\n' "$1"; all_ok=1; fi
+  }
+
+  if [ -n "$expected" ]; then
+    case $t in
+      *"$expected"*) _req EXPECTED_WORKTREE 0 ;;
+      *) _req EXPECTED_WORKTREE 1 ;;
+    esac
+  else
+    printf 'SKIP %-36s (no expected worktree given)\n' EXPECTED_WORKTREE
+  fi
+
+  case $t in *"$C_SD_ROOT"*) _req ROOT_SCOPE_OBSERVED 0 ;; *) _req ROOT_SCOPE_OBSERVED 1 ;; esac
+
+  if _wc_scope_checkpoint_ok "$t" "$C_SD_MODIFY_TARGET" "$C_SD_MODIFY_INSTRUCTION" "$C_SD_MODIFY_SKILL_BODY" \
+    "TARGET_SCOPE_CHECK: $C_SD_MODIFY_TARGET" "TARGET_INSTRUCTION_PATHS: modify/AGENTS.md" \
+    "TARGET_PROJECT_SKILLS: .agents/skills/$C_SD_MODIFY_SKILL_NAME/SKILL.md"; then
+    _req TARGET_CHECKPOINT_MODIFY 0
+  else
+    _req TARGET_CHECKPOINT_MODIFY 1
+  fi
+
+  if _wc_scope_checkpoint_ok "$t" "$C_SD_OTHER_TARGET" "$C_SD_OTHER_INSTRUCTION" "$C_SD_OTHER_SKILL_BODY" \
+    "TARGET_SCOPE_CHECK: $C_SD_OTHER_TARGET" "TARGET_INSTRUCTION_PATHS: other/AGENTS.md" \
+    "TARGET_PROJECT_SKILLS: .agents/skills/$C_SD_OTHER_SKILL_NAME/SKILL.md"; then
+    _req TARGET_CHECKPOINT_OTHER 0
+  else
+    _req TARGET_CHECKPOINT_OTHER 1
+  fi
+
+  # A bounded internal helper that performed substantive analysis under a
+  # newly discovered target must have run this same checkpoint itself; a
+  # discovery-only helper (or none reported at all) is exempt - SKIP,
+  # never silently rounded up to a pass.
+  local substantive checkpoint_performed
+  substantive=$(_wc_field "$t" INTERNAL_SUBAGENT_SUBSTANTIVE_TARGET_ANALYSIS)
+  case $substantive in
+    yes)
+      checkpoint_performed=$(_wc_field "$t" INTERNAL_SUBAGENT_TARGET_CHECKPOINT_PERFORMED)
+      case $checkpoint_performed in
+        yes) _req INTERNAL_SUBAGENT_TARGET_CHECKPOINT 0 ;;
+        *) _req INTERNAL_SUBAGENT_TARGET_CHECKPOINT 1 ;;
+      esac
+      ;;
+    no) printf 'SKIP %-36s (discovery-only helper)\n' INTERNAL_SUBAGENT_TARGET_CHECKPOINT ;;
+    *) printf 'SKIP %-36s (no internal helper target analysis reported)\n' INTERNAL_SUBAGENT_TARGET_CHECKPOINT ;;
+  esac
+
+  return $all_ok
+}
+
+# =============================================================================
 # CLI dispatch - must run before any offline-suite scratch state (TMP_ROOT,
 # its EXIT trap) is created, so prepare/validate/handoff never depend on or
 # disturb the default suite's own temporary root.
@@ -662,6 +939,23 @@ case "${1:-}" in
     repo=${2:?"usage: $0 handoff <repo-dir>"}
     fixture_handoff "$repo"
     exit 0
+    ;;
+  scope-prepare)
+    dir=${2:?"usage: $0 scope-prepare <directory>"}
+    mkdir -p "$dir"
+    fixture_scope_prepare "$dir"
+    printf '%s\n' "$dir/repo"
+    exit 0
+    ;;
+  scope-handoff)
+    repo=${2:?"usage: $0 scope-handoff <repo-dir>"}
+    fixture_scope_handoff "$repo"
+    exit 0
+    ;;
+  scope-validate)
+    report=${2:?"usage: $0 scope-validate <worker-report> [expected-worktree]"}
+    fixture_scope_validate_live "$report" "${3:-}"
+    exit $?
     ;;
   internal-prepare)
     dir=${2:?"usage: $0 internal-prepare <directory-inside-your-real-task-worktree>"}
@@ -701,7 +995,7 @@ case "${1:-}" in
     ;;
   '') ;; # fall through to the offline suite below
   *)
-    printf 'usage: %s [prepare <directory>|handoff <repo-dir>|internal-prepare <directory>|internal-handoff <directory> <expected-worktree>|validate <worker-report> [expected-worktree]|validate-local <worker-report> <expected-worktree> -- <command> [args...]]\n' "$0" >&2
+    printf 'usage: %s [prepare <directory>|handoff <repo-dir>|internal-prepare <directory>|internal-handoff <directory> <expected-worktree>|validate <worker-report> [expected-worktree]|validate-local <worker-report> <expected-worktree> -- <command> [args...]|scope-prepare <directory>|scope-handoff <repo-dir>|scope-validate <worker-report> [expected-worktree]]\n' "$0" >&2
     exit 2
     ;;
 esac
@@ -1242,6 +1536,214 @@ val_uncertain_out=$(bash "$SELF" validate "$UNCERTAIN_REPORT" "$CLI_DIR/repo" 2>
 if [ "$val_uncertain_rc" -eq 0 ]; then fail 'CLI validate: unreported provenance unexpectedly exits 0'; else pass 'CLI validate: unreported provenance exits nonzero'; fi
 contains 'CLI validate: unreported provenance fails the evidence-reported check' "$val_uncertain_out" 'FAIL VERIFY_PROVENANCE_EVIDENCE_REPORTED'
 
+
+# =============================================================================
+# 6. Scoped-instruction target-discovery checkpoint (firstmate/primary-
+#    policy.md section 2, step 6): open-ended intake with the target
+#    withheld, an A -> B scope change, a discovery-only vs substantive
+#    bounded helper, and the exact "no nested instruction" false-
+#    confidence claim this task's Captain's intent named explicitly.
+# =============================================================================
+SCOPE_DIR="$TMP_ROOT/scope-cli"
+scope_prep_out=$(bash "$SELF" scope-prepare "$SCOPE_DIR" 2>&1); scope_prep_rc=$?
+check 'CLI scope-prepare: exits 0' 0 "$scope_prep_rc"
+check 'CLI scope-prepare: prints the fixture repo path' "$SCOPE_DIR/repo" "$scope_prep_out"
+SCOPE_REPO="$SCOPE_DIR/repo"
+
+scope_handoff_out=$(bash "$SELF" scope-handoff "$SCOPE_REPO" 2>&1); scope_handoff_rc=$?
+check 'CLI scope-handoff: exits 0' 0 "$scope_handoff_rc"
+contains 'CLI scope-handoff: names only the root scope as covered at launch' "$scope_handoff_out" 'AGENTS.md   - repository root'
+not_contains 'CLI scope-handoff: never names modify/AGENTS.md up front' "$scope_handoff_out" 'modify/AGENTS.md'
+not_contains 'CLI scope-handoff: never names the modify target path up front' "$scope_handoff_out" "$C_SD_MODIFY_TARGET"
+not_contains 'CLI scope-handoff: never names the modify skill path up front' "$scope_handoff_out" "$C_SD_MODIFY_SKILL_NAME"
+for marker in "$C_SD_ROOT" "$C_SD_MODIFY_INSTRUCTION" "$C_SD_MODIFY_SKILL_BODY" "$C_SD_OTHER_INSTRUCTION" "$C_SD_OTHER_SKILL_BODY"; do
+  not_contains "CLI scope-handoff: never quotes the canary marker '$marker'" "$scope_handoff_out" "$marker"
+done
+contains 'CLI scope-handoff: requires a TARGET_SCOPE_CHECK checkpoint report' "$scope_handoff_out" 'TARGET_SCOPE_CHECK'
+contains 'CLI scope-handoff: requires TARGET_INSTRUCTION_PATHS evidence' "$scope_handoff_out" 'TARGET_INSTRUCTION_PATHS'
+contains 'CLI scope-handoff: requires TARGET_PROJECT_SKILLS evidence' "$scope_handoff_out" 'TARGET_PROJECT_SKILLS'
+contains 'CLI scope-handoff: rejects an unsupported no-nested-instruction claim by name' "$scope_handoff_out" 'no nested instruction exists is never sufficient'
+
+# The source fixture's absolute path must never leak, same discipline as
+# the original fixture_handoff proof.
+SCOPE_SOURCE_DIR="$TMP_ROOT/SCOPE-SOURCE-ONLY-$$-do-not-leak"
+mkdir -p "$SCOPE_SOURCE_DIR"
+fixture_scope_prepare "$SCOPE_SOURCE_DIR"
+SCOPE_SOURCE_REPO="$SCOPE_SOURCE_DIR/repo"
+scope_source_handoff_out=$(bash "$SELF" scope-handoff "$SCOPE_SOURCE_REPO" 2>&1)
+not_contains 'CLI scope-handoff: never prints the source/primary checkout absolute path' "$scope_source_handoff_out" "$SCOPE_SOURCE_REPO"
+not_contains 'CLI scope-handoff: never prints the unique source-path token' "$scope_source_handoff_out" 'SCOPE-SOURCE-ONLY'
+
+# A fully compliant single-target report: checkpoint reported, then the
+# nested instruction and skill body markers, before the target is edited.
+GOOD_SCOPE_REPORT="$TMP_ROOT/scope-good-report.txt"
+cat > "$GOOD_SCOPE_REPORT" <<EOF
+Ran in $SCOPE_REPO.
+$C_SD_ROOT observed at launch; covered scope was the repository root only.
+TARGET_SCOPE_CHECK: $C_SD_MODIFY_TARGET
+TARGET_SCOPE_COVERED_BY: none
+TARGET_SCOPE_ACTION: re-resolved
+TARGET_INSTRUCTION_PATHS: modify/AGENTS.md
+TARGET_PROJECT_SKILLS: .agents/skills/$C_SD_MODIFY_SKILL_NAME/SKILL.md
+$C_SD_MODIFY_INSTRUCTION observed and followed.
+$C_SD_MODIFY_SKILL_BODY applied before editing $C_SD_MODIFY_TARGET.
+Fixed the validation bug in $C_SD_MODIFY_TARGET.
+INTERNAL_SUBAGENT_USED: not-applicable (harness has no native bounded subagent mechanism)
+EOF
+scope_val_out=$(bash "$SELF" scope-validate "$GOOD_SCOPE_REPORT" "$SCOPE_REPO" 2>&1); scope_val_rc=$?
+check 'CLI scope-validate: a fully compliant single-target report exits 0' 0 "$scope_val_rc"
+not_contains 'CLI scope-validate: a fully compliant single-target report has no FAIL line' "$scope_val_out" 'FAIL'
+
+# Fail: the target was edited before the nested instruction/skill were
+# ever resolved - exactly this task's steering failure (modify/models.py
+# read and edited without resolving modify/AGENTS.md first).
+ORDER_BAD_SCOPE_REPORT="$TMP_ROOT/scope-order-bad-report.txt"
+cat > "$ORDER_BAD_SCOPE_REPORT" <<EOF
+Ran in $SCOPE_REPO.
+$C_SD_ROOT observed at launch.
+Edited $C_SD_MODIFY_TARGET directly to fix the bug.
+TARGET_SCOPE_CHECK: $C_SD_MODIFY_TARGET
+TARGET_INSTRUCTION_PATHS: modify/AGENTS.md
+TARGET_PROJECT_SKILLS: .agents/skills/$C_SD_MODIFY_SKILL_NAME/SKILL.md
+$C_SD_MODIFY_INSTRUCTION noticed only after editing.
+$C_SD_MODIFY_SKILL_BODY read only after editing.
+EOF
+scope_order_out=$(bash "$SELF" scope-validate "$ORDER_BAD_SCOPE_REPORT" "$SCOPE_REPO" 2>&1); scope_order_rc=$?
+if [ "$scope_order_rc" -eq 0 ]; then fail 'CLI scope-validate: editing before checkpoint unexpectedly exits 0'; else pass 'CLI scope-validate: editing before checkpoint exits nonzero'; fi
+contains 'CLI scope-validate: editing before checkpoint reports the ordering failure' "$scope_order_out" 'FAIL TARGET_CHECKPOINT_MODIFY'
+
+# Fail: the project-local skill required by the nested AGENTS.md is read
+# only after the target file was already edited.
+SKILL_LATE_REPORT="$TMP_ROOT/scope-skill-late-report.txt"
+cat > "$SKILL_LATE_REPORT" <<EOF
+Ran in $SCOPE_REPO.
+$C_SD_ROOT observed at launch.
+TARGET_SCOPE_CHECK: $C_SD_MODIFY_TARGET
+TARGET_INSTRUCTION_PATHS: modify/AGENTS.md
+TARGET_PROJECT_SKILLS: .agents/skills/$C_SD_MODIFY_SKILL_NAME/SKILL.md
+$C_SD_MODIFY_INSTRUCTION observed and followed before editing $C_SD_MODIFY_TARGET.
+Edited $C_SD_MODIFY_TARGET, then only afterward read the skill:
+$C_SD_MODIFY_SKILL_BODY.
+EOF
+scope_skill_late_out=$(bash "$SELF" scope-validate "$SKILL_LATE_REPORT" "$SCOPE_REPO" 2>&1); scope_skill_late_rc=$?
+if [ "$scope_skill_late_rc" -eq 0 ]; then fail 'CLI scope-validate: skill read after editing unexpectedly exits 0'; else pass 'CLI scope-validate: skill read after editing exits nonzero'; fi
+contains 'CLI scope-validate: a project-local skill applied after the target reports the ordering failure' "$scope_skill_late_out" 'FAIL TARGET_CHECKPOINT_MODIFY'
+
+# Fail: the exact false-confidence failure this task's Captain's intent
+# named - a helper's unsupported "no nested instruction" claim, relied on
+# without the parent's own positive checkpoint evidence.
+NO_NESTED_CLAIM_REPORT="$TMP_ROOT/scope-no-nested-claim-report.txt"
+cat > "$NO_NESTED_CLAIM_REPORT" <<EOF
+Ran in $SCOPE_REPO.
+$C_SD_ROOT observed at launch.
+A scout reported no nested instruction exists for $C_SD_MODIFY_TARGET, so edited it directly relying on that.
+EOF
+scope_no_nested_out=$(bash "$SELF" scope-validate "$NO_NESTED_CLAIM_REPORT" "$SCOPE_REPO" 2>&1); scope_no_nested_rc=$?
+if [ "$scope_no_nested_rc" -eq 0 ]; then fail 'CLI scope-validate: an unsupported no-nested-instruction claim unexpectedly exits 0'; else pass 'CLI scope-validate: an unsupported no-nested-instruction claim exits nonzero'; fi
+contains 'CLI scope-validate: relying on an unsupported no-nested-instruction claim reports the checkpoint failure' "$scope_no_nested_out" 'FAIL TARGET_CHECKPOINT_MODIFY'
+
+# Pass: an A -> B scope change where B gets its own second checkpoint.
+AB_GOOD_REPORT="$TMP_ROOT/scope-ab-good-report.txt"
+cat > "$AB_GOOD_REPORT" <<EOF
+Ran in $SCOPE_REPO.
+$C_SD_ROOT observed at launch.
+TARGET_SCOPE_CHECK: $C_SD_MODIFY_TARGET
+TARGET_SCOPE_COVERED_BY: none
+TARGET_SCOPE_ACTION: re-resolved
+TARGET_INSTRUCTION_PATHS: modify/AGENTS.md
+TARGET_PROJECT_SKILLS: .agents/skills/$C_SD_MODIFY_SKILL_NAME/SKILL.md
+$C_SD_MODIFY_INSTRUCTION observed and followed.
+$C_SD_MODIFY_SKILL_BODY applied before editing $C_SD_MODIFY_TARGET.
+Fixed $C_SD_MODIFY_TARGET.
+A second, related report points at a different area.
+TARGET_SCOPE_CHECK: $C_SD_OTHER_TARGET
+TARGET_SCOPE_COVERED_BY: modify/ (from the first checkpoint above)
+TARGET_SCOPE_ACTION: re-resolved
+TARGET_INSTRUCTION_PATHS: other/AGENTS.md
+TARGET_PROJECT_SKILLS: .agents/skills/$C_SD_OTHER_SKILL_NAME/SKILL.md
+$C_SD_OTHER_INSTRUCTION observed and followed.
+$C_SD_OTHER_SKILL_BODY applied before editing $C_SD_OTHER_TARGET.
+Fixed $C_SD_OTHER_TARGET.
+INTERNAL_SUBAGENT_USED: not-applicable (harness has no native bounded subagent mechanism)
+EOF
+scope_ab_out=$(bash "$SELF" scope-validate "$AB_GOOD_REPORT" "$SCOPE_REPO" 2>&1); scope_ab_rc=$?
+check 'CLI scope-validate: an A -> B scope change with two checkpoints exits 0' 0 "$scope_ab_rc"
+not_contains 'CLI scope-validate: an A -> B scope change with two checkpoints has no FAIL line' "$scope_ab_out" 'FAIL'
+
+# Fail: after A's checkpoint, B is touched on the false assumption that
+# the first checkpoint still covers it - B needs its own.
+AB_BAD_REPORT="$TMP_ROOT/scope-ab-bad-report.txt"
+cat > "$AB_BAD_REPORT" <<EOF
+Ran in $SCOPE_REPO.
+$C_SD_ROOT observed at launch.
+TARGET_SCOPE_CHECK: $C_SD_MODIFY_TARGET
+TARGET_INSTRUCTION_PATHS: modify/AGENTS.md
+TARGET_PROJECT_SKILLS: .agents/skills/$C_SD_MODIFY_SKILL_NAME/SKILL.md
+$C_SD_MODIFY_INSTRUCTION observed and followed.
+$C_SD_MODIFY_SKILL_BODY applied before editing $C_SD_MODIFY_TARGET.
+Fixed $C_SD_MODIFY_TARGET.
+Assumed the same checkpoint still applied and edited $C_SD_OTHER_TARGET directly without re-checking.
+EOF
+scope_ab_bad_out=$(bash "$SELF" scope-validate "$AB_BAD_REPORT" "$SCOPE_REPO" 2>&1); scope_ab_bad_rc=$?
+if [ "$scope_ab_bad_rc" -eq 0 ]; then fail 'CLI scope-validate: reusing an earlier checkpoint for a new target unexpectedly exits 0'; else pass 'CLI scope-validate: reusing an earlier checkpoint for a new target exits nonzero'; fi
+contains 'CLI scope-validate: the first target still reports its own passing checkpoint' "$scope_ab_bad_out" 'PASS TARGET_CHECKPOINT_MODIFY'
+contains 'CLI scope-validate: the second, uncovered target reports its own checkpoint failure' "$scope_ab_bad_out" 'FAIL TARGET_CHECKPOINT_OTHER'
+
+# Pass/fail split: a discovery-only bounded helper (returns a bare
+# filename, no substantive analysis) never needs its own checkpoint - the
+# parent's independent checkpoint above is still what is graded.
+DISCOVERY_ONLY_REPORT="$TMP_ROOT/scope-discovery-only-report.txt"
+cat > "$DISCOVERY_ONLY_REPORT" <<EOF
+Ran in $SCOPE_REPO.
+$C_SD_ROOT observed at launch.
+INTERNAL_SUBAGENT_USED: yes
+INTERNAL_SUBAGENT_ID: fixture-scout-2
+INTERNAL_SUBAGENT_HARNESS: omp
+INTERNAL_SUBAGENT_MODEL: anthropic/claude-sonnet-5
+INTERNAL_SUBAGENT_EFFORT: low
+INTERNAL_SUBAGENT_PURPOSE: locate the file responsible for the validation bug
+INTERNAL_SUBAGENT_MODE: read-only
+INTERNAL_SUBAGENT_SAME_WORKTREE: true
+INTERNAL_SUBAGENT_SAME_PROJECT: true
+INTERNAL_SUBAGENT_FIRSTMATE_TASK_CREATED: none
+INTERNAL_SUBAGENT_CONTEXT_INHERITED: same cwd as parent
+INTERNAL_SUBAGENT_SUBSTANTIVE_TARGET_ANALYSIS: no
+INTERNAL_SUBAGENT_TARGET_CHECKPOINT_PERFORMED: not-applicable
+The helper returned only a filename, nothing else.
+TARGET_SCOPE_CHECK: $C_SD_MODIFY_TARGET
+TARGET_SCOPE_COVERED_BY: none
+TARGET_SCOPE_ACTION: re-resolved
+TARGET_INSTRUCTION_PATHS: modify/AGENTS.md
+TARGET_PROJECT_SKILLS: .agents/skills/$C_SD_MODIFY_SKILL_NAME/SKILL.md
+$C_SD_MODIFY_INSTRUCTION observed and followed.
+$C_SD_MODIFY_SKILL_BODY applied before editing $C_SD_MODIFY_TARGET.
+Fixed $C_SD_MODIFY_TARGET.
+EOF
+scope_disc_out=$(bash "$SELF" scope-validate "$DISCOVERY_ONLY_REPORT" "$SCOPE_REPO" 2>&1); scope_disc_rc=$?
+check 'CLI scope-validate: a discovery-only helper plus the parent independently re-resolving exits 0' 0 "$scope_disc_rc"
+contains 'CLI scope-validate: a discovery-only helper skips its own checkpoint requirement' "$scope_disc_out" 'SKIP INTERNAL_SUBAGENT_TARGET_CHECKPOINT'
+
+# Fail: a helper that performed substantive analysis under the target it
+# found, but never ran the checkpoint itself.
+SUBSTANTIVE_NO_CHECKPOINT_REPORT="$TMP_ROOT/scope-substantive-no-checkpoint-report.txt"
+sed -e 's/INTERNAL_SUBAGENT_SUBSTANTIVE_TARGET_ANALYSIS: no/INTERNAL_SUBAGENT_SUBSTANTIVE_TARGET_ANALYSIS: yes/' \
+  -e 's/INTERNAL_SUBAGENT_TARGET_CHECKPOINT_PERFORMED: not-applicable/INTERNAL_SUBAGENT_TARGET_CHECKPOINT_PERFORMED: no/' \
+  "$DISCOVERY_ONLY_REPORT" > "$SUBSTANTIVE_NO_CHECKPOINT_REPORT"
+scope_subst_out=$(bash "$SELF" scope-validate "$SUBSTANTIVE_NO_CHECKPOINT_REPORT" "$SCOPE_REPO" 2>&1); scope_subst_rc=$?
+if [ "$scope_subst_rc" -eq 0 ]; then fail 'CLI scope-validate: a substantive helper with no checkpoint of its own unexpectedly exits 0'; else pass 'CLI scope-validate: a substantive helper with no checkpoint of its own exits nonzero'; fi
+contains 'CLI scope-validate: a substantive helper with no checkpoint of its own fails its specific check' "$scope_subst_out" 'FAIL INTERNAL_SUBAGENT_TARGET_CHECKPOINT'
+
+# Pass: the positive complement - a substantive helper that did run the
+# checkpoint itself.
+SUBSTANTIVE_CHECKPOINT_REPORT="$TMP_ROOT/scope-substantive-checkpoint-report.txt"
+sed -e 's/INTERNAL_SUBAGENT_SUBSTANTIVE_TARGET_ANALYSIS: no/INTERNAL_SUBAGENT_SUBSTANTIVE_TARGET_ANALYSIS: yes/' \
+  -e 's/INTERNAL_SUBAGENT_TARGET_CHECKPOINT_PERFORMED: not-applicable/INTERNAL_SUBAGENT_TARGET_CHECKPOINT_PERFORMED: yes/' \
+  "$DISCOVERY_ONLY_REPORT" > "$SUBSTANTIVE_CHECKPOINT_REPORT"
+scope_subst_ok_out=$(bash "$SELF" scope-validate "$SUBSTANTIVE_CHECKPOINT_REPORT" "$SCOPE_REPO" 2>&1); scope_subst_ok_rc=$?
+check 'CLI scope-validate: a substantive helper that performed its own checkpoint exits 0' 0 "$scope_subst_ok_rc"
+
+no_scope_expected_out=$(bash "$SELF" scope-validate "$GOOD_SCOPE_REPORT" 2>&1)
+contains 'CLI scope-validate: an omitted expected-worktree is reported SKIP, never a false FAIL' "$no_scope_expected_out" 'SKIP EXPECTED_WORKTREE'
 usage_out=$(bash "$SELF" bogus-subcommand 2>&1); usage_rc=$?
 if [ "$usage_rc" -eq 0 ]; then fail 'CLI: an unknown subcommand unexpectedly exits 0'; else pass 'CLI: an unknown subcommand exits nonzero'; fi
 

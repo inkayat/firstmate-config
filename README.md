@@ -265,6 +265,17 @@ never pastes a file or skill body into the brief, and it always resolves
 paths against the worker's own isolated task worktree, never the primary
 checkout the task started from.
 
+That handoff also carries a target-discovery checkpoint (section 2, step
+6): the worker keeps a small resolved-scope list seeded from the handoff,
+and whenever it - or any bounded internal helper - discovers or selects a
+concrete file/subtree not already on that list, it must re-run this same
+resolution for the new target, read and apply any newly applicable
+project-local skill, and report the checkpoint before substantive
+reading, editing, reviewing, testing, or reliance on that target. This
+repeats on every later scope change (A -> B), and a helper's unsupported
+claim that no nested instruction exists never substitutes for the
+worker's own independent re-resolution.
+
 Three skill populations exist and are never interchangeable:
 
 - **Official FirstMate internal skills** (`$FIRSTMATE_ROOT/.agents/skills/*`)
@@ -304,6 +315,9 @@ tests/worker-context.sh validate <worker-report> [<worktree>]  # validate a repo
 tests/worker-context.sh validate-local <worker-report> <worktree> -- <command> [args...]  # rerun verification through the worktree-bound local provenance runner, then validate
 tests/worker-context.sh internal-prepare <directory>        # write a disposable bounded-internal-delegation canary fixture INSIDE your own real task worktree (a native bounded subagent always shares the parent session's cwd), print the path
 tests/worker-context.sh internal-handoff <directory> <worktree>  # print the read-only task text for a real bounded internal subagent to run against that fixture
+tests/worker-context.sh scope-prepare <directory>           # build a persistent target-discovery fixture repo at <directory>/repo (root scope only, two nested subtrees), print its path
+tests/worker-context.sh scope-handoff <repo-dir>            # print the open-ended handoff for that fixture - covered scope is the root only, no nested target is named up front
+tests/worker-context.sh scope-validate <worker-report> [<worktree>]  # validate the target-discovery checkpoint for a report against that fixture
 ```
 
 `prepare` builds the fixture once; `handoff` prints the paths/precedence/
@@ -331,6 +345,21 @@ evidence and fails closed on self-reported verification-provenance labels;
 `validate-local` is the passing local path because it reruns the command in
 the expected worktree (see "Bounded internal delegation" and "Verification
 provenance" below). Both print one PASS/FAIL/SKIP line per proof.
+
+`scope-prepare`/`scope-handoff`/`scope-validate` are the same interface for
+the target-discovery checkpoint (section 2, step 6): the fixture's launch
+scope names only the repository root, so `scope-handoff` never names
+either nested subtree's instruction or skill path - discovering them is
+the task. `scope-validate` requires a `TARGET_SCOPE_CHECK` report naming
+the discovered path, the resolved instruction/skill paths it names, and
+the nested instruction's and skill's body-only markers, all before the
+target is substantively touched; a later, different target requires its
+own separate checkpoint, and a bounded internal helper's unsupported "no
+nested instruction" claim never substitutes for the worker's own
+re-resolution. This is the exact false-confidence failure a Betao
+validation exposed: an internal scout selected a nested file, the parent
+read and edited it without resolving its nested instruction, then
+incorrectly reported none existed.
 
 ## Bounded internal delegation
 

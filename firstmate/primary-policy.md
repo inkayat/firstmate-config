@@ -111,8 +111,26 @@ started from - make the following an explicit, compact part of that task's
    read every path named above relative to that root and report a missing,
    unreadable, or conflicting path instead of silently falling back to a
    different scope or a global default;
-6. a requirement that scope expansion re-triggers step 2 for the newly
-   touched subtree before editing there.
+6. a target-discovery checkpoint: the worker keeps a small resolved-scope
+   list carried over from this handoff, seeded with the task subtree(s)
+   named in step 1. Whenever the worker, or any bounded internal helper
+   under section 6, discovers, selects, or shifts to a concrete file or
+   subtree not already covered by that list - including a second, later
+   target after an earlier one was already resolved - the worker must,
+   before any substantive reading, editing, reviewing, testing, migration
+   work, or other governed operation on that target: re-run steps 1-4
+   above for the new target's nearest scope; read and apply any newly
+   applicable project-local skill they name; add the newly resolved
+   scope, instruction path, and skill path to the list; and report the
+   checkpoint. Repeat on every later scope change. A bounded internal
+   helper that only performs filename/target discovery may return a bare
+   path; that alone never discharges this checkpoint. A bounded internal
+   helper that goes on to perform substantive analysis inside a newly
+   discovered subtree must run this same checkpoint itself, for that
+   subtree, before that analysis. Either way, a helper's unsupported claim
+   that no nested instruction exists is never sufficient by itself: the
+   worker still independently re-runs this checkpoint before relying on
+   the helper's target or content, or editing there.
 
 This is a semantic contract, not a copy of the project's documentation:
 name paths and the resolution, never paste file bodies or skill bodies into
