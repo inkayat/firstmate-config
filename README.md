@@ -37,7 +37,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `tests/multi-project-captain.sh` | multi-project resolution/isolation/routing acceptance | - |
 | `tests/doctor.sh` | `fm doctor` acceptance: statuses, exit codes, JSON schema | - |
 | `tests/stack-manifest.sh` | stack compatibility manifest acceptance: `install.sh`/`fm-doctor`/`fm-version` sharing one baseline | - |
-| `tests/worker-context.sh` | delegated-worker context/skill-class acceptance: compact handoff fixture, offline Pi native-loader evidence, official-internal-skill negative check | - |
+| `tests/worker-context.sh` | delegated-worker context/skill-class acceptance, plus a `prepare`/`handoff`/`validate` CLI for a real live fixture run | - |
 
 ## Install
 
@@ -290,10 +290,27 @@ canary, a project-local-vs-shared-skill name collision, and an
 official-internal-skill negative check, plus a real, zero-inference probe
 of Pi's installed native resource loader against that fixture (pre-
 implementation evidence, not a substitute for a live delegated Pi/OMP run).
-It also exposes a deterministic `fixture_prepare`/`fixture_validate`
-interface so the same fixture can be run once for real through a live
-Herdr -> Pi worker and a live Herdr -> OMP worker, and the resulting
-transcripts checked for the same canaries.
+
+It also exposes a small CLI - the externally usable prepare/validate
+interface for Firstmate's own live fixture runs, independent of the
+default offline suite:
+
+```sh
+tests/worker-context.sh                                   # default: run the offline suite
+tests/worker-context.sh prepare <directory>                # build a persistent fixture repo at <directory>/repo, print its path
+tests/worker-context.sh handoff <repo-dir>                  # print the compact, no-body Firstmate-spec handoff for that fixture
+tests/worker-context.sh validate <worker-report> [<worktree>]  # classify a real worker report/transcript; exit 0 only if every required proof passes
+```
+
+`prepare` builds the fixture once; `handoff` prints the paths/precedence/
+required-actions text to hand a real delegated worker (never a canary body
+marker, so a worker that only echoes it back cannot pass `validate`);
+`validate` proves, from that worker's own report, the expected worktree,
+root-override authority, absence of the markers it must shadow, nested-
+scope application, the project skill's body-only marker applied before
+migrations are touched, the shared skill's body-only marker applied, and
+project-local-over-conflicting-shared-skill authority - printing one
+PASS/FAIL/SKIP line per proof.
 
 ## Routing in v0.1
 
