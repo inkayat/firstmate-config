@@ -154,22 +154,31 @@ commit is classified the same way from local Git-graph evidence alone
 (`git merge-base --is-ancestor`, never a fetch): exactly the validated
 commit is `PASS`; a descendant (newer) is `WARNING`; an ancestor (older) or
 a diverged history is `FAIL`; a baseline commit absent from local history
-is `UNKNOWN`. These compatibility checks (`stack.manifest`,
-`firstmate.commit_compat`, `harnesses.pi_version`, `harnesses.omp_version`,
-`runtime.herdr_version`) are advisory: they can move the top-level `status`
-off `PASS`, but never the mandatory `exit_code` - see "Exit codes" below.
+is `UNKNOWN`. `harnesses.pi_version`, `harnesses.omp_version`,
+`runtime.herdr_version`, and `firstmate.commit_compat` are advisory in the
+`WARNING`/`UNKNOWN` case (they move the top-level `status` off `PASS` but
+never the `exit_code`), but a hard-minimum `FAIL` (an installed version
+below its component's minimum) or a known-incompatible `firstmate.commit_compat`
+`FAIL` (the official checkout behind the validated baseline, or diverged
+from it) is a genuine mandatory break - see "Exit codes" below. `stack.manifest`
+itself (whether the manifest loaded at all) stays advisory.
 
 **Exit codes.** `0` when the mandatory architecture is healthy, even with
 `WARNING`, `DEFERRED`, or non-mandatory `BLOCKED_*`/`FAIL` findings present
 (an unauthenticated routing lane, a missing role file, an unreadable skill -
 none of these are mandatory). Nonzero only for a genuine mandatory break:
-the official FirstMate checkout is missing or broken, `crew-dispatch.json` or
+the official FirstMate checkout is missing or broken, or at a commit behind
+the validated baseline or diverged from it (`firstmate.commit_compat`
+`FAIL`), `crew-dispatch.json` or
 the captain startup model chain is invalid, no configured Captain candidate
 is usable (a missing Pi primary extension, an empty model chain, or every
 candidate `UNAVAILABLE`), the `herdr` CLI is missing, explicitly reports
 `compatible: false`, or its server is definitively stopped or unreachable
 (`running: false`, or the status query itself fails outright with no
-output), or a different `fm` on `PATH` shadows (resolves before)
+output), Pi, omp, or Herdr installed below its
+`firstmate/stack-manifest.tsv` minimum version (`harnesses.pi_version`,
+`harnesses.omp_version`, or `runtime.herdr_version` `FAIL`), or a different
+`fm` on `PATH` shadows (resolves before)
 the one this repository installs. The top-level JSON `status` field is the
 worst individual check status found anywhere, which can differ from
 `exit_code` - a real but non-mandatory problem can make `status` non-`PASS`

@@ -277,13 +277,26 @@ check 'B2 Pi newer than tested: exit code stays 0 (non-mandatory)' 0 "$code"
 contains 'B2 Pi newer than tested: reports WARNING, never a guessed FAIL' "$out" 'WARNING       harnesses.pi_version'
 not_contains 'B2 Pi newer than tested: never reports FAIL' "$out" 'FAIL          harnesses.pi_version'
 
-# --- B3: Pi below the required minimum -> FAIL ------------------------------
+# --- B3: a mandatory component below the required minimum -> FAIL, and this
+#         is a genuine mandatory break (nonzero exit), not merely advisory.
 FM_TEST_PI_VERSION=0.10.0
 out=$(run_fake_doctor); code=$?
 unset FM_TEST_PI_VERSION
-check 'B3 Pi below minimum: exit code stays 0 (advisory, non-mandatory)' 0 "$code"
-contains 'B3 Pi below minimum: reports FAIL' "$out" 'FAIL          harnesses.pi_version'
-contains 'B3 Pi below minimum: names the required minimum' "$out" 'below the required minimum 0.85.1'
+if [ "$code" -eq 0 ]; then fail 'B3a Pi below minimum: expected nonzero exit (mandatory), got 0'; else pass 'B3a Pi below minimum: exit code is nonzero (mandatory)'; fi
+contains 'B3a Pi below minimum: reports FAIL' "$out" 'FAIL          harnesses.pi_version'
+contains 'B3a Pi below minimum: names the required minimum' "$out" 'below the required minimum 0.85.1'
+
+FM_TEST_OMP_VERSION=0.1.0
+out=$(run_fake_doctor); code=$?
+unset FM_TEST_OMP_VERSION
+if [ "$code" -eq 0 ]; then fail 'B3b omp below minimum: expected nonzero exit (mandatory), got 0'; else pass 'B3b omp below minimum: exit code is nonzero (mandatory)'; fi
+contains 'B3b omp below minimum: reports FAIL' "$out" 'FAIL          harnesses.omp_version'
+
+FM_TEST_HERDR_VERSION=0.1.0
+out=$(run_fake_doctor); code=$?
+unset FM_TEST_HERDR_VERSION
+if [ "$code" -eq 0 ]; then fail 'B3c herdr below minimum: expected nonzero exit (mandatory), got 0'; else pass 'B3c herdr below minimum: exit code is nonzero (mandatory)'; fi
+contains 'B3c herdr below minimum: reports FAIL' "$out" 'FAIL          runtime.herdr_version'
 
 # --- B4: unparseable Pi version -> UNKNOWN, never a guessed FAIL -----------
 FM_TEST_PI_VERSION=nightly-build
@@ -304,12 +317,12 @@ contains 'B5a FirstMate ahead of baseline: reports WARNING (unvalidated, never a
 write_doc_manifest "$DOC_C2"
 git -C "$DOC_FMROOT" checkout -q "$DOC_C1"
 out=$(run_fake_doctor); code=$?
-check 'B5b FirstMate behind baseline (ancestor): exit code stays 0' 0 "$code"
+if [ "$code" -eq 0 ]; then fail 'B5b FirstMate behind baseline: expected nonzero exit (mandatory), got 0'; else pass 'B5b FirstMate behind baseline (ancestor): exit code is nonzero (mandatory)'; fi
 contains 'B5b FirstMate behind baseline: reports FAIL' "$out" 'FAIL          firstmate.commit_compat'
 
 git -C "$DOC_FMROOT" checkout -q "$DOC_C3"
 out=$(run_fake_doctor); code=$?
-check 'B5c FirstMate history diverged from baseline: exit code stays 0' 0 "$code"
+if [ "$code" -eq 0 ]; then fail 'B5c FirstMate diverged from baseline: expected nonzero exit (mandatory), got 0'; else pass 'B5c FirstMate history diverged from baseline: exit code is nonzero (mandatory)'; fi
 contains 'B5c FirstMate history diverged from baseline: reports FAIL' "$out" 'FAIL          firstmate.commit_compat'
 
 write_doc_manifest deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
