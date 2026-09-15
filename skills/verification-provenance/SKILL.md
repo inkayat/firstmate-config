@@ -41,14 +41,20 @@ labels every time):
   `git rev-parse HEAD` taken at build time.
 
 `firstmate/fm-verify-provenance.sh`'s `fm_provenance_classify` is the one
-deterministic classifier for these three fields; it never guesses a pass.
+deterministic classifier for these three fields; it never guesses a pass. The
+worker report is attacker-controlled, so an accepting classification also
+requires Firstmate/caller-supplied observed provenance (`FM_OBSERVED_*`) from an
+independent wrapper or inspector. Without that independently observed fact,
+truthful wrong-tree reports still reject as `wrong_tree`, but apparently correct
+self-reports classify as `uncertain` rather than pass.
+
 Its five outcomes:
 
 | Outcome | Meaning |
 | --- | --- |
-| `worktree_local` | Accept - plain local run, path matches |
-| `bind_correct` | Accept - container correctly bound to this worktree |
-| `artifact_correct` | Accept - artifact's path and source commit both match |
+| `worktree_local` | Accept - plain local run, reported path and caller-observed path both match |
+| `bind_correct` | Accept - container bind source, as reported and independently observed, is this worktree |
+| `artifact_correct` | Accept - artifact's reported and observed source path/commit both match |
 | `wrong_tree` | Reject - reported provenance resolves to a different checkout |
 | `uncertain` | Reject - a required field is missing, unrecognized, or unprovable; never accepted as a silent pass |
 

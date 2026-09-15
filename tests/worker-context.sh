@@ -442,7 +442,7 @@ _wc_field() {
 
 _wc_starts_with() { case $1 in "$2"*) return 0 ;; *) return 1 ;; esac; }
 
-# fixture_validate_live <worker-report-file> [expected-worktree] - the
+# fixture_validate_live <worker-report-file> [expected-worktree] [observed-provenance-file] - the
 # strict, full required-proof gate for a real delegated-worker transcript
 # or report. Prints one "PASS <LABEL>", "FAIL <LABEL>", or
 # "SKIP <LABEL> (reason)" line per required proof; returns 0 only when
@@ -453,13 +453,14 @@ _wc_starts_with() { case $1 in "$2"*) return 0 ;; *) return 1 ;; esac; }
 # sufficient by itself, since a report that never mentions the check at
 # all would otherwise pass it for free.
 fixture_validate_live() {
-  local report=$1 expected=${2:-} t all_ok=0 mig_idx body_idx
+  local report=$1 expected=${2:-} observed_file=${3:-} t observed='' all_ok=0 mig_idx body_idx
   local proj_path shared_path sources count
   if [ ! -r "$report" ]; then
     printf 'FAIL WORKTREE_REPORT_READABLE   worker report not readable: %s\n' "$report"
     return 1
   fi
   t=$(cat "$report")
+  [ -z "$observed_file" ] || observed=$(cat "$observed_file" 2>/dev/null || printf '')
 
   _req() { # <label> <ok:0|1>
     if [ "$2" -eq 0 ]; then printf 'PASS %-28s\n' "$1"; else printf 'FAIL %-28s\n' "$1"; all_ok=1; fi
@@ -617,10 +618,10 @@ fixture_validate_live() {
   esac
 
   # Verification provenance (skills/verification-provenance/SKILL.md,
-  # firstmate/fm-verify-provenance.sh). Missing/unparseable evidence fails
-  # the reported-evidence check outright; a present-but-wrong-tree or
-  # unprovable classification fails the classification check - neither is
-  # ever rounded up to a pass.
+  # firstmate/fm-verify-provenance.sh). Missing/unparseable worker evidence
+  # fails the reported-evidence check outright; a present-but-wrong-tree,
+  # unobserved, or otherwise unprovable classification fails the
+  # classification check - none is ever rounded up to a pass.
   local kind exec_path provenance
   kind=$(_wc_field "$t" VERIFY_PROVENANCE_KIND)
   exec_path=$(_wc_field "$t" VERIFY_EXECUTION_REALPATH)
@@ -632,7 +633,7 @@ fixture_validate_live() {
   if [ -z "$expected" ]; then
     printf 'SKIP %-28s (no expected worktree given)\n' VERIFY_PROVENANCE_CLASSIFICATION
   else
-    provenance=$(fm_provenance_classify "$expected" "$t")
+    provenance=$(fm_provenance_classify "$expected" "$t" "$observed")
     case $provenance in
       worktree_local|bind_correct|artifact_correct) _req VERIFY_PROVENANCE_CLASSIFICATION 0 ;;
       *) _req VERIFY_PROVENANCE_CLASSIFICATION 1 ;;
@@ -673,13 +674,13 @@ case "${1:-}" in
     exit 0
     ;;
   validate)
-    report=${2:?"usage: $0 validate <worker-report> [expected-worktree]"}
-    fixture_validate_live "$report" "${3:-}"
+    report=${2:?"usage: $0 validate <worker-report> [expected-worktree] [observed-provenance-file]"}
+    fixture_validate_live "$report" "${3:-}" "${4:-}"
     exit $?
     ;;
   '') ;; # fall through to the offline suite below
   *)
-    printf 'usage: %s [prepare <directory>|handoff <repo-dir>|internal-prepare <directory>|internal-handoff <directory> <expected-worktree>|validate <worker-report> [expected-worktree]]\n' "$0" >&2
+    printf 'usage: %s [prepare <directory>|handoff <repo-dir>|internal-prepare <directory>|internal-handoff <directory> <expected-worktree>|validate <worker-report> [expected-worktree] [observed-provenance-file]]\n' "$0" >&2
     exit 2
     ;;
 esac
@@ -781,18 +782,43 @@ PROV_WT_REAL=$(cd "$PROV_WT" && pwd -P)
 OTHER_CHECKOUT="$TMP_ROOT/other-checkout-do-not-match"
 mkdir -p "$OTHER_CHECKOUT"
 
-check 'provenance: local run in the assigned worktree is accepted' worktree_local \
+PROV_OBSERVED_LOCAL="FM_OBSERVED_PROVENANCE_KIND: local
+FM_OBSERVED_EXECUTION_REALPATH: $PROV_WT_REAL"
+PROV_OBSERVED_BIND="FM_OBSERVED_PROVENANCE_KIND: container-bind
+FM_OBSERVED_EXECUTION_REALPATH: $PROV_WT_REAL"
+PROV_OBSERVED_ARTIFACT="FM_OBSERVED_PROVENANCE_KIND: artifact
+FM_OBSERVED_EXECUTION_REALPATH: $PROV_WT_REAL
+FM_OBSERVED_ARTIFACT_SOURCE_COMMIT: $PROV_COMMIT"
+PROV_OBSERVED_ARTIFACT_NO_COMMIT="FM_OBSERVED_PROVENANCE_KIND: artifact
+FM_OBSERVED_EXECUTION_REALPATH: $PROV_WT_REAL"
+PROV_OBSERVED_WRONG_BIND="FM_OBSERVED_PROVENANCE_KIND: container-bind
+FM_OBSERVED_EXECUTION_REALPATH: $OTHER_CHECKOUT"
+
+check 'provenance: local run in the assigned worktree is accepted with independent observation' worktree_local \
+  "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: local
+VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL" "$PROV_OBSERVED_LOCAL")"
+
+check 'provenance: self-reported local path without independent observation is uncertain' uncertain \
   "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: local
 VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL")"
 
-check 'provenance: container correctly bound to the assigned worktree is accepted' bind_correct \
+check 'provenance: container correctly bound to the assigned worktree is accepted with independent observation' bind_correct \
   "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: container-bind
-VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL")"
+VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL" "$PROV_OBSERVED_BIND")"
 
-check 'provenance: artifact built from the assigned worktree at its current commit is accepted' artifact_correct \
+check 'provenance: container false claim naming expected while observed mount is wrong is rejected' wrong_tree \
+  "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: container-bind
+VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL" "$PROV_OBSERVED_WRONG_BIND")"
+
+check 'provenance: artifact built from the assigned worktree at its current commit is accepted with independent observation' artifact_correct \
   "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: artifact
 VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL
-VERIFY_ARTIFACT_SOURCE_COMMIT: $PROV_COMMIT")"
+VERIFY_ARTIFACT_SOURCE_COMMIT: $PROV_COMMIT" "$PROV_OBSERVED_ARTIFACT")"
+
+check 'provenance: artifact with observed path but no observed commit is uncertain' uncertain \
+  "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: artifact
+VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL
+VERIFY_ARTIFACT_SOURCE_COMMIT: $PROV_COMMIT" "$PROV_OBSERVED_ARTIFACT_NO_COMMIT")"
 
 check 'provenance: a shared container bound to a different checkout is rejected' wrong_tree \
   "$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: container-bind
@@ -817,7 +843,7 @@ VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL")"
 first=$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: container-bind
 VERIFY_EXECUTION_REALPATH: $OTHER_CHECKOUT")
 second=$(fm_provenance_classify "$PROV_WT" "VERIFY_PROVENANCE_KIND: local
-VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL")
+VERIFY_EXECUTION_REALPATH: $PROV_WT_REAL" "$PROV_OBSERVED_LOCAL")
 check 'provenance recovery: the first, wrong-tree attempt is rejected' wrong_tree "$first"
 check 'provenance recovery: the corrected re-run is accepted' worktree_local "$second"
 
@@ -1021,7 +1047,17 @@ INTERNAL_SUBAGENT_USED: not-applicable (harness has no native bounded subagent m
 VERIFY_PROVENANCE_KIND: local
 VERIFY_EXECUTION_REALPATH: $CLI_DIR/repo
 EOF
-val_out=$(bash "$SELF" validate "$GOOD_REPORT" "$CLI_DIR/repo" 2>&1); val_rc=$?
+GOOD_OBSERVED="$TMP_ROOT/cli-good-observed.txt"
+cat > "$GOOD_OBSERVED" <<EOF
+FM_OBSERVED_PROVENANCE_KIND: local
+FM_OBSERVED_EXECUTION_REALPATH: $CLI_DIR/repo
+EOF
+WRONG_OBSERVED="$TMP_ROOT/cli-wrong-observed.txt"
+cat > "$WRONG_OBSERVED" <<EOF
+FM_OBSERVED_PROVENANCE_KIND: local
+FM_OBSERVED_EXECUTION_REALPATH: $TMP_ROOT/a-different-checkout-entirely
+EOF
+val_out=$(bash "$SELF" validate "$GOOD_REPORT" "$CLI_DIR/repo" "$GOOD_OBSERVED" 2>&1); val_rc=$?
 check 'CLI validate: a fully compliant report exits 0' 0 "$val_rc"
 not_contains 'CLI validate: a fully compliant report has no FAIL line' "$val_out" 'FAIL'
 
@@ -1130,7 +1166,7 @@ INTERNAL_SUBAGENT_RECURSION_TOOL_USED: no
 INTERNAL_SUBAGENT_OFFICIAL_INTERNAL_SKILL_COUNT: 0
 INTERNAL_SUBAGENT_SHARED_SKILL_EVIDENCE: ponytail: apply the smallest supported mechanism
 EOF
-val_subagent_out=$(bash "$SELF" validate "$VALID_SUBAGENT_REPORT" "$CLI_DIR/repo" 2>&1); val_subagent_rc=$?
+val_subagent_out=$(bash "$SELF" validate "$VALID_SUBAGENT_REPORT" "$CLI_DIR/repo" "$GOOD_OBSERVED" 2>&1); val_subagent_rc=$?
 check 'CLI validate: a compliant bounded internal subagent report exits 0' 0 "$val_subagent_rc"
 not_contains 'CLI validate: a compliant bounded internal subagent report has no FAIL line' "$val_subagent_out" 'FAIL'
 
@@ -1179,9 +1215,10 @@ contains 'CLI validate: a nonzero official-internal-skill count fails the zero-l
 contains 'CLI validate: not-applicable skips the detail checks rather than failing them' "$val_out" 'SKIP INTERNAL_SUBAGENT_READ_ONLY'
 
 # Verification provenance at the CLI layer: reject a shared container bound
-# to a different checkout, then demonstrate recovery with a corrected,
-# worktree-correct re-run - same underlying compliant report both times,
-# varying only the provenance fields, so the recovery is a clean A/B.
+# to a different checkout, reject a false self-report naming the expected
+# checkout while the caller-observed execution path is wrong, then demonstrate
+# recovery with a corrected, worktree-correct re-run - same underlying
+# compliant report both times, varying only provenance, so recovery is a clean A/B.
 WRONG_TREE_REPORT="$TMP_ROOT/cli-wrong-tree-report.txt"
 sed "s#VERIFY_PROVENANCE_KIND: local#VERIFY_PROVENANCE_KIND: container-bind#; s#VERIFY_EXECUTION_REALPATH: $CLI_DIR/repo#VERIFY_EXECUTION_REALPATH: $TMP_ROOT/a-different-checkout-entirely#" \
   "$GOOD_REPORT" > "$WRONG_TREE_REPORT"
@@ -1189,7 +1226,11 @@ val_wt_out=$(bash "$SELF" validate "$WRONG_TREE_REPORT" "$CLI_DIR/repo" 2>&1); v
 if [ "$val_wt_rc" -eq 0 ]; then fail 'CLI validate: a shared container bound to another checkout unexpectedly exits 0'; else pass 'CLI validate: a shared container bound to another checkout exits nonzero'; fi
 contains 'CLI validate: wrong-tree provenance fails the classification check' "$val_wt_out" 'FAIL VERIFY_PROVENANCE_CLASSIFICATION'
 
-val_recovered_out=$(bash "$SELF" validate "$GOOD_REPORT" "$CLI_DIR/repo" 2>&1); val_recovered_rc=$?
+val_false_claim_out=$(bash "$SELF" validate "$GOOD_REPORT" "$CLI_DIR/repo" "$WRONG_OBSERVED" 2>&1); val_false_claim_rc=$?
+if [ "$val_false_claim_rc" -eq 0 ]; then fail 'CLI validate: false path provenance claim with wrong observed execution unexpectedly exits 0'; else pass 'CLI validate: false path provenance claim with wrong observed execution exits nonzero'; fi
+contains 'CLI validate: false path provenance claim fails the classification check' "$val_false_claim_out" 'FAIL VERIFY_PROVENANCE_CLASSIFICATION'
+
+val_recovered_out=$(bash "$SELF" validate "$GOOD_REPORT" "$CLI_DIR/repo" "$GOOD_OBSERVED" 2>&1); val_recovered_rc=$?
 check 'CLI validate: recovery with a worktree-correct re-run exits 0' 0 "$val_recovered_rc"
 not_contains 'CLI validate: the recovered report has no FAIL line' "$val_recovered_out" 'FAIL'
 
