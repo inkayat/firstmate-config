@@ -21,9 +21,11 @@
 #   1   a genuine mandatory break: missing/broken official FirstMate, invalid
 #       captain-startup-models.tsv or crew-dispatch.json, no usable Captain
 #       (missing Pi primary extensions, an empty model chain, or every
-#       configured model candidate UNAVAILABLE), a missing or explicitly
-#       protocol-incompatible required Herdr CLI, or an expected `fm` shadowed
-#       on PATH by a different executable earlier in PATH.
+#       configured model candidate UNAVAILABLE), a missing, explicitly
+#       protocol-incompatible, or definitively stopped/unreachable required
+#       Herdr server (its own status query failing outright, or reporting
+#       running:false), or an expected `fm` shadowed on PATH by a different
+#       executable earlier in PATH.
 # Every other finding (routing lane availability, roles, skills, harness
 # versions, project reporting) is reported but never changes the exit code.
 set -u
@@ -52,6 +54,11 @@ FM_HOME="${FM_HOME:-$HOME/.firstmate}"
 # `fm-doctor` invocation, `fm doctor` before it exports anything, or a test
 # fixture) already exported it.
 export FM_HOME
+# Every git probe below runs with optional locks disabled: this is a
+# read-only diagnostic and must never write an index refresh or ref lock
+# into firstmate-config, official FirstMate, or a project checkout it merely
+# inspects (see git-config(1) core.optionalLocks / GIT_OPTIONAL_LOCKS).
+export GIT_OPTIONAL_LOCKS=0
 FM_BACKEND="${FM_BACKEND:-herdr}"
 PI_BIN="${FM_PI_BIN:-pi}"
 SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
@@ -335,6 +342,7 @@ J_CAPTAIN=$(printf '{"extensions_present":%s,"selected_model":%s,"selected_effor
 
 HERDR_BROKEN=0
 HERDR_INCOMPATIBLE=0
+HERDR_UNREACHABLE=0
 HERDR_CLI_PRESENT=false
 HERDR_RUNNING=
 HERDR_COMPATIBLE=
@@ -346,18 +354,35 @@ if ! command -v herdr >/dev/null 2>&1; then
 else
   HERDR_CLI_PRESENT=true
   add_check runtime.herdr_cli PASS "herdr CLI present" "$(command -v herdr)"
-  HERDR_STATUS_JSON=$(herdr status --json 2>/dev/null || printf '{}')
+  HERDR_STATUS_OUT=$(herdr status --json 2>/dev/null)
+  HERDR_STATUS_RC=$?
+  HERDR_STATUS_JSON=$HERDR_STATUS_OUT
+  [ -n "$HERDR_STATUS_JSON" ] || HERDR_STATUS_JSON='{}'
   HERDR_RUNNING=$(json_bool_field "$HERDR_STATUS_JSON" running)
   HERDR_COMPATIBLE=$(json_bool_field "$HERDR_STATUS_JSON" compatible)
   HERDR_SERVER_VERSION=$(json_string_field "$HERDR_STATUS_JSON" version)
   HERDR_CLIENT_VERSION=$(printf '%s' "$HERDR_STATUS_JSON" | tr '\n' ' ' | sed -n 's/.*"client":{[^}]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-  if [ "$HERDR_COMPATIBLE" = false ]; then
+  # The mandatory architecture is Pi Captain -> FirstMate -> Herdr ->
+  # Pi/OMP: a definitively stopped or unreachable selected Herdr server is
+  # a mandatory FAIL here, not a WARNING. "Definitive" covers herdr's own
+  # CLI failing to produce a status at all (nonzero exit or empty stdout -
+  # it could not even reach its own server) and an explicit running:false.
+  # UNKNOWN is reserved for output that ran and parsed but carries no
+  # recognizable "running" field - a case this script genuinely cannot
+  # resolve without guessing at an unfamiliar schema.
+  if [ "$HERDR_STATUS_RC" -ne 0 ] || [ -z "$HERDR_STATUS_OUT" ]; then
+    HERDR_UNREACHABLE=1
+    add_check runtime.herdr_server FAIL "herdr status --json failed or produced no output (exit $HERDR_STATUS_RC); the herdr server appears unreachable" "$HERDR_STATUS_OUT"
+  elif [ "$HERDR_COMPATIBLE" = false ]; then
     HERDR_INCOMPATIBLE=1
     add_check runtime.herdr_server FAIL "herdr client/server protocol reported incompatible" "$HERDR_STATUS_JSON"
+  elif [ "$HERDR_RUNNING" = false ]; then
+    HERDR_UNREACHABLE=1
+    add_check runtime.herdr_server FAIL "herdr server reported not running (running:false)" "$HERDR_STATUS_JSON"
   elif [ "$HERDR_RUNNING" = true ]; then
     add_check runtime.herdr_server PASS "herdr server running (version ${HERDR_SERVER_VERSION:-unknown}, client ${HERDR_CLIENT_VERSION:-unknown})" ""
   else
-    add_check runtime.herdr_server WARNING "herdr server is not running" ""
+    add_check runtime.herdr_server UNKNOWN "herdr status --json produced no recognizable 'running' field; server health cannot be determined without guessing" "$HERDR_STATUS_JSON"
   fi
 fi
 
@@ -384,6 +409,7 @@ HEARTBEAT_PRESENT=
 HEARTBEAT_DESC=unknown
 WAKE_PENDING=
 IN_FLIGHT=0
+TASK_STALENESS=UNKNOWN
 if [ -f "$SUP_LIB" ]; then
   # shellcheck source=/dev/null
   . "$SUP_LIB"
@@ -419,21 +445,38 @@ if [ -f "$SUP_LIB" ]; then
   else
     add_check runtime.wake_queue PASS "wake queue empty" ""
   fi
-  add_check runtime.task_metadata PASS "$FM_SUP_IN_FLIGHT in-flight task record(s)" "staleness is FirstMate's own lifecycle concern; not independently classified here"
+  add_check runtime.task_metadata PASS "$FM_SUP_IN_FLIGHT in-flight task record(s)" ""
+  # No safe, generic, bulk read-only staleness classifier exists upstream
+  # for arbitrary state/*.meta records: fm-crew-state.sh classifies exactly
+  # one task at a time and may itself shell out to no-mistakes
+  # (fm-classify-lib.sh), which this read-only doctor must never trigger;
+  # backend pane-agent-state predicates (e.g. backends/herdr.sh) require an
+  # active session/window binding doctor does not have. Rather than
+  # duplicate that lifecycle logic or invent a new mtime heuristic here,
+  # report NOT_APPLICABLE when there is nothing to classify and UNKNOWN,
+  # honestly, otherwise.
+  if [ "$FM_SUP_IN_FLIGHT" -eq 0 ]; then
+    TASK_STALENESS=NOT_APPLICABLE
+    add_check runtime.task_staleness NOT_APPLICABLE "no task records to classify" ""
+  else
+    TASK_STALENESS=UNKNOWN
+    add_check runtime.task_staleness UNKNOWN "$FM_SUP_IN_FLIGHT in-flight task record(s); no safe bulk read-only stale/dead classifier is available without duplicating FirstMate's own per-task lifecycle logic (see bin/fm-crew-state.sh <id> for an authoritative per-task check)" ""
+  fi
 else
   add_check runtime.heartbeat UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
   add_check runtime.watcher UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
   add_check runtime.wake_queue UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
   add_check runtime.task_metadata UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
+  add_check runtime.task_staleness UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
 fi
 
-J_RUNTIME=$(printf '{"herdr":{"cli_present":%s,"running":%s,"compatible":%s,"server_version":%s,"client_version":%s},"lock":{"status":%s,"known":%s},"watcher":{"needed":%s,"fresh":%s},"heartbeat":{"present":%s,"fresh":%s,"description":%s},"wake_queue":{"pending":%s},"task_metadata":{"in_flight":%s}}' \
+J_RUNTIME=$(printf '{"herdr":{"cli_present":%s,"running":%s,"compatible":%s,"server_version":%s,"client_version":%s},"lock":{"status":%s,"known":%s},"watcher":{"needed":%s,"fresh":%s},"heartbeat":{"present":%s,"fresh":%s,"description":%s},"wake_queue":{"pending":%s},"task_metadata":{"in_flight":%s,"staleness":%s}}' \
   "$HERDR_CLI_PRESENT" "$(jtri "$HERDR_RUNNING")" "$(jtri "$HERDR_COMPATIBLE")" "$(jstr "$HERDR_SERVER_VERSION")" "$(jstr "$HERDR_CLIENT_VERSION")" \
   "$(jstr "$LOCK_STATUS")" "$LOCK_KNOWN" \
   "$(jtri "$WATCHER_NEEDED")" "$(jtri "$WATCHER_FRESH")" \
   "$(jtri "$HEARTBEAT_PRESENT")" "$(jtri "$WATCHER_FRESH")" "$(jstr "$HEARTBEAT_DESC")" \
   "$(jtri "$WAKE_PENDING")" \
-  "$IN_FLIGHT")
+  "$IN_FLIGHT" "$(jstr "$TASK_STALENESS")")
 
 # =============================================================================
 # HARNESSES
@@ -832,6 +875,7 @@ MANDATORY_FAIL=0
 [ "$NO_USABLE_CAPTAIN" -eq 0 ] || MANDATORY_FAIL=1
 [ "$HERDR_BROKEN" -eq 0 ] || MANDATORY_FAIL=1
 [ "$HERDR_INCOMPATIBLE" -eq 0 ] || MANDATORY_FAIL=1
+[ "$HERDR_UNREACHABLE" -eq 0 ] || MANDATORY_FAIL=1
 [ "$LAUNCHER_SHADOWED" -eq 0 ] || MANDATORY_FAIL=1
 
 WORST_RANK=0

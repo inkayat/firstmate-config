@@ -124,6 +124,19 @@ chmod +x "$FAKE_BIN/claude"
 cat > "$FAKE_BIN/herdr" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = status ] && [ "${2:-}" = --json ]; then
+  case "${FM_TEST_HERDR_MODE:-normal}" in
+    unreachable)
+      # A herdr CLI that cannot even reach its own server: no stdout,
+      # nonzero exit (e.g. connection refused), the "unusable output" case.
+      exit 1
+      ;;
+    weird)
+      # Well-formed JSON that nonetheless carries no recognizable
+      # "running" field at all - a schema doctor cannot interpret.
+      printf '{"ok":true}\n'
+      exit 0
+      ;;
+  esac
   printf '{"client":{"version":"9.9.9-fake","protocol":19},"server":{"running":%s,"version":"9.9.9-fake","protocol":19,"compatible":%s}}\n' \
     "${FM_TEST_HERDR_RUNNING:-true}" "${FM_TEST_HERDR_COMPATIBLE:-true}"
   exit 0
@@ -302,6 +315,7 @@ run_doctor() { # [extra args to fm-doctor]
     FM_TEST_SONNET_AUTH="${FM_TEST_SONNET_AUTH:-ready}" \
     FM_TEST_HERDR_RUNNING="${FM_TEST_HERDR_RUNNING:-true}" \
     FM_TEST_HERDR_COMPATIBLE="${FM_TEST_HERDR_COMPATIBLE:-true}" \
+    FM_TEST_HERDR_MODE="${FM_TEST_HERDR_MODE:-normal}" \
     "${RUN_DOC:-$DOC}" "$@" )
 }
 
@@ -570,6 +584,98 @@ not_contains 'no parser: routing check never falsely reports PASS' "$out" 'PASS 
 not_contains 'no parser: routing check never falsely reports FAIL from a missing tool alone' "$out" 'FAIL          routing.crew_dispatch_valid'
 contains 'no parser JSON: parse_method reports none' "$json_noparser" '"parse_method":"none"'
 contains 'no parser JSON: crew_dispatch valid is null, never coerced true or false' "$json_noparser" '"valid":null'
+
+# =============================================================================
+# 14. Herdr server explicitly reports running:false -> mandatory FAIL
+# =============================================================================
+FM_TEST_HERDR_RUNNING=false
+out=$(run_doctor); code=$?
+unset FM_TEST_HERDR_RUNNING
+if [ "$code" -eq 0 ]; then fail "herdr not running: expected nonzero exit, got 0"; else pass 'herdr not running: exit code is nonzero'; fi
+contains 'herdr not running: server check reports FAIL' "$out" 'FAIL          runtime.herdr_server'
+contains 'herdr not running: overall exit is reported nonzero' "$out" 'exit=1'
+
+# =============================================================================
+# 15. Herdr status --json fails outright (nonzero exit, no output) -> the
+#     CLI could not even reach its own server: definitively unreachable,
+#     mandatory FAIL, never merely UNKNOWN.
+# =============================================================================
+FM_TEST_HERDR_MODE=unreachable
+out=$(run_doctor); code=$?
+unset FM_TEST_HERDR_MODE
+if [ "$code" -eq 0 ]; then fail "herdr unreachable: expected nonzero exit, got 0"; else pass 'herdr unreachable: exit code is nonzero'; fi
+contains 'herdr unreachable: server check reports FAIL' "$out" 'FAIL          runtime.herdr_server'
+contains 'herdr unreachable: names it unreachable' "$out" 'appears unreachable'
+
+# =============================================================================
+# 16. Herdr status --json succeeds but carries no recognizable "running"
+#     field -> genuinely indeterminate: UNKNOWN, never FAIL, never PASS,
+#     and never forces a nonzero exit.
+# =============================================================================
+FM_TEST_HERDR_MODE=weird
+out=$(run_doctor); code=$?
+unset FM_TEST_HERDR_MODE
+check 'herdr weird output: exit code stays 0 (uncertainty is not failure)' 0 "$code"
+contains 'herdr weird output: server check reports UNKNOWN' "$out" 'UNKNOWN       runtime.herdr_server'
+not_contains 'herdr weird output: never falsely reports FAIL' "$out" 'FAIL          runtime.herdr_server'
+not_contains 'herdr weird output: never falsely reports PASS' "$out" 'PASS          runtime.herdr_server'
+
+# =============================================================================
+# 17. Honest stale/dead task-record reporting: UNKNOWN when there are
+#     in-flight records and no safe bulk classifier exists, NOT_APPLICABLE
+#     when there is nothing to classify - never a bare PASS that implies
+#     staleness was actually checked.
+# =============================================================================
+contains 'healthy fixture: no in-flight tasks -> staleness is NOT_APPLICABLE' "$(run_doctor)" 'NOT_APPLICABLE runtime.task_staleness'
+
+TASK_FM_HOME="$TMP_ROOT/fm-home-with-task"
+mkdir -p "$TASK_FM_HOME/state" "$TASK_FM_HOME/data" "$TASK_FM_HOME/config"
+printf 'fixture\n' > "$TASK_FM_HOME/state/AgentX.meta"
+RUN_FM_HOME=$TASK_FM_HOME
+out_task=$(run_doctor); code_task=$?
+unset RUN_FM_HOME
+check 'in-flight task: exit code stays 0 (non-mandatory)' 0 "$code_task"
+contains 'in-flight task: metadata count reports 1' "$out_task" '1 in-flight task record(s)'
+contains 'in-flight task: staleness reports UNKNOWN, never a false PASS' "$out_task" 'UNKNOWN       runtime.task_staleness'
+not_contains 'in-flight task: staleness never falsely reports PASS' "$out_task" 'PASS          runtime.task_staleness'
+
+# =============================================================================
+# 18. Git probes are read-only: every git invocation fm-doctor makes runs
+#     with GIT_OPTIONAL_LOCKS=0, so no probe can write an index refresh or
+#     ref lock into a repository it merely inspects (core rule: never
+#     modify firstmate-config, official FirstMate, or a project). Proven
+#     with a git wrapper that records the value it actually saw and then
+#     execs the real git, so every other check still behaves normally.
+# =============================================================================
+SYS_GIT=$(command -v git 2>/dev/null || printf '')
+if [ -n "$SYS_GIT" ]; then
+  FAKE_GIT_DIR="$TMP_ROOT/gitwrap"
+  mkdir -p "$FAKE_GIT_DIR"
+  GIT_LOCKS_LOG="$TMP_ROOT/git-optional-locks.log"
+  rm -f "$GIT_LOCKS_LOG"
+  cat > "$FAKE_GIT_DIR/git" <<GITWRAP
+#!/usr/bin/env bash
+printf '%s\n' "\${GIT_OPTIONAL_LOCKS:-<unset>}" >> "$GIT_LOCKS_LOG"
+exec "$SYS_GIT" "\$@"
+GITWRAP
+  chmod +x "$FAKE_GIT_DIR/git"
+  RUN_PATH="$LAUNCHER_OK:$FAKE_BIN:$FAKE_GIT_DIR:$SYS_PATH"
+  out=$(run_doctor); code=$?
+  unset RUN_PATH
+  check 'git read-only: exit code stays 0' 0 "$code"
+  git_calls=$(wc -l < "$GIT_LOCKS_LOG" 2>/dev/null | tr -d ' ')
+  [ -n "$git_calls" ] || git_calls=0
+  if [ "$git_calls" -gt 0 ]; then pass 'git read-only: fm-doctor made at least one git probe'; else fail 'git read-only: no git probe was captured'; fi
+  bad=0
+  while IFS= read -r val; do [ "$val" = "0" ] || bad=1; done < "$GIT_LOCKS_LOG"
+  if [ "$bad" -eq 0 ] && [ "$git_calls" -gt 0 ]; then
+    pass 'git read-only: every git probe ran with GIT_OPTIONAL_LOCKS=0'
+  else
+    fail "git read-only: a git probe ran without GIT_OPTIONAL_LOCKS=0"
+  fi
+else
+  pass 'git read-only: no system git available to wrap (skipped)'
+fi
 
 printf '\nDOCTOR TESTS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]

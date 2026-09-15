@@ -75,7 +75,10 @@ inference call - every availability probe it runs is the same cheap,
 non-billable kind `bin/fm` already uses at startup (`pi auth check`, `pi
 --list-models`, `pi list`, `claude auth status`, `herdr status --json`, `omp
 models --json`), from the one authoritative Captain path both `bin/fm` and
-`bin/fm-doctor` share: `firstmate/fm-captain-lib.sh`.
+`bin/fm-doctor` share: `firstmate/fm-captain-lib.sh`. Every Git probe it
+makes (firstmate-config's and the official checkout's own version/commit/
+dirty state) runs with `GIT_OPTIONAL_LOCKS=0`, so a diagnostic run never
+writes an index refresh or ref lock into a repository it merely inspects.
 
 It reports, in order: SYSTEM (this repository's and the official checkout's
 path/version/commit/dirty state, `FM_HOME`, OS, cwd, current Git project
@@ -84,9 +87,12 @@ the one this repository installs, and the executable a plain `fm` currently
 resolves to), CAPTAIN (the configured startup model chain's per-candidate
 availability, selection, and fallback reason), RUNTIME (Herdr installation,
 client/server health and protocol compatibility, fleet lock, watcher,
-heartbeat, wake queue, and in-flight task count - read-only, via upstream's
-own `fm-lock.sh status` and `fm-supervision-lib.sh` when available, `UNKNOWN`
-otherwise), HARNESSES (Pi/omp installation, version, primary extensions, and
+heartbeat, wake queue, and task-record metadata - an in-flight count plus an
+honest stale/dead classification (`NOT_APPLICABLE` with nothing in flight,
+`UNKNOWN` otherwise: no safe bulk read-only classifier exists upstream
+without duplicating FirstMate's own per-task lifecycle logic) - read-only,
+via upstream's own `fm-lock.sh status` and `fm-supervision-lib.sh` when
+available, `UNKNOWN` otherwise), HARNESSES (Pi/omp installation, version,
 readable config), ROUTING (`crew-dispatch.json` structural validity via real
 JSON parsing only - `jq`, then `python3`, whichever is actually on the
 machine; with neither installed, validity is reported `UNKNOWN`, never a
@@ -117,8 +123,10 @@ none of these are mandatory). Nonzero only for a genuine mandatory break:
 the official FirstMate checkout is missing or broken, `crew-dispatch.json` or
 the captain startup model chain is invalid, no configured Captain candidate
 is usable (a missing Pi primary extension, an empty model chain, or every
-candidate `UNAVAILABLE`), the `herdr` CLI is missing or explicitly reports
-`compatible: false`, or a different `fm` on `PATH` shadows (resolves before)
+candidate `UNAVAILABLE`), the `herdr` CLI is missing, explicitly reports
+`compatible: false`, or its server is definitively stopped or unreachable
+(`running: false`, or the status query itself fails outright with no
+output), or a different `fm` on `PATH` shadows (resolves before)
 the one this repository installs. The top-level JSON `status` field is the
 worst individual check status found anywhere, which can differ from
 `exit_code` - a real but non-mandatory problem can make `status` non-`PASS`
@@ -129,7 +137,9 @@ while `exit_code` stays `0`.
 `fm_home`), `firstmate` (this repository and the official checkout, each with
 its own `commit`), `launcher` (including `resolved`, the executable a plain
 `fm` currently resolves to), `captain`, `runtime` (including a `heartbeat`
-object distinct from `watcher`), `harnesses`, `routing` (including
+object distinct from `watcher`, and `task_metadata.staleness`:
+`NOT_APPLICABLE`/`UNKNOWN`, never a guessed `PASS`/`FAIL`), `harnesses`,
+`routing` (including
 `parse_method` - `jq`, `python3`, or `none` when neither is installed -
 and `valid: null` rather than `true`/`false` whenever `parse_method` is
 `none`), `roles`, `skills`, `projects`, and `checks` - an array of
