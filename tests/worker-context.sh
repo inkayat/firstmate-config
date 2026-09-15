@@ -48,18 +48,34 @@
 # exists to cover. This is pre-implementation native-loader evidence, not a
 # substitute for the live delegated Pi/OMP fixture run `validate` supports.
 #
-# Canary names match this task's steering example:
+# Canary names below label this file's own offline illustration
+# (`fixture_validate`, section 1); they are never text a live worker
+# should search for. The real forbidden skill name is the literal string
+# `captain-hold-lifecycle` - never the label `CAPTAIN_ONLY_CANARY` itself,
+# which is only this file's shorthand:
 #   PROJECT_SKILL_CANARY   the fixture's mandatory project-local skill
 #   SHARED_SKILL_CANARY    the real shared worker skill verification-before-completion
 #   CAPTAIN_ONLY_CANARY    the real official-internal skill captain-hold-lifecycle,
 #                          which must never surface as a worker skill
-# `validate` also proves: the expected isolated worktree, root override
-# authority, absence of the two markers it must shadow, nested-scope
-# instruction application, the project-skill body-only marker applied before
-# migrations are touched, the shared-skill body-only marker applied, and
-# project-local-over-conflicting-shared-skill authority. `handoff` never
-# prints a body-only marker, so a worker that only echoes the handoff can
-# never pass `validate` - only an actual read of the named files can.
+# For a live run, `fixture_validate_live` (CLI `validate`) never accepts
+# mere omission of that literal name as proof - a report that simply never
+# mentions the check would pass it for free. It requires POSITIVE evidence
+# instead: `fixture_handoff` (CLI `handoff`) asks the worker to introspect
+# its own harness-native skill catalog (never a filesystem scan of the
+# official checkout) and report a resolved path for the required project
+# skill, a resolved path for the selected shared skill, its catalog's
+# source roots/count, and an explicit zero count of catalog entries under
+# the official FirstMate distro root. `validate` also proves: the expected
+# isolated worktree, root override authority, absence of the two markers
+# it must shadow, nested-scope instruction application, the project-skill
+# body-only marker applied before migrations are touched, the shared-
+# skill body-only marker applied, project-local-over-conflicting-shared-
+# skill authority, and that both resolved skill paths originate where
+# they must (project skill under the worktree, shared skill under the
+# real global root, never swapped). `handoff` never prints a body-only
+# marker or the source fixture's own path, so a worker that only echoes
+# the handoff back, or that reads the wrong repository, can never pass
+# `validate`.
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -174,19 +190,25 @@ EOF
 # fixture_handoff <repo-dir> - prints the compact, Firstmate-spec-shaped
 # handoff for the fixture prepared at <repo-dir>: applicable instruction
 # paths and which wins at each scope, required project-local/shared skill
-# paths each paired with a read-and-apply requirement, and the governed
-# task. <repo-dir> is used only to validate the fixture exists; its
-# absolute path is NEVER printed. The worker's actual isolated task
-# worktree does not exist yet when this handoff is generated (fm-spawn
-# creates it later, at a different path than any source/primary checkout),
-# so every path below is bare and worktree-relative, with an explicit
-# instruction to verify `pwd -P` against `git rev-parse --show-toplevel`
-# before resolving them - never read the source/primary checkout instead
-# of the worker's own worktree. Also never prints a body-only marker
-# (C_PROJECT_SKILL_BODY, C_SHARED_SKILL_BODY) or any other canary constant:
-# a worker that only echoes this text back can never pass
+# paths each paired with a read-and-apply requirement, a skill-catalog
+# evidence requirement, and the governed task. <repo-dir> is used only to
+# validate the fixture exists; its absolute path is NEVER printed. The
+# worker's actual isolated task worktree does not exist yet when this
+# handoff is generated (fm-spawn creates it later, at a different path
+# than any source/primary checkout), so every path below is bare and
+# worktree-relative, with an explicit instruction to verify `pwd -P`
+# against `git rev-parse --show-toplevel` before resolving them - never
+# read the source/primary checkout instead of the worker's own worktree.
+# $FIRSTMATE_ROOT (the official, persistent FirstMate checkout - never
+# this fixture's own disposable source path) is named only as the
+# comparison root for the official-internal-skill count below; the worker
+# must derive that count from its own harness-native skill catalog, never
+# from scanning that checkout's filesystem. Also never prints a body-only
+# marker (C_PROJECT_SKILL_BODY, C_SHARED_SKILL_BODY) or any other canary
+# constant: a worker that only echoes this text back can never pass
 # fixture_validate_live, since only an actual read of the named files
-# surfaces those markers.
+# surfaces those markers, and only an actual catalog introspection
+# produces the required resolved-path/source-count/zero-count evidence.
 fixture_handoff() {
   local repo=$1
   if [ ! -f "$repo/AGENTS.override.md" ]; then
@@ -227,6 +249,21 @@ Selected shared worker skill:
 Requirement:
   Apply before declaring the task complete.
 
+Skill-catalog evidence requirement:
+  Never a filesystem scan: use your harness's own skill catalog or
+  resource listing, and report exactly these four lines:
+    PROJECT_SKILL_RESOLVED_PATH: <absolute path your harness resolved for
+      the required project skill above>
+    SHARED_SKILL_RESOLVED_PATH: <absolute path your harness resolved for
+      the selected shared worker skill above>
+    SKILL_CATALOG_SOURCES: <N> source root(s): <root1>[, <root2>, ...]
+      (every skill source your harness's own catalog reports, by root
+      path and count - never every individual skill name)
+    OFFICIAL_INTERNAL_SKILL_COUNT: <the number of entries in that same
+      catalog whose resolved path falls under $FIRSTMATE_ROOT - given
+      here only as the comparison root, never to scan its filesystem
+      yourself>
+
 Pre-work requirement:
   Read every path named above, resolved from your current worktree root,
   before substantive work. Report any missing, unreadable, or conflicting
@@ -237,7 +274,8 @@ Pre-work requirement:
 Task:
   1. Add a NOT NULL constraint to migrations/0001_init.sql.
   2. Add a short note to sub/notes.md explaining the change.
-  3. Report what you read and applied, then declare the task complete.
+  3. Report what you read and applied, plus the skill-catalog evidence
+     above, then declare the task complete.
 EOF
 }
 
@@ -272,13 +310,27 @@ _wc_str_index() {
   esac
 }
 
+# _wc_field <text> <label> -> the value after "LABEL:" on the last matching
+# line, trimmed; empty if the label never appears verbatim.
+_wc_field() {
+  printf '%s\n' "$1" | sed -n "s/^[[:space:]]*$2:[[:space:]]*//p" | tail -1
+}
+
+_wc_starts_with() { case $1 in "$2"*) return 0 ;; *) return 1 ;; esac; }
+
 # fixture_validate_live <worker-report-file> [expected-worktree] - the
 # strict, full required-proof gate for a real delegated-worker transcript
 # or report. Prints one "PASS <LABEL>", "FAIL <LABEL>", or
 # "SKIP <LABEL> (reason)" line per required proof; returns 0 only when
-# every required proof passes.
+# every required proof passes. The official-internal-skill proof is
+# POSITIVE evidence (a resolved path, a reported catalog source count, and
+# a reported zero count under the official FirstMate distro root) - merely
+# omitting the forbidden skill name's literal text is necessary but never
+# sufficient by itself, since a report that never mentions the check at
+# all would otherwise pass it for free.
 fixture_validate_live() {
   local report=$1 expected=${2:-} t all_ok=0 mig_idx body_idx
+  local proj_path shared_path sources count
   if [ ! -r "$report" ]; then
     printf 'FAIL WORKTREE_REPORT_READABLE   worker report not readable: %s\n' "$report"
     return 1
@@ -327,7 +379,51 @@ fixture_validate_live() {
     *) _req PROJECT_OVER_SHARED_AUTHORITY 1 ;;
   esac
 
+  # Defense-in-depth only: never sufficient by itself (see below).
   case $t in *"$C_CAPTAIN_ONLY"*) _req CAPTAIN_ONLY_ABSENT 1 ;; *) _req CAPTAIN_ONLY_ABSENT 0 ;; esac
+
+  # Positive origin proof: the required project skill must have resolved
+  # under the worker's own worktree, never a global or unrelated path.
+  proj_path=$(_wc_field "$t" PROJECT_SKILL_RESOLVED_PATH)
+  if [ -z "$expected" ]; then
+    printf 'SKIP %-28s (no expected worktree given)\n' PROJECT_SKILL_PATH_UNDER_WORKTREE
+  elif [ -n "$proj_path" ] && _wc_starts_with "$proj_path" "$expected"; then
+    _req PROJECT_SKILL_PATH_UNDER_WORKTREE 0
+  else
+    _req PROJECT_SKILL_PATH_UNDER_WORKTREE 1
+  fi
+
+  # Positive origin proof: the shared skill must have resolved to the real
+  # global shared root's copy, never a project-local stand-in.
+  shared_path=$(_wc_field "$t" SHARED_SKILL_RESOLVED_PATH)
+  case $shared_path in
+    *".agents/skills/$C_SHARED_SKILL_NAME/SKILL.md")
+      if [ -n "$expected" ] && _wc_starts_with "$shared_path" "$expected"; then
+        _req SHARED_SKILL_PATH_IS_GLOBAL 1
+      else
+        _req SHARED_SKILL_PATH_IS_GLOBAL 0
+      fi
+      ;;
+    *) _req SHARED_SKILL_PATH_IS_GLOBAL 1 ;;
+  esac
+
+  # The worker must have actually introspected its own harness-exposed
+  # skill catalog (source roots and a count), not merely stayed silent.
+  sources=$(_wc_field "$t" SKILL_CATALOG_SOURCES)
+  case $sources in
+    [0-9]*) _req SKILL_CATALOG_SOURCES_REPORTED 0 ;;
+    *) _req SKILL_CATALOG_SOURCES_REPORTED 1 ;;
+  esac
+
+  # The decisive official-internal-skill proof: an explicit reported zero
+  # count of catalog entries under the official FirstMate distro root.
+  # Missing this line fails - it is never inferred from name-omission.
+  count=$(_wc_field "$t" OFFICIAL_INTERNAL_SKILL_COUNT)
+  if [ "$count" = 0 ]; then
+    _req OFFICIAL_INTERNAL_SKILL_COUNT_ZERO 0
+  else
+    _req OFFICIAL_INTERNAL_SKILL_COUNT_ZERO 1
+  fi
 
   return $all_ok
 }
@@ -577,6 +673,12 @@ for marker in "$C_ROOT_OVERRIDE" "$C_ROOT_AGENTS_SHADOWED" "$C_ROOT_CLAUDE_NEVER
   "$C_PROJECT_SKILL_BODY" "$C_SHARED_SKILL_BODY" "$C_PROJECT_WINS" "$C_GLOBAL_LEAK" "$C_CAPTAIN_ONLY"; do
   not_contains "CLI handoff: never quotes the canary marker '$marker'" "$handoff_out" "$marker"
 done
+contains 'CLI handoff: requires PROJECT_SKILL_RESOLVED_PATH evidence' "$handoff_out" 'PROJECT_SKILL_RESOLVED_PATH'
+contains 'CLI handoff: requires SHARED_SKILL_RESOLVED_PATH evidence' "$handoff_out" 'SHARED_SKILL_RESOLVED_PATH'
+contains 'CLI handoff: requires SKILL_CATALOG_SOURCES evidence' "$handoff_out" 'SKILL_CATALOG_SOURCES'
+contains 'CLI handoff: requires OFFICIAL_INTERNAL_SKILL_COUNT evidence' "$handoff_out" 'OFFICIAL_INTERNAL_SKILL_COUNT'
+contains 'CLI handoff: instructs using the harness catalog, never a filesystem scan' "$handoff_out" 'Never a filesystem scan'
+contains 'CLI handoff: names the official FirstMate root only as a comparison root' "$handoff_out" "$FIRSTMATE_ROOT"
 
 # The source fixture's absolute path must never leak into the handoff: the
 # worker's isolated task worktree does not exist yet when the handoff is
@@ -605,6 +707,10 @@ $C_NESTED_SCOPE observed under sub/.
 $C_PROJECT_SKILL_BODY applied before touching $C_MIGRATION_FILE.
 $C_SHARED_SKILL_BODY confirmed before declaring completion.
 $C_PROJECT_WINS applied for architecture-review.
+PROJECT_SKILL_RESOLVED_PATH: $CLI_DIR/repo/.agents/skills/$C_PROJECT_SKILL_NAME/SKILL.md
+SHARED_SKILL_RESOLVED_PATH: $HOME/.agents/skills/$C_SHARED_SKILL_NAME/SKILL.md
+SKILL_CATALOG_SOURCES: 3 source root(s): $HOME/.pi/agent/skills, $CLI_DIR/repo/.agents/skills, $HOME/.agents/skills
+OFFICIAL_INTERNAL_SKILL_COUNT: 0
 EOF
 val_out=$(bash "$SELF" validate "$GOOD_REPORT" "$CLI_DIR/repo" 2>&1); val_rc=$?
 check 'CLI validate: a fully compliant report exits 0' 0 "$val_rc"
@@ -619,6 +725,10 @@ Touched $C_MIGRATION_FILE first, only reading the skill afterward:
 $C_PROJECT_SKILL_BODY.
 $C_SHARED_SKILL_BODY confirmed before declaring completion.
 $C_PROJECT_WINS applied for architecture-review.
+PROJECT_SKILL_RESOLVED_PATH: $CLI_DIR/repo/.agents/skills/$C_PROJECT_SKILL_NAME/SKILL.md
+SHARED_SKILL_RESOLVED_PATH: $HOME/.agents/skills/$C_SHARED_SKILL_NAME/SKILL.md
+SKILL_CATALOG_SOURCES: 3 source root(s): $HOME/.pi/agent/skills, $CLI_DIR/repo/.agents/skills, $HOME/.agents/skills
+OFFICIAL_INTERNAL_SKILL_COUNT: 0
 EOF
 val_order_out=$(bash "$SELF" validate "$ORDER_BAD_REPORT" "$CLI_DIR/repo" 2>&1); val_order_rc=$?
 if [ "$val_order_rc" -eq 0 ]; then fail 'CLI validate: touching migrations before reading the skill unexpectedly exits 0'; else pass 'CLI validate: touching migrations before reading the skill exits nonzero'; fi
@@ -636,8 +746,53 @@ contains 'CLI validate: a non-compliant report reports the shadowed-marker failu
 contains 'CLI validate: a non-compliant report reports the captain-only leak' "$val_bad_out" 'FAIL CAPTAIN_ONLY_ABSENT'
 contains 'CLI validate: a non-compliant report reports the missing expected worktree' "$val_bad_out" 'FAIL EXPECTED_WORKTREE'
 
+# The exact false-confidence failure this task's steering caught: a report
+# that omits the forbidden skill name's literal text - the old
+# CAPTAIN_ONLY_ABSENT check alone would have PASSed this - but provides no
+# positive skill-catalog evidence at all. This must fail overall.
+FALSE_CONFIDENCE_REPORT="$TMP_ROOT/cli-false-confidence-report.txt"
+cat > "$FALSE_CONFIDENCE_REPORT" <<EOF
+Ran in $CLI_DIR/repo. Read and applied everything required. All good.
+EOF
+val_fc_out=$(bash "$SELF" validate "$FALSE_CONFIDENCE_REPORT" "$CLI_DIR/repo" 2>&1); val_fc_rc=$?
+if [ "$val_fc_rc" -eq 0 ]; then fail 'CLI validate: false-confidence report (name omitted, no catalog evidence) unexpectedly exits 0'; else pass 'CLI validate: false-confidence report exits nonzero'; fi
+contains 'CLI validate: false-confidence report still reports the name-omission check as PASS (never sufficient alone)' "$val_fc_out" 'PASS CAPTAIN_ONLY_ABSENT'
+contains 'CLI validate: false-confidence report fails on missing catalog-source evidence' "$val_fc_out" 'FAIL SKILL_CATALOG_SOURCES_REPORTED'
+contains 'CLI validate: false-confidence report fails on missing official-internal-count evidence' "$val_fc_out" 'FAIL OFFICIAL_INTERNAL_SKILL_COUNT_ZERO'
+
+# A worker that reports a nonzero official-internal catalog count must
+# fail even though it never mentions the forbidden skill name literally.
+LEAK_COUNT_REPORT="$TMP_ROOT/cli-leak-count-report.txt"
+cat > "$LEAK_COUNT_REPORT" <<EOF
+Ran in $CLI_DIR/repo.
+PROJECT_SKILL_RESOLVED_PATH: $CLI_DIR/repo/.agents/skills/$C_PROJECT_SKILL_NAME/SKILL.md
+SHARED_SKILL_RESOLVED_PATH: $HOME/.agents/skills/$C_SHARED_SKILL_NAME/SKILL.md
+SKILL_CATALOG_SOURCES: 3 source root(s): $HOME/.pi/agent/skills, $CLI_DIR/repo/.agents/skills, $HOME/.agents/skills
+OFFICIAL_INTERNAL_SKILL_COUNT: 1
+EOF
+val_leak_out=$(bash "$SELF" validate "$LEAK_COUNT_REPORT" "$CLI_DIR/repo" 2>&1); val_leak_rc=$?
+if [ "$val_leak_rc" -eq 0 ]; then fail 'CLI validate: a nonzero official-internal-skill count unexpectedly exits 0'; else pass 'CLI validate: a nonzero official-internal-skill count exits nonzero'; fi
+contains 'CLI validate: a nonzero official-internal-skill count fails the count check' "$val_leak_out" 'FAIL OFFICIAL_INTERNAL_SKILL_COUNT_ZERO'
+
+# The resolved-path origin proofs themselves: a project skill resolved
+# outside the worktree, or a "shared" skill resolved inside it, must fail
+# even with an otherwise well-formed report.
+PATH_ORIGIN_BAD_REPORT="$TMP_ROOT/cli-path-origin-bad-report.txt"
+cat > "$PATH_ORIGIN_BAD_REPORT" <<EOF
+Ran in $CLI_DIR/repo.
+PROJECT_SKILL_RESOLVED_PATH: $HOME/.agents/skills/$C_PROJECT_SKILL_NAME/SKILL.md
+SHARED_SKILL_RESOLVED_PATH: $CLI_DIR/repo/.agents/skills/$C_SHARED_SKILL_NAME/SKILL.md
+SKILL_CATALOG_SOURCES: 3 source root(s): $HOME/.pi/agent/skills, $CLI_DIR/repo/.agents/skills, $HOME/.agents/skills
+OFFICIAL_INTERNAL_SKILL_COUNT: 0
+EOF
+val_origin_out=$(bash "$SELF" validate "$PATH_ORIGIN_BAD_REPORT" "$CLI_DIR/repo" 2>&1); val_origin_rc=$?
+if [ "$val_origin_rc" -eq 0 ]; then fail 'CLI validate: swapped project/shared skill origins unexpectedly exits 0'; else pass 'CLI validate: swapped project/shared skill origins exits nonzero'; fi
+contains 'CLI validate: a project skill resolved outside the worktree fails' "$val_origin_out" 'FAIL PROJECT_SKILL_PATH_UNDER_WORKTREE'
+contains 'CLI validate: a shared skill resolved inside the worktree fails' "$val_origin_out" 'FAIL SHARED_SKILL_PATH_IS_GLOBAL'
+
 no_expected_out=$(bash "$SELF" validate "$GOOD_REPORT" 2>&1)
 contains 'CLI validate: an omitted expected-worktree is reported SKIP, never a false FAIL' "$no_expected_out" 'SKIP EXPECTED_WORKTREE'
+contains 'CLI validate: an omitted expected-worktree also SKIPs the project-skill-origin check' "$no_expected_out" 'SKIP PROJECT_SKILL_PATH_UNDER_WORKTREE'
 
 usage_out=$(bash "$SELF" bogus-subcommand 2>&1); usage_rc=$?
 if [ "$usage_rc" -eq 0 ]; then fail 'CLI: an unknown subcommand unexpectedly exits 0'; else pass 'CLI: an unknown subcommand exits nonzero'; fi

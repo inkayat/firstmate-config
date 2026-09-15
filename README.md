@@ -314,8 +314,15 @@ cannot pass `validate`;
 root-override authority, absence of the markers it must shadow, nested-
 scope application, the project skill's body-only marker applied before
 migrations are touched, the shared skill's body-only marker applied, and
-project-local-over-conflicting-shared-skill authority - printing one
-PASS/FAIL/SKIP line per proof.
+project-local-over-conflicting-shared-skill authority. The official-
+internal-skill proof is positive evidence, never mere name-omission: the
+worker must report a resolved path for the required project skill (under
+its own worktree), a resolved path for the selected shared skill (under
+the real global root, never the worktree), its own harness-native skill-
+catalog source roots/count, and an explicit zero count of catalog entries
+under the official FirstMate distro root - a report that merely never
+mentions the forbidden skill name fails this check, it does not pass it
+for free. `validate` prints one PASS/FAIL/SKIP line per proof.
 
 ## Routing in v0.1
 
