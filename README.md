@@ -19,10 +19,12 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | Path | What it is | Where it lands |
 | --- | --- | --- |
 | `bin/fm` | the launcher: `cd anywhere && fm` | symlinked onto `PATH` |
+| `bin/fm-doctor` | read-only architecture diagnostics: `fm doctor` / `fm doctor --json` | invoked by `bin/fm doctor` |
 | `firstmate/primary-policy.md` | the captain's operating policy | read by the captain, path named from `data/captain.md` |
 | `firstmate/captain.md` | first-run template for the captain's own notes | copied to `$FM_HOME/data/captain.md` **only when absent** |
 | `firstmate/crew-dispatch.json` | which harness takes which kind of task | symlinked to `$FM_HOME/config/crew-dispatch.json` |
 | `firstmate/captain-startup-models.tsv` | ordered Pi/FirstMate Captain startup model candidates | read by `bin/fm`, never installed as Pi's global default |
+| `firstmate/fm-captain-lib.sh` | the one authoritative Captain model availability path | sourced by both `bin/fm` and `bin/fm-doctor` |
 | `roles/*/ROLE.md` | generic role definitions quoted into worker briefs | read by the captain |
 | `skills/*/SKILL.md` | our own global skills | symlinked into `~/.agents/skills/` |
 | `skills/external.lock` | external skill packs, pinned by commit | cloned to a machine-local cache, symlinked into `~/.agents/skills/` |
@@ -30,6 +32,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `tests/smoke.sh` | acceptance smoke | - |
 | `tests/model-selection.sh` | captain startup model selection acceptance | - |
 | `tests/multi-project-captain.sh` | multi-project resolution/isolation/routing acceptance | - |
+| `tests/doctor.sh` | `fm doctor` acceptance: statuses, exit codes, JSON schema | - |
 
 ## Install
 
@@ -54,7 +57,70 @@ Verify an installation at any time:
 tests/smoke.sh                     # launcher, install state, skills, herdr
 tests/smoke.sh --live              # the same, plus a captain that is currently running
 tests/multi-project-captain.sh     # project resolution, isolation, and routing
+tests/doctor.sh                    # fm doctor: statuses, exit codes, JSON schema
 ```
+
+## fm doctor
+
+```sh
+fm doctor             # human-readable architecture diagnostics
+fm doctor --json       # the same report as machine-readable JSON
+```
+
+Read-only, cross-platform diagnostics for the whole
+`Pi Captain -> FirstMate -> Herdr -> Pi/OMP` architecture. `fm doctor` never
+installs, repairs, or restarts anything, never modifies `FM_HOME` or a
+project, never touches routing or auth, and never makes a paid or live model
+inference call - every availability probe it runs is the same cheap,
+non-billable kind `bin/fm` already uses at startup (`pi auth check`, `pi
+--list-models`, `pi list`, `claude auth status`, `herdr status --json`), from
+the one authoritative path both share: `firstmate/fm-captain-lib.sh`.
+
+It reports, in order: SYSTEM (this repository's and the official checkout's
+path/version/commit/dirty state, OS, cwd, current Git project root),
+LAUNCHER/PATH (every `fm` discoverable on `PATH` and precedence against the
+one this repository installs), CAPTAIN (the configured startup model chain's
+per-candidate availability, selection, and fallback reason), RUNTIME (Herdr
+installation, client/server health and protocol compatibility, fleet lock,
+watcher, wake queue, and in-flight task count - read-only, via upstream's own
+`fm-lock.sh status` and `fm-supervision-lib.sh` when available, `UNKNOWN`
+otherwise), HARNESSES (Pi/omp installation, version, primary extensions, and
+readable config), ROUTING (`crew-dispatch.json` structural validity, cheap
+per-lane model availability, and Fable/Qwen's intentionally `DEFERRED`
+status), ROLES and SKILLS (readable role files; global skill installation
+count, missing entries, broken links, unreadable `SKILL.md`), and PROJECTS
+(registered names from FirstMate's own `data/projects.md` via
+`fm-project-mode.sh`, the confident current project when the working
+directory matches a registered name, and - for that project only - presence,
+never contents, of `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md`, and
+project-local skill directories).
+
+Every finding uses exactly one of: `PASS`, `WARNING`, `FAIL`, `DEFERRED`,
+`BLOCKED_AUTH`, `BLOCKED_QUOTA`, `NOT_APPLICABLE`, `UNKNOWN`. A blocked status
+is used only on reliable evidence; uncertainty is `UNKNOWN`, never a guessed
+failure.
+
+**Exit codes.** `0` when the mandatory architecture is healthy, even with
+`WARNING`, `DEFERRED`, or non-mandatory `BLOCKED_*`/`FAIL` findings present
+(an unauthenticated routing lane, a missing role file, an unreadable skill -
+none of these are mandatory). Nonzero only for a genuine mandatory break:
+the official FirstMate checkout is missing or broken, `crew-dispatch.json` or
+the captain startup model chain is invalid, no configured Captain candidate
+is usable (a missing Pi primary extension, an empty model chain, or every
+candidate `UNAVAILABLE`), the `herdr` CLI is missing or explicitly reports
+`compatible: false`, or a different `fm` on `PATH` shadows (resolves before)
+the one this repository installs. The top-level JSON `status` field is the
+worst individual check status found anywhere, which can differ from
+`exit_code` - a real but non-mandatory problem can make `status` non-`PASS`
+while `exit_code` stays `0`.
+
+**JSON schema** (`--json`, `schema_version: 1`): a single object with
+`schema_version`, `status`, `exit_code`, `timestamp`, `system`, `firstmate`
+(this repository and the official checkout), `launcher`, `captain`,
+`runtime`, `harnesses`, `routing`, `roles`, `skills`, `projects`, and
+`checks` - an array of `{id, status, summary, detail?}` rows, one per finding
+named above. The schema stays valid JSON without `jq` or any optional tool;
+`fm-doctor` never depends on one to run or to render its own output.
 
 ## Captain startup model
 

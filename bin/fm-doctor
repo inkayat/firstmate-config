@@ -1,0 +1,727 @@
+#!/usr/bin/env bash
+# fm-doctor - read-only, cross-platform diagnostics for the
+# Pi Captain -> FirstMate -> Herdr -> Pi/OMP architecture.
+#
+# Never installs, repairs, or restarts anything. Never modifies FM_HOME,
+# projects, or the official FirstMate checkout. Never makes a paid/live model
+# inference call. Every probe here is the same cheap, non-billable kind bin/fm
+# already uses at startup (pi auth check, pi --list-models, pi list, claude
+# auth status, herdr status --json) - see firstmate/fm-captain-lib.sh, the one
+# authoritative Captain availability path shared with bin/fm.
+#
+# Usage:
+#   fm doctor             human-readable report
+#   fm doctor --json      the same report as machine-readable JSON
+#   fm-doctor --help
+#
+# Exit codes:
+#   0   mandatory architecture is healthy, even with WARNING, DEFERRED, or
+#       optional BLOCKED_* candidates present
+#   1   a genuine mandatory break: missing/broken official FirstMate, invalid
+#       captain-startup-models.tsv or crew-dispatch.json, no usable Captain
+#       (missing Pi primary extensions, an empty model chain, or every
+#       configured model candidate UNAVAILABLE), a missing or explicitly
+#       protocol-incompatible required Herdr CLI, or an expected `fm` shadowed
+#       on PATH by a different executable earlier in PATH.
+# Every other finding (routing lane availability, roles, skills, harness
+# versions, project reporting) is reported but never changes the exit code.
+set -u
+
+SCHEMA_VERSION=1
+
+ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
+# shellcheck source=/dev/null
+[ ! -f "$ENV_FILE" ] || . "$ENV_FILE"
+
+self=${BASH_SOURCE[0]}
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self="$(cd "$(dirname "$self")" && pwd)/$target" ;;
+  esac
+done
+CONFIG_ROOT="$(cd "$(dirname "$self")/.." && pwd)"
+
+FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
+FM_HOME="${FM_HOME:-$HOME/.firstmate}"
+FM_BACKEND="${FM_BACKEND:-herdr}"
+PI_BIN="${FM_PI_BIN:-pi}"
+SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
+ORIGIN_CWD=$PWD
+MODEL_CHAIN="$CONFIG_ROOT/firstmate/captain-startup-models.tsv"
+WATCH_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
+TURNEND_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
+OMP_WATCH_EXT="$FIRSTMATE_ROOT/.omp/extensions/fm-primary-omp-watch.ts"
+OMP_TURNEND_EXT="$FIRSTMATE_ROOT/.omp/extensions/fm-primary-turnend-guard.ts"
+
+# The one authoritative Captain availability path, shared with bin/fm. Sets
+# PI_BIN above first, exactly as bin/fm does, so the two never fork
+# eligibility semantics.
+# shellcheck source=firstmate/fm-captain-lib.sh
+. "$CONFIG_ROOT/firstmate/fm-captain-lib.sh"
+
+usage() { sed -n '2,/^set -u$/p' "$self" | sed -e 's/^# \{0,1\}//' -e '/^set -u$/d'; }
+
+JSON_MODE=0
+case ${1:-} in
+  --help|-h) usage; exit 0 ;;
+  --json) JSON_MODE=1 ;;
+  '') ;;
+  *) printf 'fm-doctor: unknown argument '\''%s'\''; see fm-doctor --help\n' "$1" >&2; exit 1 ;;
+esac
+
+# --- generic helpers ---------------------------------------------------------
+
+json_esc() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\r'/\\r}
+  s=${s//$'\t'/\\t}
+  printf '%s' "$s"
+}
+
+jstr() { printf '"%s"' "$(json_esc "${1:-}")"; }
+
+json_array() { # <elements...> -> a JSON array of strings
+  local out='[' first=1 e
+  for e in "$@"; do
+    [ "$first" -eq 1 ] || out="$out,"
+    out="$out$(jstr "$e")"
+    first=0
+  done
+  printf '%s]' "$out"
+}
+
+# Resolve symlinks without executing the target, mirroring bin/fm's own self
+# resolution (never invoke an ambiguous discovered `fm`).
+canon_path() {
+  local p=$1 target dir base
+  while [ -L "$p" ]; do
+    target=$(readlink "$p")
+    case $target in
+      /*) p=$target ;;
+      *) p="$(cd "$(dirname "$p")" && pwd)/$target" ;;
+    esac
+  done
+  dir=$(cd "$(dirname "$p")" 2>/dev/null && pwd) || { printf '%s' "$p"; return; }
+  base=$(basename "$p")
+  printf '%s/%s' "$dir" "$base"
+}
+
+# Portable mtime; Linux stat lacks -f, macOS stat lacks -c (mirrors
+# tests/smoke.sh and upstream fm-supervision-lib.sh's fm_sup_stat_mtime).
+stat_mtime() {
+  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null
+}
+
+git_dirty_count() { # <repo>
+  git -C "$1" status --porcelain 2>/dev/null | wc -l | tr -d ' '
+}
+
+# --- check accumulator ---------------------------------------------------
+
+CHECK_IDS=()
+CHECK_STATUSES=()
+CHECK_SUMMARIES=()
+CHECK_DETAILS=()
+
+add_check() { # <id> <status> <summary> [<detail>]
+  CHECK_IDS+=("$1")
+  CHECK_STATUSES+=("$2")
+  CHECK_SUMMARIES+=("$3")
+  CHECK_DETAILS+=("${4:-}")
+}
+
+status_rank() {
+  case $1 in
+    FAIL) printf 4 ;;
+    BLOCKED_AUTH|BLOCKED_QUOTA) printf 3 ;;
+    WARNING) printf 2 ;;
+    UNKNOWN) printf 1 ;;
+    *) printf 0 ;; # PASS, DEFERRED, NOT_APPLICABLE
+  esac
+}
+
+# =============================================================================
+# SYSTEM
+# =============================================================================
+
+OS_NAME=$(uname -s 2>/dev/null || printf unknown)
+OS_ARCH=$(uname -m 2>/dev/null || printf unknown)
+GIT_PROJECT_ROOT=$(git -C "$ORIGIN_CWD" rev-parse --show-toplevel 2>/dev/null || printf '')
+
+add_check system.platform PASS "$OS_NAME/$OS_ARCH" ""
+if [ -n "$GIT_PROJECT_ROOT" ]; then
+  add_check system.git_project PASS "cwd is inside a Git project" "$GIT_PROJECT_ROOT"
+else
+  add_check system.git_project NOT_APPLICABLE "cwd is not inside a Git project" ""
+fi
+
+CONFIG_VERSION=$(git -C "$CONFIG_ROOT" describe --tags --always --dirty 2>/dev/null || printf unknown)
+CONFIG_DIRTY=$(git_dirty_count "$CONFIG_ROOT")
+add_check firstmate.config PASS "firstmate-config at $CONFIG_VERSION ($CONFIG_DIRTY modification(s))" "$CONFIG_ROOT"
+
+FIRSTMATE_BROKEN=0
+if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
+  FIRSTMATE_COMMIT=$(git -C "$FIRSTMATE_ROOT" rev-parse --short HEAD 2>/dev/null || printf unknown)
+  FIRSTMATE_DIRTY=$(git_dirty_count "$FIRSTMATE_ROOT")
+  if [ "$FIRSTMATE_DIRTY" = 0 ]; then
+    add_check firstmate.official PASS "official FirstMate at $FIRSTMATE_COMMIT, unmodified" "$FIRSTMATE_ROOT"
+  else
+    add_check firstmate.official WARNING "official FirstMate at $FIRSTMATE_COMMIT has $FIRSTMATE_DIRTY local modification(s); this configuration expects it unmodified" "$FIRSTMATE_ROOT"
+  fi
+else
+  FIRSTMATE_COMMIT=unknown
+  FIRSTMATE_DIRTY=unknown
+  FIRSTMATE_BROKEN=1
+  add_check firstmate.official FAIL "no AGENTS.md under $FIRSTMATE_ROOT; official FirstMate checkout is missing or broken" "$FIRSTMATE_ROOT"
+fi
+
+J_SYSTEM=$(printf '{"os":%s,"arch":%s,"cwd":%s,"git_project_root":%s}' \
+  "$(jstr "$OS_NAME")" "$(jstr "$OS_ARCH")" "$(jstr "$ORIGIN_CWD")" "$(jstr "$GIT_PROJECT_ROOT")")
+J_FIRSTMATE=$(printf '{"config":{"path":%s,"version":%s,"dirty":%s},"official":{"path":%s,"commit":%s,"dirty":%s}}' \
+  "$(jstr "$CONFIG_ROOT")" "$(jstr "$CONFIG_VERSION")" "$(jstr "$CONFIG_DIRTY")" \
+  "$(jstr "$FIRSTMATE_ROOT")" "$(jstr "$FIRSTMATE_COMMIT")" "$(jstr "$FIRSTMATE_DIRTY")")
+
+# =============================================================================
+# LAUNCHER/PATH
+# =============================================================================
+
+LAUNCHER_SHADOWED=0
+EXPECTED_FM=$(canon_path "$CONFIG_ROOT/bin/fm")
+FOUND_OURS=0
+OTHER_BEFORE=()
+OTHER_AFTER=()
+ALL_FOUND=()
+
+OLDIFS=$IFS
+IFS=:
+# shellcheck disable=SC2206 # intentional colon-split of $PATH
+PATH_DIRS=($PATH)
+IFS=$OLDIFS
+for pdir in "${PATH_DIRS[@]}"; do
+  [ -n "$pdir" ] || continue
+  cand="$pdir/fm"
+  [ -f "$cand" ] && [ -x "$cand" ] || continue
+  ccanon=$(canon_path "$cand")
+  ALL_FOUND+=("$cand -> $ccanon")
+  if [ "$ccanon" = "$EXPECTED_FM" ]; then
+    FOUND_OURS=1
+  elif [ "$FOUND_OURS" -eq 0 ]; then
+    OTHER_BEFORE+=("$cand")
+  else
+    OTHER_AFTER+=("$cand")
+  fi
+done
+
+LAUNCHER_DETAIL="expected $EXPECTED_FM; PATH order: $(IFS='; '; printf '%s' "${ALL_FOUND[*]:-none found}")"
+if [ "${#OTHER_BEFORE[@]}" -gt 0 ]; then
+  LAUNCHER_SHADOWED=1
+  add_check launcher.resolution FAIL "another 'fm' at $(IFS=', '; printf '%s' "${OTHER_BEFORE[*]}") shadows firstmate-config's fm on PATH" "$LAUNCHER_DETAIL"
+elif [ "$FOUND_OURS" -eq 0 ]; then
+  add_check launcher.resolution WARNING "firstmate-config's fm ($EXPECTED_FM) is not on PATH" "$LAUNCHER_DETAIL"
+elif [ "${#OTHER_AFTER[@]}" -gt 0 ]; then
+  add_check launcher.resolution WARNING "firstmate-config's fm resolves first; another 'fm' exists later on PATH at $(IFS=', '; printf '%s' "${OTHER_AFTER[*]}")" "$LAUNCHER_DETAIL"
+else
+  add_check launcher.resolution PASS "firstmate-config's fm ($EXPECTED_FM) resolves first on PATH" "$LAUNCHER_DETAIL"
+fi
+
+J_LAUNCHER=$(printf '{"expected":%s,"resolves_first":%s,"found":%s,"competing_before":%s,"competing_after":%s}' \
+  "$(jstr "$EXPECTED_FM")" "$([ "$FOUND_OURS" -eq 1 ] && printf true || printf false)" \
+  "$(json_array "${ALL_FOUND[@]:-}")" "$(json_array "${OTHER_BEFORE[@]:-}")" "$(json_array "${OTHER_AFTER[@]:-}")")
+
+# =============================================================================
+# CAPTAIN
+# =============================================================================
+
+CAPTAIN_EXT_OK=1
+if [ -f "$WATCH_EXT" ] && [ -f "$TURNEND_EXT" ]; then
+  add_check captain.extensions PASS "both Pi primary extensions present" "$WATCH_EXT; $TURNEND_EXT"
+else
+  CAPTAIN_EXT_OK=0
+  add_check captain.extensions FAIL "missing a required Pi primary extension" "$WATCH_EXT; $TURNEND_EXT"
+fi
+
+CAPTAIN_CHAIN_OK=1
+SELECTED_MODEL=
+SELECTED_EFFORT=
+SELECTED_STATE=
+FALLBACK_REASON=
+CAPTAIN_MODELS_JSON='['
+first_model=1
+if [ -f "$MODEL_CHAIN" ]; then
+  reasons=()
+  while IFS="$(printf '\t')" read -r model effort _rest || [ -n "${model:-}" ]; do
+    case ${model:-} in ''|\#*) continue ;; esac
+    result=$(model_availability "$model" "$effort")
+    state=${result%%$'\t'*}
+    reason=${result#*$'\t'}
+    [ "$first_model" -eq 1 ] || CAPTAIN_MODELS_JSON="$CAPTAIN_MODELS_JSON,"
+    CAPTAIN_MODELS_JSON="$CAPTAIN_MODELS_JSON{\"model\":$(jstr "$model"),\"effort\":$(jstr "$effort"),\"state\":$(jstr "$state"),\"reason\":$(jstr "$reason")}"
+    first_model=0
+    case $state in
+      AVAILABLE) add_check "captain.model.$model" PASS "$model ($effort): available" "$reason" ;;
+      UNKNOWN) add_check "captain.model.$model" WARNING "$model ($effort): availability unknown" "$reason" ;;
+      *) add_check "captain.model.$model" FAIL "$model ($effort): unavailable" "$reason" ;;
+    esac
+    if [ -z "$SELECTED_MODEL" ] && [ "$state" != UNAVAILABLE ]; then
+      SELECTED_MODEL=$model
+      SELECTED_EFFORT=$effort
+      SELECTED_STATE=$state
+    fi
+    [ -n "$SELECTED_MODEL" ] || reasons+=("$model $effort: $reason")
+  done < "$MODEL_CHAIN"
+  [ "${#reasons[@]}" -eq 0 ] || FALLBACK_REASON=$(IFS='; '; printf '%s' "${reasons[*]}")
+  if [ -n "$SELECTED_MODEL" ]; then
+    if [ -n "$FALLBACK_REASON" ]; then
+      add_check captain.selection PASS "selected $SELECTED_MODEL ($SELECTED_EFFORT, $SELECTED_STATE) after fallback" "$FALLBACK_REASON"
+    else
+      add_check captain.selection PASS "selected preferred candidate $SELECTED_MODEL ($SELECTED_EFFORT)" ""
+    fi
+  else
+    CAPTAIN_CHAIN_OK=0
+    add_check captain.selection FAIL "no configured Captain startup model is available" "$FALLBACK_REASON"
+  fi
+else
+  CAPTAIN_CHAIN_OK=0
+  add_check captain.model_chain FAIL "missing captain startup model chain" "$MODEL_CHAIN"
+fi
+CAPTAIN_MODELS_JSON="$CAPTAIN_MODELS_JSON]"
+
+NO_USABLE_CAPTAIN=0
+[ "$CAPTAIN_EXT_OK" -eq 1 ] && [ "$CAPTAIN_CHAIN_OK" -eq 1 ] || NO_USABLE_CAPTAIN=1
+
+J_CAPTAIN=$(printf '{"extensions_present":%s,"selected_model":%s,"selected_effort":%s,"selected_availability":%s,"fallback_reason":%s,"candidates":%s}' \
+  "$([ "$CAPTAIN_EXT_OK" -eq 1 ] && printf true || printf false)" \
+  "$(jstr "$SELECTED_MODEL")" "$(jstr "$SELECTED_EFFORT")" "$(jstr "$SELECTED_STATE")" "$(jstr "$FALLBACK_REASON")" "$CAPTAIN_MODELS_JSON")
+
+# =============================================================================
+# RUNTIME (Herdr)
+# =============================================================================
+
+HERDR_BROKEN=0
+if ! command -v herdr >/dev/null 2>&1; then
+  HERDR_BROKEN=1
+  add_check runtime.herdr_cli FAIL "backend is $FM_BACKEND but the herdr CLI is not on PATH" ""
+  HERDR_STATUS_JSON='{}'
+else
+  add_check runtime.herdr_cli PASS "herdr CLI present" "$(command -v herdr)"
+  HERDR_STATUS_JSON=$(herdr status --json 2>/dev/null || printf '{}')
+  server_running=$(json_bool_field "$HERDR_STATUS_JSON" running)
+  server_compatible=$(json_bool_field "$HERDR_STATUS_JSON" compatible)
+  server_version=$(json_string_field "$HERDR_STATUS_JSON" version)
+  client_version=$(printf '%s' "$HERDR_STATUS_JSON" | tr '\n' ' ' | sed -n 's/.*"client":{[^}]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  if [ "$server_compatible" = false ]; then
+    add_check runtime.herdr_server FAIL "herdr client/server protocol reported incompatible" "$HERDR_STATUS_JSON"
+  elif [ "$server_running" = true ]; then
+    add_check runtime.herdr_server PASS "herdr server running (version ${server_version:-unknown}, client ${client_version:-unknown})" ""
+  else
+    add_check runtime.herdr_server WARNING "herdr server is not running" ""
+  fi
+fi
+
+STATE_DIR="$FM_HOME/state"
+
+if [ -d "$STATE_DIR" ] && [ -x "$FIRSTMATE_ROOT/bin/fm-lock.sh" ]; then
+  lock_out=$("$FIRSTMATE_ROOT/bin/fm-lock.sh" status 2>&1 | tail -1)
+  add_check runtime.fleet_lock PASS "$lock_out" ""
+elif [ ! -d "$STATE_DIR" ] || [ ! -f "$STATE_DIR/.lock" ]; then
+  add_check runtime.fleet_lock PASS "lock: free" ""
+else
+  add_check runtime.fleet_lock UNKNOWN "lock file present; FirstMate's fm-lock.sh unavailable to verify holder liveness" ""
+fi
+
+SUP_LIB="$FIRSTMATE_ROOT/bin/fm-supervision-lib.sh"
+if [ -f "$SUP_LIB" ]; then
+  # shellcheck source=/dev/null
+  . "$SUP_LIB"
+  fm_supervision_status "$STATE_DIR" "${FM_GUARD_GRACE:-300}"
+  if [ "$FM_SUP_NEEDED" != true ]; then
+    add_check runtime.watcher NOT_APPLICABLE "no in-flight work, source, or check; no watcher required" "beacon: $FM_SUP_BEACON_DESC"
+  elif [ "$FM_SUP_WATCHER_FRESH" = true ]; then
+    add_check runtime.watcher PASS "watcher beacon fresh" "$FM_SUP_BEACON_DESC"
+  else
+    add_check runtime.watcher WARNING "supervision is needed but no fresh watcher beacon" "$FM_SUP_BEACON_DESC"
+  fi
+  if [ "$FM_SUP_QUEUE_PENDING" = true ]; then
+    add_check runtime.wake_queue WARNING "wake queue has unread records" ""
+  else
+    add_check runtime.wake_queue PASS "wake queue empty" ""
+  fi
+  add_check runtime.task_metadata PASS "$FM_SUP_IN_FLIGHT in-flight task record(s)" "staleness is FirstMate's own lifecycle concern; not independently classified here"
+else
+  add_check runtime.watcher UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
+  add_check runtime.wake_queue UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
+  add_check runtime.task_metadata UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
+fi
+
+J_RUNTIME="$HERDR_STATUS_JSON"
+
+# =============================================================================
+# HARNESSES
+# =============================================================================
+
+if command -v "$PI_BIN" >/dev/null 2>&1; then
+  pi_version=$("$PI_BIN" --version 2>/dev/null | head -1)
+  add_check harnesses.pi PASS "Pi installed (${pi_version:-unknown version})" "$(command -v "$PI_BIN")"
+else
+  add_check harnesses.pi FAIL "Pi executable '$PI_BIN' is not on PATH" ""
+fi
+
+if command -v omp >/dev/null 2>&1; then
+  omp_version=$(omp --version 2>/dev/null | head -1)
+  add_check harnesses.omp PASS "omp installed (${omp_version:-unknown version})" "$(command -v omp)"
+else
+  add_check harnesses.omp FAIL "omp executable is not on PATH" ""
+fi
+
+if [ -f "$WATCH_EXT" ] && [ -f "$TURNEND_EXT" ]; then
+  add_check harnesses.pi_extensions PASS "Pi primary extensions present" ""
+else
+  add_check harnesses.pi_extensions FAIL "a Pi primary extension is missing" "$WATCH_EXT; $TURNEND_EXT"
+fi
+if [ -f "$OMP_WATCH_EXT" ] && [ -f "$OMP_TURNEND_EXT" ]; then
+  add_check harnesses.omp_extensions PASS "omp primary extensions present" ""
+else
+  add_check harnesses.omp_extensions FAIL "an omp primary extension is missing" "$OMP_WATCH_EXT; $OMP_TURNEND_EXT"
+fi
+
+PI_TRUST="$HOME/.pi/agent/trust.json"
+if [ -r "$PI_TRUST" ]; then
+  add_check harnesses.pi_config PASS "Pi trust config readable" "$PI_TRUST"
+elif [ -e "$PI_TRUST" ]; then
+  add_check harnesses.pi_config WARNING "Pi trust config exists but is not readable" "$PI_TRUST"
+else
+  add_check harnesses.pi_config NOT_APPLICABLE "Pi trust config not yet created" "$PI_TRUST"
+fi
+
+OMP_CONFIG="$HOME/.omp/agent/config.yml"
+if [ -r "$OMP_CONFIG" ]; then
+  add_check harnesses.omp_config PASS "omp config readable" "$OMP_CONFIG"
+elif [ -e "$OMP_CONFIG" ]; then
+  add_check harnesses.omp_config WARNING "omp config exists but is not readable" "$OMP_CONFIG"
+else
+  add_check harnesses.omp_config NOT_APPLICABLE "omp config not yet created" "$OMP_CONFIG"
+fi
+
+J_HARNESSES=$(printf '{"pi":{"installed":%s,"version":%s},"omp":{"installed":%s,"version":%s}}' \
+  "$(command -v "$PI_BIN" >/dev/null 2>&1 && printf true || printf false)" "$(jstr "${pi_version:-}")" \
+  "$(command -v omp >/dev/null 2>&1 && printf true || printf false)" "$(jstr "${omp_version:-}")")
+
+# =============================================================================
+# ROUTING
+# =============================================================================
+
+CREW_DISPATCH="$FM_HOME/config/crew-dispatch.json"
+[ -f "$CREW_DISPATCH" ] || CREW_DISPATCH="$CONFIG_ROOT/firstmate/crew-dispatch.json"
+
+CREW_DISPATCH_INVALID=0
+ROUTING_MODELS=()
+ROUTING_EFFORTS=()
+if [ ! -r "$CREW_DISPATCH" ]; then
+  CREW_DISPATCH_INVALID=1
+  add_check routing.crew_dispatch_valid FAIL "crew-dispatch.json missing or unreadable" "$CREW_DISPATCH"
+else
+  balanced=$(awk '
+    BEGIN { d = 0 }
+    { for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); if (c == "{" || c == "[") d++; if (c == "}" || c == "]") d-- } }
+    END { print (d == 0) ? "yes" : "no" }
+  ' "$CREW_DISPATCH")
+  harnesses_found=()
+  efforts_found=()
+  while IFS= read -r v; do [ -z "$v" ] || harnesses_found+=("$v"); done < <(sed -n 's/.*"harness"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CREW_DISPATCH")
+  while IFS= read -r v; do [ -z "$v" ] || ROUTING_MODELS+=("$v"); done < <(sed -n 's/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CREW_DISPATCH")
+  while IFS= read -r v; do [ -z "$v" ] || efforts_found+=("$v"); done < <(sed -n 's/.*"effort"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CREW_DISPATCH")
+  ROUTING_EFFORTS=("${efforts_found[@]:-}")
+  bad=
+  if [ "$balanced" != yes ]; then
+    bad="malformed JSON (unbalanced braces/brackets)"
+  elif ! grep -q '"rules"' "$CREW_DISPATCH" || ! grep -q '"default"' "$CREW_DISPATCH"; then
+    bad="missing required 'rules' or 'default' key"
+  elif [ "${#harnesses_found[@]}" -ne "${#ROUTING_MODELS[@]}" ] || [ "${#ROUTING_MODELS[@]}" -ne "${#efforts_found[@]}" ]; then
+    bad="structurally inconsistent lane entries (harness/model/effort counts differ)"
+  else
+    for h in "${harnesses_found[@]}"; do
+      case $h in pi|omp) ;; *) bad="invalid harness '$h'"; break ;; esac
+    done
+    if [ -z "$bad" ]; then
+      for e in "${efforts_found[@]}"; do
+        case $e in off|minimal|low|medium|high|xhigh|max) ;; *) bad="invalid effort '$e'"; break ;; esac
+      done
+    fi
+  fi
+  if [ -n "$bad" ]; then
+    CREW_DISPATCH_INVALID=1
+    add_check routing.crew_dispatch_valid FAIL "$bad" "$CREW_DISPATCH"
+  else
+    add_check routing.crew_dispatch_valid PASS "${#ROUTING_MODELS[@]} lane(s), structurally valid" "$CREW_DISPATCH"
+  fi
+fi
+
+seen_models=""
+for i in "${!ROUTING_MODELS[@]}"; do
+  m=${ROUTING_MODELS[$i]}
+  e=${ROUTING_EFFORTS[$i]:-medium}
+  case ",$seen_models," in *",$m,"*) continue ;; esac
+  seen_models="$seen_models,$m"
+  result=$(model_availability "$m" "$e")
+  state=${result%%$'\t'*}
+  reason=${result#*$'\t'}
+  case $state in
+    AVAILABLE) add_check "routing.model.$m" PASS "$m: available" "$reason" ;;
+    UNKNOWN) add_check "routing.model.$m" WARNING "$m: availability unknown" "$reason" ;;
+    *) add_check "routing.model.$m" FAIL "$m: unavailable" "$reason" ;;
+  esac
+done
+
+fable_qwen_found=0
+for m in "${ROUTING_MODELS[@]:-}"; do
+  case $m in *fable*|*qwen*|*ollama*) fable_qwen_found=1; break ;; esac
+done
+if [ "$fable_qwen_found" -eq 1 ]; then
+  add_check routing.fable_qwen_deferred FAIL "a configured lane's model names Fable and/or Qwen/Ollama; v0.1 policy defers them" "$CREW_DISPATCH"
+else
+  add_check routing.fable_qwen_deferred DEFERRED "Fable and Qwen/Ollama are intentionally absent from configured crew-dispatch.json lanes; deferred to a later release" ""
+fi
+
+J_ROUTING=$(printf '{"crew_dispatch_path":%s,"valid":%s,"lane_count":%s}' \
+  "$(jstr "$CREW_DISPATCH")" "$([ "$CREW_DISPATCH_INVALID" -eq 0 ] && printf true || printf false)" "${#ROUTING_MODELS[@]}")
+
+# =============================================================================
+# ROLES
+# =============================================================================
+
+for role in senior-fullstack architecture tenth-man; do
+  rf="$CONFIG_ROOT/roles/$role/ROLE.md"
+  if [ -r "$rf" ]; then
+    add_check "roles.$role" PASS "readable" "$rf"
+  else
+    add_check "roles.$role" FAIL "missing or unreadable" "$rf"
+  fi
+done
+
+# =============================================================================
+# SKILLS
+# =============================================================================
+
+SKILL_EXPECTED=()
+for skill_dir in "$CONFIG_ROOT"/skills/*/; do
+  [ -f "$skill_dir/SKILL.md" ] || continue
+  SKILL_EXPECTED+=("$(basename "$skill_dir")")
+done
+lock="$CONFIG_ROOT/skills/external.lock"
+if [ -f "$lock" ]; then
+  while IFS="$(printf '\t')" read -r id _repo _sha _path name; do
+    case ${id:-} in ''|\#*) continue ;; esac
+    [ -n "${name:-}" ] || continue
+    SKILL_EXPECTED+=("$name")
+  done < "$lock"
+fi
+
+SKILL_MISSING=()
+SKILL_BROKEN=()
+SKILL_UNREADABLE=()
+SKILL_INSTALLED=0
+for name in "${SKILL_EXPECTED[@]:-}"; do
+  [ -n "$name" ] || continue
+  target="$SKILLS_ROOT/$name"
+  if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+    SKILL_MISSING+=("$name")
+  elif [ -L "$target" ] && [ ! -e "$target" ]; then
+    SKILL_BROKEN+=("$name")
+  elif [ ! -r "$target/SKILL.md" ]; then
+    SKILL_UNREADABLE+=("$name")
+  else
+    SKILL_INSTALLED=$((SKILL_INSTALLED + 1))
+  fi
+done
+
+if [ "${#SKILL_MISSING[@]}" -eq 0 ] && [ "${#SKILL_BROKEN[@]}" -eq 0 ] && [ "${#SKILL_UNREADABLE[@]}" -eq 0 ]; then
+  add_check skills.global_installation PASS "$SKILL_INSTALLED/${#SKILL_EXPECTED[@]} expected skill(s) installed" "$SKILLS_ROOT"
+else
+  add_check skills.global_installation FAIL "$SKILL_INSTALLED/${#SKILL_EXPECTED[@]} installed; missing: ${SKILL_MISSING[*]:-none}; broken links: ${SKILL_BROKEN[*]:-none}; unreadable: ${SKILL_UNREADABLE[*]:-none}" "$SKILLS_ROOT"
+fi
+
+J_SKILLS=$(printf '{"root":%s,"expected":%s,"installed":%s,"missing":%s,"broken_links":%s,"unreadable":%s}' \
+  "$(jstr "$SKILLS_ROOT")" "${#SKILL_EXPECTED[@]}" "$SKILL_INSTALLED" \
+  "$(json_array "${SKILL_MISSING[@]:-}")" "$(json_array "${SKILL_BROKEN[@]:-}")" "$(json_array "${SKILL_UNREADABLE[@]:-}")")
+
+# =============================================================================
+# PROJECTS
+# =============================================================================
+
+PROJECTS_REG="$FM_HOME/data/projects.md"
+REG_NAMES=()
+if [ -f "$PROJECTS_REG" ]; then
+  while IFS= read -r n; do [ -z "$n" ] || REG_NAMES+=("$n"); done < <(awk '$1=="-"{print $2}' "$PROJECTS_REG")
+fi
+
+J_PROJECTS_LIST='['
+first_proj=1
+for name in "${REG_NAMES[@]:-}"; do
+  [ -n "$name" ] || continue
+  posture=$("$FIRSTMATE_ROOT/bin/fm-project-mode.sh" --raw "$name" 2>/dev/null || printf 'UNKNOWN UNKNOWN')
+  pmode=${posture%% *}
+  pyolo=${posture##* }
+  ppath="$FM_HOME/projects/$name"
+  if [ -d "$ppath" ]; then
+    present=true
+    origin=$(git -C "$ppath" remote get-url origin 2>/dev/null || printf '')
+  else
+    present=false
+    origin=''
+  fi
+  [ "$first_proj" -eq 1 ] || J_PROJECTS_LIST="$J_PROJECTS_LIST,"
+  J_PROJECTS_LIST="$J_PROJECTS_LIST{\"name\":$(jstr "$name"),\"mode\":$(jstr "$pmode"),\"yolo\":$(jstr "$pyolo"),\"path_present\":$present,\"path\":$(jstr "$ppath"),\"origin\":$(jstr "$origin")}"
+  first_proj=0
+done
+J_PROJECTS_LIST="$J_PROJECTS_LIST]"
+
+if [ "${#REG_NAMES[@]}" -eq 0 ]; then
+  add_check projects.registry NOT_APPLICABLE "no registered projects in data/projects.md" "$PROJECTS_REG"
+else
+  add_check projects.registry PASS "${#REG_NAMES[@]} registered project(s)" "$(IFS=', '; printf '%s' "${REG_NAMES[*]}")"
+fi
+
+CURRENT_PROJECT=
+if [ -n "$GIT_PROJECT_ROOT" ]; then
+  cand_name=$(basename "$GIT_PROJECT_ROOT")
+  for name in "${REG_NAMES[@]:-}"; do
+    if [ "$name" = "$cand_name" ]; then CURRENT_PROJECT=$name; break; fi
+  done
+fi
+
+J_PROJECTS_CURRENT='null'
+if [ -n "$CURRENT_PROJECT" ]; then
+  proot="$GIT_PROJECT_ROOT"
+  has_override=false; [ -f "$proot/AGENTS.override.md" ] && has_override=true
+  has_agents=false; [ -f "$proot/AGENTS.md" ] && has_agents=true
+  has_claude=false; [ -f "$proot/CLAUDE.md" ] && has_claude=true
+  skill_counts() { # <dir> -> count of entries, 0 if absent
+    [ -d "$1" ] || { printf 0; return; }
+    find "$1" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' '
+  }
+  c_claude=$(skill_counts "$proot/.claude/skills")
+  c_agents=$(skill_counts "$proot/.agents/skills")
+  c_agent=$(skill_counts "$proot/.agent/skills")
+  add_check projects.current PASS "confident current project: $CURRENT_PROJECT" "$proot"
+  J_PROJECTS_CURRENT=$(printf '{"name":%s,"path":%s,"agents_override_present":%s,"agents_md_present":%s,"claude_md_present":%s,"project_local_skill_dirs":{"claude":%s,"agents":%s,"agent":%s}}' \
+    "$(jstr "$CURRENT_PROJECT")" "$(jstr "$proot")" "$has_override" "$has_agents" "$has_claude" "$c_claude" "$c_agents" "$c_agent")
+else
+  add_check projects.current NOT_APPLICABLE "no confident current project (cwd is not a registered project)" ""
+fi
+
+J_PROJECTS=$(printf '{"registered":%s,"current":%s}' "$J_PROJECTS_LIST" "$J_PROJECTS_CURRENT")
+
+# =============================================================================
+# Overall verdict
+# =============================================================================
+
+MANDATORY_FAIL=0
+[ "$FIRSTMATE_BROKEN" -eq 0 ] || MANDATORY_FAIL=1
+[ "$CREW_DISPATCH_INVALID" -eq 0 ] || MANDATORY_FAIL=1
+[ "$NO_USABLE_CAPTAIN" -eq 0 ] || MANDATORY_FAIL=1
+[ "$HERDR_BROKEN" -eq 0 ] || MANDATORY_FAIL=1
+[ "$LAUNCHER_SHADOWED" -eq 0 ] || MANDATORY_FAIL=1
+
+WORST_RANK=0
+for i in "${!CHECK_STATUSES[@]}"; do
+  r=$(status_rank "${CHECK_STATUSES[$i]}")
+  [ "$r" -le "$WORST_RANK" ] || WORST_RANK=$r
+done
+case $WORST_RANK in
+  4) OVERALL_STATUS=FAIL ;;
+  3) OVERALL_STATUS=BLOCKED_AUTH ;;
+  2) OVERALL_STATUS=WARNING ;;
+  1) OVERALL_STATUS=UNKNOWN ;;
+  *) OVERALL_STATUS=PASS ;;
+esac
+
+EXIT_CODE=0
+[ "$MANDATORY_FAIL" -eq 0 ] || EXIT_CODE=1
+
+# =============================================================================
+# Render
+# =============================================================================
+
+section_of() {
+  case $1 in
+    system.*) printf SYSTEM ;;
+    firstmate.*) printf SYSTEM ;;
+    launcher.*) printf 'LAUNCHER/PATH' ;;
+    captain.*) printf CAPTAIN ;;
+    runtime.*) printf RUNTIME ;;
+    harnesses.*) printf HARNESSES ;;
+    routing.*) printf ROUTING ;;
+    roles.*) printf ROLES ;;
+    skills.*) printf SKILLS ;;
+    projects.*) printf PROJECTS ;;
+    *) printf OTHER ;;
+  esac
+}
+
+render_text() {
+  local prev_section='' sect
+  for i in "${!CHECK_IDS[@]}"; do
+    sect=$(section_of "${CHECK_IDS[$i]}")
+    if [ "$sect" != "$prev_section" ]; then
+      [ -z "$prev_section" ] || printf '\n'
+      printf '%s\n' "$sect"
+      prev_section=$sect
+    fi
+    printf '  %-13s %-32s %s\n' "${CHECK_STATUSES[$i]}" "${CHECK_IDS[$i]}" "${CHECK_SUMMARIES[$i]}"
+    [ -z "${CHECK_DETAILS[$i]}" ] || printf '      %s\n' "${CHECK_DETAILS[$i]}"
+  done
+  printf '\nDOCTOR %s exit=%s\n' "$OVERALL_STATUS" "$EXIT_CODE"
+}
+
+render_json() {
+  local out='{'
+  out="$out\"schema_version\":$SCHEMA_VERSION,"
+  out="$out\"status\":$(jstr "$OVERALL_STATUS"),"
+  out="$out\"exit_code\":$EXIT_CODE,"
+  out="$out\"timestamp\":$(jstr "$(date -u +%Y-%m-%dT%H:%M:%SZ)"),"
+  out="$out\"system\":$J_SYSTEM,"
+  out="$out\"firstmate\":$J_FIRSTMATE,"
+  out="$out\"launcher\":$J_LAUNCHER,"
+  out="$out\"captain\":$J_CAPTAIN,"
+  out="$out\"runtime\":$J_RUNTIME,"
+  out="$out\"harnesses\":$J_HARNESSES,"
+  out="$out\"routing\":$J_ROUTING,"
+  out="$out\"roles\":{"
+  local first=1
+  for i in "${!CHECK_IDS[@]}"; do
+    case ${CHECK_IDS[$i]} in
+      roles.*)
+        [ "$first" -eq 1 ] || out="$out,"
+        out="$out$(jstr "${CHECK_IDS[$i]#roles.}"):$(jstr "${CHECK_STATUSES[$i]}")"
+        first=0
+        ;;
+    esac
+  done
+  out="$out},"
+  out="$out\"skills\":$J_SKILLS,"
+  out="$out\"projects\":$J_PROJECTS,"
+  out="$out\"checks\":["
+  first=1
+  for i in "${!CHECK_IDS[@]}"; do
+    [ "$first" -eq 1 ] || out="$out,"
+    out="$out{\"id\":$(jstr "${CHECK_IDS[$i]}"),\"status\":$(jstr "${CHECK_STATUSES[$i]}"),\"summary\":$(jstr "${CHECK_SUMMARIES[$i]}")"
+    [ -z "${CHECK_DETAILS[$i]}" ] || out="$out,\"detail\":$(jstr "${CHECK_DETAILS[$i]}")"
+    out="$out}"
+    first=0
+  done
+  out="$out]}"
+  printf '%s\n' "$out"
+}
+
+if [ "$JSON_MODE" -eq 1 ]; then
+  render_json
+else
+  render_text
+fi
+
+exit "$EXIT_CODE"
