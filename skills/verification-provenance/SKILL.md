@@ -72,6 +72,9 @@ result up to "verified."
 
 This skill classifies evidence for one command. Its only execution mechanism is
 the explicit local fallback runner; it does not manage containers or orchestrate
-builds. Do not hardcode a specific container name, mount path, or CI system
-anywhere that cites this skill - the three labels above are the entire generic
-contract.
+builds. `run-local` mechanically runs the command after `cd`ing to the assigned
+worktree and observes the command's real exit code; it does not semantically
+inspect whether the command intentionally references an absolute path, external
+service, or other input outside that worktree. Do not hardcode a specific
+container name, mount path, or CI system anywhere that cites this skill - the
+three labels above are the entire generic contract.
