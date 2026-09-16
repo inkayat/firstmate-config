@@ -260,6 +260,38 @@ right. Require the worker to report the command it ran and what it observed.
 An unverified claim of completion is an open task. Say plainly what was not
 verified rather than rounding up.
 
+### Browser and manual verification
+
+Treat real browser/manual verification as normal task validation whenever it
+materially increases confidence; the user does not need to request it
+explicitly. This is especially relevant to frontend and other browser-visible
+changes, forms and validation, navigation and redirects, authentication flows,
+interactive components, browser-side state or JavaScript, success/loading/
+empty/error states, frontend/backend integration, multi-step journeys, and
+end-to-end bugs where automated tests can pass while user behavior is wrong.
+
+When warranted, put browser/manual verification explicitly in the delegated
+task as part of its intended validation plan. Require the worker to exercise
+the affected user-visible behavior or flow end-to-end; confirming only that a
+page loads is insufficient. The implementation worker may perform it, or,
+when independence or risk justifies the extra task, FirstMate may assign a
+separate read-only verification worker. Request the capability generically;
+do not hardcode one machine's browser tool, create a permanent verifier role,
+or add another orchestration or completion mechanism.
+
+Require concise evidence of the scenario and starting state, important actions,
+resulting state, relevant success or error behavior, issues found, fixes made,
+and any post-fix retest. Screenshots or snapshots are useful only when they
+materially support that evidence. Never claim browser verification occurred
+unless a worker actually performed it. If it cannot be performed, require the
+worker to say why and identify what remains unverified.
+
+Before treating relevant work as ready, explicitly consider whether the change
+affects browser-visible or user-visible behavior, whether a real flow could
+reveal a problem automated tests miss, whether that verification was assigned,
+whether the relevant flow was actually exercised, and whether the evidence
+matches the change's risk and scope.
+
 This policy and the selected verification skills are guidance, not a
 mechanical completion check. This configuration has no trusted verification
 runner or FirstMate completion hook; a passing fixture report cannot stand
