@@ -338,6 +338,10 @@ CAPTAIN_MODELS_JSON='['
 first_model=1
 if [ -f "$MODEL_CHAIN" ]; then
   reasons=()
+  CAND_MODELS=()
+  CAND_EFFORTS=()
+  CAND_STATES=()
+  CAND_REASONS=()
   while IFS="$(printf '\t')" read -r model effort _rest || [ -n "${model:-}" ]; do
     case ${model:-} in ''|\#*) continue ;; esac
     result=$(captain_model_availability "$model" "$effort")
@@ -346,11 +350,10 @@ if [ -f "$MODEL_CHAIN" ]; then
     [ "$first_model" -eq 1 ] || CAPTAIN_MODELS_JSON="$CAPTAIN_MODELS_JSON,"
     CAPTAIN_MODELS_JSON="$CAPTAIN_MODELS_JSON{\"model\":$(jstr "$model"),\"effort\":$(jstr "$effort"),\"state\":$(jstr "$state"),\"reason\":$(jstr "$reason")}"
     first_model=0
-    case $state in
-      AVAILABLE) add_check "captain.model.$model" PASS "$model ($effort): available" "$reason" ;;
-      UNKNOWN) add_check "captain.model.$model" WARNING "$model ($effort): availability unknown" "$reason" ;;
-      *) add_check "captain.model.$model" FAIL "$model ($effort): unavailable" "$reason" ;;
-    esac
+    CAND_MODELS+=("$model")
+    CAND_EFFORTS+=("$effort")
+    CAND_STATES+=("$state")
+    CAND_REASONS+=("$reason")
     if [ -z "$SELECTED_MODEL" ] && [ "$state" != UNAVAILABLE ]; then
       SELECTED_MODEL=$model
       SELECTED_EFFORT=$effort
@@ -359,6 +362,31 @@ if [ -f "$MODEL_CHAIN" ]; then
     [ -n "$SELECTED_MODEL" ] || reasons+=("$model $effort: $reason")
   done < "$MODEL_CHAIN"
   [ "${#reasons[@]}" -eq 0 ] || FALLBACK_REASON=$(IFS='; '; printf '%s' "${reasons[*]}")
+  # An UNAVAILABLE candidate is only a genuine defect when it leaves the
+  # chain with no usable candidate at all (captain.selection FAIL below,
+  # mandatory). Once a usable candidate is selected - even after this one -
+  # a harness-specific optional candidate absent from the active harness's
+  # own catalog is expected, tolerated fallback behavior (README.md
+  # "Captain startup model"), never an overall failure: WARNING, not FAIL.
+  # Emitted only now, after the loop, because a later candidate can still
+  # rescue an earlier UNAVAILABLE one's classification.
+  for cand_idx in "${!CAND_MODELS[@]}"; do
+    model=${CAND_MODELS[$cand_idx]}
+    effort=${CAND_EFFORTS[$cand_idx]}
+    state=${CAND_STATES[$cand_idx]}
+    reason=${CAND_REASONS[$cand_idx]}
+    case $state in
+      AVAILABLE) add_check "captain.model.$model" PASS "$model ($effort): available" "$reason" ;;
+      UNKNOWN) add_check "captain.model.$model" WARNING "$model ($effort): availability unknown" "$reason" ;;
+      *)
+        if [ -n "$SELECTED_MODEL" ]; then
+          add_check "captain.model.$model" WARNING "$model ($effort): not usable under $CAPTAIN_HARNESS, non-blocking - another candidate is selected" "$reason"
+        else
+          add_check "captain.model.$model" FAIL "$model ($effort): unavailable" "$reason"
+        fi
+        ;;
+    esac
+  done
   if [ -n "$SELECTED_MODEL" ]; then
     if [ -n "$FALLBACK_REASON" ]; then
       add_check captain.selection PASS "selected $SELECTED_MODEL ($SELECTED_EFFORT, $SELECTED_STATE) after fallback" "$FALLBACK_REASON"

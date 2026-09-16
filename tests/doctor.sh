@@ -740,5 +740,56 @@ contains 'official leak: reported FAIL' "$out" 'FAIL          skills.no_official
 contains 'official leak: names the leaking skill' "$out" 'architecture-review'
 contains 'official leak: names the official FirstMate root' "$out" "$FAKE_FIRSTMATE"
 
+# =============================================================================
+# 20. Status contract: human overall status, JSON overall status, and
+#     process exit code must never disagree. A harness-specific optional
+#     Captain candidate absent from the active harness's own catalog (the
+#     Pi-only Sonnet provider is never native to OMP - see README.md
+#     "Captain startup model") is expected, tolerated fallback behavior when
+#     a usable candidate exists elsewhere in the chain, never a genuine
+#     defect: it must not drag the overall verdict to FAIL while the process
+#     exits 0. Covers all three contract states this task's regression
+#     coverage requires: healthy, warning/optional-unavailable, and genuine
+#     failure - proving the human "DOCTOR X exit=Y" line, JSON "status", and
+#     the real exit code agree in every case.
+# =============================================================================
+status_exit_agree() { # <label> <human-out> <json-out> <exit-code>
+  local label=$1 human=$2 json=$3 code=$4 human_status json_status
+  human_status=$(printf '%s' "$human" | sed -n 's/^DOCTOR \([A-Z_]*\) exit=.*/\1/p')
+  json_status=$(printf '%s' "$json" | sed -n 's/.*"schema_version":[0-9]*,"status":"\([A-Z_]*\)".*/\1/p')
+  check "$label: human header status matches JSON status" "$json_status" "$human_status"
+  if [ "$human_status" = FAIL ]; then
+    if [ "$code" -eq 0 ]; then fail "$label: human/JSON status is FAIL but exit code is 0"; else pass "$label: FAIL status paired with nonzero exit"; fi
+  else
+    check "$label: non-FAIL status pairs with exit code 0" 0 "$code"
+  fi
+}
+
+# 20a. Healthy: every candidate available, nothing unavailable at all.
+out20a=$(run_doctor); code20a=$?
+json20a=$(run_doctor --json)
+status_exit_agree '20a healthy' "$out20a" "$json20a" "$code20a"
+
+# 20b. Optional-unavailable (the reported bug): active harness is OMP
+# (fm-doctor's default), Sol and Astra are available in OMP's native
+# catalog, but the Pi-only Sonnet provider is not - exactly the shape
+# README.md documents as expected on OMP. Selection still succeeds via Sol.
+FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5'
+out20b=$(run_doctor); code20b=$?
+json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5' run_doctor --json)
+unset FM_TEST_OMP_AVAILABLE
+check '20b optional-unavailable: exit code stays 0' 0 "$code20b"
+contains '20b optional-unavailable: Sol is selected as preferred' "$out20b" 'selected preferred candidate openai-codex/gpt-5.6-sol'
+not_contains '20b optional-unavailable: the absent Pi-only candidate is never reported FAIL' "$out20b" 'FAIL          captain.model.pi-claude-code-provider/sonnet'
+status_exit_agree '20b optional-unavailable' "$out20b" "$json20b" "$code20b"
+
+# 20c. Genuine failure: no configured Captain candidate is usable at all.
+FM_TEST_AVAILABLE=''
+out20c=$(run_doctor); code20c=$?
+json20c=$(FM_TEST_AVAILABLE='' run_doctor --json)
+unset FM_TEST_AVAILABLE
+status_exit_agree '20c genuine failure' "$out20c" "$json20c" "$code20c"
+
+
 printf '\nDOCTOR TESTS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]
