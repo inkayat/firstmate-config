@@ -28,7 +28,6 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `firstmate/fm-captain-lib.sh` | the one authoritative Captain model availability path | sourced by both `bin/fm` and `bin/fm-doctor` |
 | `firstmate/stack-manifest.tsv` | the single source of truth for stack compatibility: official FirstMate repo/validated commit, Pi/OMP/Herdr min and tested versions | read by `install.sh` and `bin/fm-doctor` |
 | `firstmate/fm-stack-manifest.sh` | the one parsing/comparison owner for `stack-manifest.tsv` | sourced by `install.sh`, `bin/fm-doctor`, and `bin/fm-version` |
-| `firstmate/fm-verify-provenance.sh` | the one deterministic worktree-provenance classifier for verification evidence | sourced by `tests/worker-context.sh`; the shared worker skill `verification-provenance` documents its contract |
 | `roles/*/ROLE.md` | generic role definitions quoted into worker briefs | read by the captain |
 | `skills/*/SKILL.md` | our own global skills | symlinked into `~/.agents/skills/` |
 | `skills/external.lock` | external skill packs, pinned by commit | cloned to a machine-local cache, symlinked into `~/.agents/skills/` |
@@ -254,27 +253,23 @@ evidence.
 
 Pi and OMP do not share one native discovery contract - their instruction
 search roots, `AGENTS.override.md` support, and skill precedence differ.
-`firstmate/primary-policy.md` section 2 ("Before delegating") is where that
-gap is closed: every delegated task's `## Firstmate spec` carries an
-explicit, compact handoff - the resolved project/subtree, which worktree-
-relative instruction file wins at each scope, the exact project-local and
-selected shared-worker skill paths each paired with a read-and-apply
-requirement, and a pre-work requirement to report a missing, unreadable, or
-conflicting path rather than silently substituting a different scope. It
-never pastes a file or skill body into the brief, and it always resolves
+`firstmate/primary-policy.md` section 2 ("Before delegating") addresses that
+gap through an explicit, compact handoff in each task's `## Firstmate spec`:
+the resolved project/subtree, which worktree-relative instruction file wins
+at each scope, the exact project-local and selected shared-worker skill
+paths with read-and-apply requirements, and a request to report a missing,
+unreadable, or conflicting path rather than substitute a different scope.
+The handoff never pastes a file or skill body into the brief, and it resolves
 paths against the worker's own isolated task worktree, never the primary
 checkout the task started from.
 
-That handoff also carries a target-discovery checkpoint (section 2, step
-6): the worker keeps a small resolved-scope list seeded from the handoff,
-and whenever it - or any bounded internal helper - discovers or selects a
-concrete file/subtree not already on that list, it must re-run this same
-resolution for the new target, read and apply any newly applicable
-project-local skill, and report the checkpoint before substantive
-reading, editing, reviewing, testing, or reliance on that target. This
-repeats on every later scope change (A -> B), and a helper's unsupported
-claim that no nested instruction exists never substitutes for the
-worker's own independent re-resolution.
+For open-ended discovery and later subtree changes, the worker and any
+bounded internal helper are instructed to revisit the same resolution for
+the new target and read newly applicable instructions and project-local
+skills. The parent remains responsible for checking a helper's findings.
+This is advisory context guidance, not a pre-tool barrier: this
+configuration does not prevent early access or mechanically establish
+instruction-read order, skill application, or successful task completion.
 
 Three skill populations exist and are never interchangeable:
 
@@ -311,13 +306,9 @@ default offline suite:
 tests/worker-context.sh                                   # default: run the offline suite
 tests/worker-context.sh prepare <directory>                # build a persistent fixture repo at <directory>/repo, print its path
 tests/worker-context.sh handoff <repo-dir>                  # print the compact, no-body Firstmate-spec handoff for that fixture
-tests/worker-context.sh validate <worker-report> [<worktree>]  # validate a report; self-reported provenance alone fails closed
-tests/worker-context.sh validate-local <worker-report> <worktree> -- <command> [args...]  # rerun verification through the worktree-bound local provenance runner, then validate
+tests/worker-context.sh validate <worker-report> [<worktree>]  # check fixture-report evidence; not a task-completion gate
 tests/worker-context.sh internal-prepare <directory>        # write a disposable bounded-internal-delegation canary fixture INSIDE your own real task worktree (a native bounded subagent always shares the parent session's cwd), print the path
 tests/worker-context.sh internal-handoff <directory> <worktree>  # print the read-only task text for a real bounded internal subagent to run against that fixture
-tests/worker-context.sh scope-prepare <directory>           # build a persistent target-discovery fixture repo at <directory>/repo (root scope only, two nested subtrees), print its path
-tests/worker-context.sh scope-handoff <repo-dir>            # print the open-ended handoff for that fixture - covered scope is the root only, no nested target is named up front
-tests/worker-context.sh scope-validate <worker-report> [<worktree>]  # validate the target-discovery checkpoint for a report against that fixture
 ```
 
 `prepare` builds the fixture once; `handoff` prints the paths/precedence/
@@ -326,40 +317,21 @@ and worktree-relative, never the source/primary checkout's absolute path
 (which does not exist from the worker's side, since its own isolated
 worktree is created later by `fm-spawn`), with an explicit instruction to
 verify `pwd -P` against `git rev-parse --show-toplevel` first. It also
-never prints a canary body marker, so a worker that only echoes it back
-cannot pass `validate`;
-`validate` proves, from that worker's own report, the expected worktree,
-root-override authority, absence of the markers it must shadow, nested-
-scope application, the project skill's body-only marker applied before
-migrations are touched, the shared skill's body-only marker applied, and
-project-local-over-conflicting-shared-skill authority. The official-
-internal-skill proof is positive evidence, never mere name-omission: the
-worker must report a resolved path for the required project skill (under
-its own worktree), a resolved path for the selected shared skill (under
-the real global root, never the worktree), its own harness-native skill-
-catalog source roots/count, and an explicit zero count of catalog entries
-under the official FirstMate distro root - a report that merely never
-mentions the forbidden skill name fails this check, it does not pass it
-for free. `validate` also proves bounded-internal-delegation scope/context
-evidence and fails closed on self-reported verification-provenance labels;
-`validate-local` is the passing local path because it reruns the command in
-the expected worktree (see "Bounded internal delegation" and "Verification
-provenance" below). Both print one PASS/FAIL/SKIP line per proof.
+never prints a canary body marker, so echoing the handoff alone cannot
+satisfy `validate`. The validator checks the report for the expected
+worktree, root/nested authority, project/shared skill content and origins,
+project-local-over-shared precedence, and bounded-helper context evidence.
+Official-internal-skill isolation requires reported catalog source
+roots/count and an explicit zero count under the official FirstMate distro
+root, not just omission of a forbidden name. It prints one PASS/FAIL/SKIP
+line per report check.
 
-`scope-prepare`/`scope-handoff`/`scope-validate` are the same interface for
-the target-discovery checkpoint (section 2, step 6): the fixture's launch
-scope names only the repository root, so `scope-handoff` never names
-either nested subtree's instruction or skill path - discovering them is
-the task. `scope-validate` requires a `TARGET_SCOPE_CHECK` report naming
-the discovered path, the resolved instruction/skill paths it names, and
-the nested instruction's and skill's body-only markers, all before the
-target is substantively touched; a later, different target requires its
-own separate checkpoint, and a bounded internal helper's unsupported "no
-nested instruction" claim never substitutes for the worker's own
-re-resolution. This is the exact false-confidence failure a Betao
-validation exposed: an internal scout selected a nested file, the parent
-read and edited it without resolving its nested instruction, then
-incorrectly reported none existed.
+These are fixture-report checks, not independent observations of tool
+access. A hand-written report can satisfy them; report order does not
+prove instruction-read order, and a PASS does not authorize completion.
+Live acceptance needs corroborating harness session evidence. The offline
+suite exercises the handoff and report parser, plus the native-loader
+checks above; it is not a runtime policy-enforcement test.
 
 ## Bounded internal delegation
 
@@ -375,33 +347,26 @@ implementation, verification, and completion. omp's bundled `task` tool
 overlay.yml` posture overlay in the official checkout) is the currently
 verified native mechanism; Pi ships no equivalent today (verified: its
 bundled tool set has no task/agent/subagent tool), so it stays not
-applicable rather than forced to acquire one. `tests/worker-context.sh`'s
-live `validate` path is extended to require positive evidence for this -
-the helper's identity, model/effort, purpose, read-only-versus-mutating
-behavior, project/worktree scope, and inherited-context evidence - recorded
-from the harness's own existing session metadata, never a new telemetry
-mechanism. That evidence must be backed by a real, disposable canary
-fixture (`internal-prepare`/`internal-handoff`, since a native bounded
-subagent always shares its parent session's cwd - there is no separate
-workspace to plant a fixture in) that the real subagent actually reads:
-self-reported labels alone, with no matching canary content in the
-report, fail the check.
+applicable rather than forced to acquire one. For live acceptance,
+`tests/worker-context.sh validate` checks the reported helper identity,
+purpose, read-only behavior, scope, and inherited context; the handoff also
+requests its model/effort. Corroborate those claims with the harness's
+existing session metadata, never a new telemetry mechanism.
+`internal-prepare`/`internal-handoff` provide a disposable canary fixture
+inside the parent's task worktree for a native, non-isolated helper.
+The validator requires matching canary content in the report, but cannot
+independently establish which process read it or whether it edited files.
 
-## Verification provenance
+## Completion evidence limits
 
-Fresh, passing output is necessary but not sufficient: it must also be tied
-to the assigned task worktree, never a shared container or artifact bound
-to a different checkout. The shared worker skill `verification-provenance`
-and its one deterministic classifier, `firstmate/fm-verify-provenance.sh`
-(sourced by `tests/worker-context.sh`), reject evidence tied to a different
-checkout and mark worker self-reports that merely name the expected checkout
-as uncertain rather than guess a pass. The supported accepting path today is
-the worktree-bound local runner (`fm-verify-provenance.sh run-local` /
-`tests/worker-context.sh validate-local`), which reruns the verification
-command after `cd`ing to the assigned worktree. Container-bind and artifact
-evidence remain fail-closed unless a future trusted inspector/build
-attestation observes them; there is no hardcoded container name, mount path,
-or CI system.
+Workers still report the commands they ran and what they observed, following
+the project's verification requirements and selected shared skills such as
+`verification-before-completion`. This configuration provides no trusted
+verification runner, provenance attestation, or hard completion gate.
+Fixture validation is not connected to a FirstMate completion hook.
+Local commands, Docker and other execution environments remain available;
+their output must be assessed against the actual task changes rather than
+treated as automatically trusted evidence.
 
 ## Routing in v0.1
 

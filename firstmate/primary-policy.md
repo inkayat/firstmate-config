@@ -111,33 +111,18 @@ started from - make the following an explicit, compact part of that task's
    read every path named above relative to that root and report a missing,
    unreadable, or conflicting path instead of silently falling back to a
    different scope or a global default;
-6. a target-discovery checkpoint: the worker keeps a small resolved-scope
-   list carried over from this handoff, seeded with the task subtree(s)
-   named in step 1. Whenever the worker, or any bounded internal helper
-   under section 6, discovers, selects, or shifts to a concrete file or
-   subtree not already covered by that list - including a second, later
-   target after an earlier one was already resolved - the worker must,
-   before any substantive reading, editing, reviewing, testing, migration
-   work, or other governed operation on that target: re-run steps 1-4
-   above for the new target's nearest scope; read and apply any newly
-   applicable project-local skill they name; add the newly resolved
-   scope, instruction path, and skill path to the list; and report the
-   checkpoint. Repeat on every later scope change. A bounded internal
-   helper that only performs filename/target discovery may return a bare
-   path; that alone never discharges this checkpoint. A bounded internal
-   helper that goes on to perform substantive analysis inside a newly
-   discovered subtree must run this same checkpoint itself, for that
-   subtree, before that analysis. Either way, a helper's unsupported claim
-   that no nested instruction exists is never sufficient by itself: the
-   worker still independently re-runs this checkpoint before relying on
-   the helper's target or content, or editing there.
+6. guidance for target discovery and subtree changes: revisit steps 1-4
+   for each newly selected scope and read the newly applicable instructions
+   and project-local skills before substantive work there. This applies to
+   the parent worker and bounded internal helpers alike; the parent remains
+   responsible for checking a helper's findings rather than assuming its
+   claim that no nested instruction exists is correct.
 
-This is a semantic contract, not a copy of the project's documentation:
-name paths and the resolution, never paste file bodies or skill bodies into
-the brief, and never enumerate every installed global skill. The worker's
-own read of the named paths, and its report of what it found, is the
-evidence discovery happened - not the harness's generic native loader by
-itself.
+This is an advisory handoff contract, not a pre-tool barrier or a completion
+gate. Name paths and the resolution, never paste file or skill bodies into
+the brief, and never enumerate every installed global skill. Worker reports
+can describe discovery, but cannot independently prove read order or skill
+application; the harness's generic native loader alone cannot either.
 
 Official FirstMate internal skills (`$FIRSTMATE_ROOT/.agents/skills/*`) are
 never a selected shared worker skill and never belong in step 4: they are
@@ -265,8 +250,8 @@ than a new telemetry mechanism or command, whenever a helper like this is
 used: its identity, its model and effort, why it was spawned, whether it is
 read-only or mutating, its project/worktree scope, and evidence that it
 inherited (rather than re-derived) the parent's context.
-`tests/worker-context.sh`'s live `validate` path is the acceptance
-mechanism for this evidence.
+`tests/worker-context.sh validate` checks fixture reports for this evidence;
+it does not enforce helper behavior or authorize task completion.
 
 ## 7. Completion
 
@@ -275,15 +260,7 @@ right. Require the worker to report the command it ran and what it observed.
 An unverified claim of completion is an open task. Say plainly what was not
 verified rather than rounding up.
 
-Passing output is necessary but not sufficient: it must also be tied to the
-assigned task worktree. The shared worker skill `verification-provenance`
-and its classifier (`firstmate/fm-verify-provenance.sh`, sourced by
-`tests/worker-context.sh`) reject evidence tied to a different checkout - a
-shared container mounted from another clone is the concrete failure mode this
-closes - and mark worker self-reports that merely name the expected checkout as
-uncertain rather than guess a pass. The supported accepting path today is the
-worktree-bound local runner, which reruns the verification command after
-`cd`ing to the assigned worktree; container-bind and artifact evidence remain
-fail-closed unless a future trusted inspector/build attestation observes them.
-An uncertain or wrong-tree result is not completion: recover with a
-worktree-correct command and report the corrected evidence.
+This policy and the selected verification skills are guidance, not a
+mechanical completion check. This configuration has no trusted verification
+runner or FirstMate completion hook; a passing fixture report cannot stand
+in for verification of the actual task changes.
