@@ -21,6 +21,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `bin/fm` | the launcher: `cd anywhere && fm` | symlinked onto `PATH` |
 | `bin/fm-doctor` | read-only architecture diagnostics: `fm doctor` / `fm doctor --json` | invoked by `bin/fm doctor` |
 | `bin/fm-version` | compact read-only identity/version summary: `fm version` / `fm version --json` | invoked by `bin/fm version` |
+| `bin/fm-update` | fast-forward-only self-update of this checkout: `fm update` | invoked by `bin/fm update` |
 | `firstmate/primary-policy.md` | the captain's operating policy | read by the captain, path named from `data/captain.md` |
 | `firstmate/captain.md` | first-run template for the captain's own notes | copied to `$FM_HOME/data/captain.md` **only when absent** |
 | `firstmate/crew-dispatch.json` | which harness takes which kind of task | symlinked to `$FM_HOME/config/crew-dispatch.json` |
@@ -39,6 +40,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `tests/doctor.sh` | `fm doctor` acceptance: statuses, exit codes, JSON schema | - |
 | `tests/stack-manifest.sh` | stack compatibility manifest acceptance: `install.sh`/`fm-doctor`/`fm-version` sharing one baseline | - |
 | `tests/worker-context.sh` | delegated-worker context/skill-class acceptance, plus a `prepare`/`handoff`/`validate` CLI for a real live fixture run | - |
+| `tests/update.sh` | `fm update` acceptance: up-to-date, fast-forward, dirty and diverged refusals | - |
 
 ## Install
 
@@ -47,6 +49,12 @@ git clone https://github.com/inkayat/firstmate-config
 cd firstmate-config
 ./install.sh
 ```
+
+Later, on that machine or any other clone, `fm update` fast-forwards this
+checkout to its remote tip. It refuses - changing nothing - when the checkout
+has uncommitted changes or its branch has diverged; it never stashes, resets,
+merges, or rebases. Re-run `./install.sh` after an update that changed the
+installed layout.
 
 Then, from any directory:
 
@@ -97,6 +105,7 @@ tests/multi-project-captain.sh     # project resolution, isolation, and routing
 tests/doctor.sh                    # fm doctor: statuses, exit codes, JSON schema
 tests/stack-manifest.sh            # stack compatibility manifest: install.sh/fm-doctor/fm-version
 tests/worker-context.sh            # delegated-worker context/skill-class handoff fixtures
+tests/update.sh                    # fm update: up-to-date, fast-forward, dirty/diverged refusal
 ```
 
 ## fm version

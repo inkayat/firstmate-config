@@ -52,6 +52,8 @@
 #   fm doctor --json      the same diagnostics as machine-readable JSON
 #   fm version            print compact installed stack identity/version facts
 #   fm version --json     the same facts as machine-readable JSON
+#   fm update             fast-forward this firstmate-config checkout to its
+#                         remote tip; never resets, stashes, or merges
 #   fm --help
 set -u
 
@@ -114,6 +116,10 @@ case ${1:-} in
     subcommand=$1
     shift
     exec "$CONFIG_ROOT/bin/fm-$subcommand" --harness "$CAPTAIN_HARNESS" "$@"
+    ;;
+  update)
+    shift
+    exec "$CONFIG_ROOT/bin/fm-update" "$@"
     ;;
 esac
 

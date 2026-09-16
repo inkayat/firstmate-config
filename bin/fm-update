@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# fm-update - bring this firstmate-config checkout to its remote tip.
+#
+# Only ever a fast-forward. It never stashes, resets, merges, rebases, or
+# discards local state: a dirty or diverged checkout is reported and left
+# exactly as it was, for a human to resolve.
+#
+# Usage: fm update
+set -u
+
+ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
+# shellcheck source=/dev/null
+[ ! -f "$ENV_FILE" ] || . "$ENV_FILE"
+
+self=${BASH_SOURCE[0]}
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case $target in /*) self=$target ;; *) self="$(cd "$(dirname "$self")" && pwd)/$target" ;; esac
+done
+CONFIG_ROOT="$(cd "$(dirname "$self")/.." && pwd)"
+export GIT_OPTIONAL_LOCKS=0
+
+die() { printf 'fm-update: %s\n' "$1" >&2; exit 1; }
+git_c() { git -C "$CONFIG_ROOT" "$@"; }
+
+case ${1:-} in
+  --help|-h) printf 'Usage: fm update\n'; exit 0 ;;
+  '') ;;
+  *) die "unknown argument '$1'; see fm update --help" ;;
+esac
+
+command -v git >/dev/null 2>&1 || die 'git is not on PATH'
+git_c rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+  || die "$CONFIG_ROOT is not a Git checkout"
+
+branch=$(git_c symbolic-ref --quiet --short HEAD) \
+  || die "$CONFIG_ROOT is on a detached HEAD; check out a branch first (nothing was changed)"
+remote=$(git_c config --get "branch.$branch.remote") || remote=origin
+old=$(git_c rev-parse --short HEAD)
+
+# Refuse before touching the network: a dirty checkout can never be
+# fast-forwarded safely, and this command will not decide what to do with it.
+if [ -n "$(git_c status --porcelain)" ]; then
+  printf 'fm-update: uncommitted local changes in %s\n' "$CONFIG_ROOT" >&2
+  git_c status --short >&2
+  die 'commit or stash them yourself, then re-run; nothing was changed'
+fi
+
+printf 'Fetching %s...\n' "$remote"
+git_c fetch --quiet --prune "$remote" || die "cannot fetch from '$remote'"
+
+upstream=$(git_c rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) \
+  || die "branch '$branch' has no upstream; set one with 'git branch -u $remote/$branch'"
+new=$(git_c rev-parse --short "$upstream")
+
+if [ "$(git_c rev-parse HEAD)" = "$(git_c rev-parse "$upstream")" ]; then
+  printf 'Already up to date: %s at %s (%s)\n' "$branch" "$old" "$upstream"
+  exit 0
+fi
+git_c merge-base --is-ancestor HEAD "$upstream" \
+  || die "branch '$branch' has diverged from '$upstream' ($old vs $new); resolve it manually; nothing was changed"
+
+git_c merge --ff-only --quiet "$upstream" \
+  || die "fast-forward to '$upstream' failed; nothing was changed"
+
+printf 'Updated %s: %s -> %s (%s commits from %s)\n' \
+  "$branch" "$old" "$new" "$(git_c rev-list --count "$old..HEAD")" "$upstream"
+git_c --no-pager log --oneline "$old..HEAD"
