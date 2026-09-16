@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm - start the Firstmate captain from anywhere, on Pi, over Herdr.
+# fm - start the FirstMate Captain from anywhere, on OMP by default, over Herdr.
 #
 #   cd ANY_DIRECTORY
 #   fm
@@ -7,11 +7,11 @@
 # This launcher owns no lifecycle. The fleet lock, watcher, heartbeat, wake
 # queue, session-start digest, supervision protocol, spawn and teardown all
 # belong to the official FirstMate checkout and are reached exactly the way
-# upstream reaches them: the two tracked Pi primary extensions load, and
+# upstream reaches them: the two tracked primary extensions load, and
 # everything else follows. If lifecycle logic ever appears in this file,
 # delete it.
 #
-# It resolves five things:
+# It resolves:
 #
 #   FIRSTMATE_ROOT  the official checkout, never modified. From
 #                   ~/.config/firstmate-config/env, else the environment,
@@ -22,16 +22,14 @@
 #                   state can land in tracked source.
 #   FM_BACKEND      herdr, which is first in upstream's backend precedence
 #                   (FM_BACKEND, then config/backend, then autodetect).
+#   harness         OMP by default; --harness pi selects explicit Pi fallback.
 #   model chain     firstmate/captain-startup-models.tsv, applied only to this
-#                   Pi/FirstMate captain launch with availability-only fallback.
-#   extensions      .pi/extensions/fm-primary-pi-watch.ts and
-#                   .pi/extensions/fm-primary-turnend-guard.ts. Pi
-#                   auto-discovers both from its working directory once the
-#                   project is trusted, and passing -e as well would load each
-#                   twice, so -e is used only while the checkout is untrusted -
-#                   upstream's documented trust-free fallback.
+#                   Captain launch with availability-only fallback.
+#   extensions      OMP discovers .omp/extensions from the official cwd.
+#                   Never pass duplicate -e flags or the worker posture overlay.
+#                   Pi retains its trust-aware explicit/discover mode.
 #
-# Working directory. Pi runs IN the checkout, because AGENTS.md is a
+# Working directory. The harness runs IN the checkout, because AGENTS.md is a
 # working-directory context file and a captain whose harness never loaded it is
 # not a Firstmate captain. This makes every Captain session project-neutral: no
 # project's AGENTS.md, CLAUDE.md, or project-local skills are ever preloaded as
@@ -45,7 +43,9 @@
 # hint sits inside; nothing here resolves a project on the captain's behalf.
 #
 # Usage:
-#   fm                    launch the captain
+#   fm                    launch the Captain on OMP
+#   fm --harness omp      explicitly select OMP
+#   fm --harness pi       explicitly select Pi (also before check/doctor/version)
 #   fm --check            run the preflight and print the resolution
 #   fm --print-command    print the resolved environment and command
 #   fm doctor             run read-only architecture diagnostics
@@ -84,8 +84,6 @@ if command -v git >/dev/null 2>&1 && git -C "$ORIGIN_CWD" rev-parse --is-inside-
   ORIGIN_IS_PROJECT=true
 fi
 
-WATCH_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
-TURNEND_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
 MODEL_CHAIN="$CONFIG_ROOT/firstmate/captain-startup-models.tsv"
 SELECTED_MODEL=
 SELECTED_EFFORT=
@@ -98,16 +96,26 @@ FALLBACK_REASON=
 die() { printf 'fm: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,/^set -u$/p' "$self" | sed -e 's/^# \{0,1\}//' -e '/^set -u$/d'; }
 
-case ${1:-} in
-  version)
-    shift
-    exec "$CONFIG_ROOT/bin/fm-version" "$@"
-    ;;
-esac
-
 # One authoritative availability function/path, shared with bin/fm-doctor.
 # shellcheck source=firstmate/fm-captain-lib.sh
 . "$CONFIG_ROOT/firstmate/fm-captain-lib.sh"
+harness=
+if [ "${1:-}" = --harness ]; then
+  [ "$#" -ge 2 ] && [ -n "$2" ] || die "--harness requires omp or pi"
+  harness=$2
+  shift 2
+fi
+captain_harness_init "$harness" || exit 1
+WATCH_EXT=$CAPTAIN_WATCH_EXT
+TURNEND_EXT=$CAPTAIN_TURNEND_EXT
+
+case ${1:-} in
+  version|doctor)
+    subcommand=$1
+    shift
+    exec "$CONFIG_ROOT/bin/fm-$subcommand" --harness "$CAPTAIN_HARNESS" "$@"
+    ;;
+esac
 
 resolve_model_chain() {
   local model effort result state reason reasons=()
@@ -115,7 +123,7 @@ resolve_model_chain() {
   while IFS="$(printf '\t')" read -r model effort _rest || [ -n "${model:-}" ]; do
     case ${model:-} in ''|\#*) continue ;; esac
     [ -n "${PREFERRED_MODEL:-}" ] || { PREFERRED_MODEL=$model; PREFERRED_EFFORT=$effort; }
-    result=$(model_availability "$model" "$effort")
+    result=$(captain_model_availability "$model" "$effort")
     state=${result%%$'\t'*}
     reason=${result#*$'\t'}
     if [ "$state" != UNAVAILABLE ]; then
@@ -147,6 +155,7 @@ pi_trusts_root() {
 }
 
 resolve_extension_mode() {
+  [ "$CAPTAIN_HARNESS" != omp ] || { printf 'discover'; return; }
   case $EXT_MODE in
     explicit|discover) printf '%s' "$EXT_MODE" ;;
     auto) if pi_trusts_root; then printf 'discover'; else printf 'explicit'; fi ;;
@@ -157,9 +166,9 @@ resolve_extension_mode() {
 preflight() {
   [ -f "$FIRSTMATE_ROOT/AGENTS.md" ] \
     || die "no AGENTS.md under $FIRSTMATE_ROOT; run install.sh or set FIRSTMATE_ROOT"
-  [ -f "$WATCH_EXT" ] || die "missing Pi primary watcher extension: $WATCH_EXT"
-  [ -f "$TURNEND_EXT" ] || die "missing Pi primary turn-end guard: $TURNEND_EXT"
-  command -v "$PI_BIN" >/dev/null 2>&1 || die "Pi executable '$PI_BIN' is not on PATH"
+  [ -f "$WATCH_EXT" ] || die "missing $CAPTAIN_HARNESS primary watcher extension: $WATCH_EXT"
+  [ -f "$TURNEND_EXT" ] || die "missing $CAPTAIN_HARNESS primary turn-end guard: $TURNEND_EXT"
+  command -v "$CAPTAIN_BIN" >/dev/null 2>&1 || die "$CAPTAIN_HARNESS executable '$CAPTAIN_BIN' is not on PATH"
   [ -f "$MODEL_CHAIN" ] || die "missing captain startup model chain: $MODEL_CHAIN"
   [ "$FM_BACKEND" != herdr ] || command -v herdr >/dev/null 2>&1 \
     || die "backend is herdr but the herdr CLI is not on PATH"
@@ -178,9 +187,10 @@ print_resolution() {
   printf 'FM_BACKEND=%s\n' "$FM_BACKEND"
   printf 'FM_FORK_ORIGIN_CWD=%s\n' "$ORIGIN_CWD"
   printf 'FM_FORK_ORIGIN_IS_PROJECT=%s\n' "$ORIGIN_IS_PROJECT"
-  printf 'PI_CWD=%s\n' "$FIRSTMATE_ROOT"
-  printf 'PI_BIN=%s\n' "$PI_BIN"
-  printf 'PI_EXTENSIONS=%s\n' "$1"
+  printf 'CAPTAIN_HARNESS=%s\n' "$CAPTAIN_HARNESS"
+  printf 'CAPTAIN_CWD=%s\n' "$FIRSTMATE_ROOT"
+  printf 'CAPTAIN_BIN=%s\n' "$CAPTAIN_BIN"
+  printf 'CAPTAIN_EXTENSIONS=%s\n' "$1"
   printf 'PREFERRED_MODEL=%s\n' "$PREFERRED_MODEL"
   printf 'PREFERRED_EFFORT=%s\n' "$PREFERRED_EFFORT"
   printf 'SELECTED_MODEL=%s\n' "$SELECTED_MODEL"
@@ -189,6 +199,11 @@ print_resolution() {
   [ -z "$SELECTED_AVAILABILITY_REASON" ] || printf 'SELECTED_AVAILABILITY_REASON=%s\n' "$SELECTED_AVAILABILITY_REASON"
   [ -z "$FALLBACK_REASON" ] || printf 'FALLBACK_REASON=%s\n' "$FALLBACK_REASON"
   printf 'SCRUBBED_ENV=%s\n' "${SCRUB[*]}"
+}
+
+resolve_command() {
+  COMMAND=("$CAPTAIN_BIN" --model "$SELECTED_MODEL" --thinking "$SELECTED_EFFORT")
+  [ "$mode" != explicit ] || COMMAND+=(-e "$TURNEND_EXT" -e "$WATCH_EXT")
 }
 
 case ${1:-} in
@@ -206,16 +221,11 @@ case ${1:-} in
     mode=$(resolve_extension_mode) || exit 1
     resolve_model_chain
     print_resolution "$mode"
-    if [ "$mode" = explicit ]; then
-      printf 'COMMAND=%s --model %s --thinking %s -e %s -e %s\n' "$PI_BIN" "$SELECTED_MODEL" "$SELECTED_EFFORT" "$TURNEND_EXT" "$WATCH_EXT"
-    else
-      printf 'COMMAND=%s --model %s --thinking %s\n' "$PI_BIN" "$SELECTED_MODEL" "$SELECTED_EFFORT"
-    fi
+    resolve_command
+    printf 'COMMAND='
+    printf '%q ' "${COMMAND[@]:0:${#COMMAND[@]}-1}"
+    printf '%q\n' "${COMMAND[${#COMMAND[@]}-1]}"
     exit 0
-    ;;
-  doctor)
-    shift
-    exec "$CONFIG_ROOT/bin/fm-doctor" "$@"
     ;;
   '') ;;
   *) die "unknown argument '$1'; see fm --help" ;;
@@ -224,7 +234,9 @@ esac
 preflight
 mode=$(resolve_extension_mode) || exit 1
 resolve_model_chain
+resolve_command
 
+printf 'FirstMate Captain harness: %s\n' "$CAPTAIN_HARNESS"
 printf 'FirstMate Captain model preference: %s (%s)\n' "$PREFERRED_MODEL" "$PREFERRED_EFFORT"
 printf 'FirstMate Captain model selected: %s (%s)\n' "$SELECTED_MODEL" "$SELECTED_EFFORT"
 if [ -n "$SELECTED_AVAILABILITY_REASON" ]; then
@@ -256,8 +268,9 @@ export FM_CONFIG_ROOT="$CONFIG_ROOT"
   printf 'fm_backend=%s\n' "$FM_BACKEND"
   printf 'origin_cwd=%s\n' "$ORIGIN_CWD"
   printf 'origin_is_project=%s\n' "$ORIGIN_IS_PROJECT"
-  printf 'pi_cwd=%s\n' "$FIRSTMATE_ROOT"
-  printf 'pi_extensions=%s\n' "$mode"
+  printf 'captain_harness=%s\n' "$CAPTAIN_HARNESS"
+  printf 'captain_cwd=%s\n' "$FIRSTMATE_ROOT"
+  printf 'captain_extensions=%s\n' "$mode"
   printf 'preferred_model=%s\n' "$PREFERRED_MODEL"
   printf 'preferred_effort=%s\n' "$PREFERRED_EFFORT"
   printf 'selected_model=%s\n' "$SELECTED_MODEL"
@@ -267,7 +280,5 @@ export FM_CONFIG_ROOT="$CONFIG_ROOT"
   [ -z "$FALLBACK_REASON" ] || printf 'fallback_reason=%s\n' "$FALLBACK_REASON"
 } > "$FM_HOME/state/.fm-launch" 2>/dev/null || true
 
-set -- "$PI_BIN" --model "$SELECTED_MODEL" --thinking "$SELECTED_EFFORT"
-[ "$mode" != explicit ] || set -- "$@" -e "$TURNEND_EXT" -e "$WATCH_EXT"
 
-exec env "${SCRUB_ENV[@]}" "$@"
+exec env "${SCRUB_ENV[@]}" "${COMMAND[@]}"

@@ -15,6 +15,16 @@ CONFIG_ROOT="$(cd "$(dirname "$self")/.." && pwd)"
 FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
 FM_HOME="${FM_HOME:-$HOME/.firstmate}"
 export GIT_OPTIONAL_LOCKS=0
+# Same default/selection owner as launcher and doctor; no availability probes.
+# shellcheck source=firstmate/fm-captain-lib.sh
+. "$CONFIG_ROOT/firstmate/fm-captain-lib.sh"
+harness=
+if [ "${1:-}" = --harness ]; then
+  [ "$#" -ge 2 ] && [ -n "$2" ] || { printf 'fm-version: --harness requires omp or pi\n' >&2; exit 1; }
+  harness=$2
+  shift 2
+fi
+captain_harness_init "$harness" || exit 1
 
 # The one parsing owner for stack compatibility, shared with install.sh and
 # bin/fm-doctor. fm-version reads only compact identity metadata from it
@@ -25,7 +35,7 @@ export GIT_OPTIONAL_LOCKS=0
 stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv" || true
 
 JSON=0
-case ${1:-} in --json) JSON=1 ;; '') ;; --help|-h) printf 'Usage: fm version [--json]\n'; exit 0 ;; *) printf 'fm-version: unknown argument '\''%s'\''; see fm version --help\n' "$1" >&2; exit 1 ;; esac
+case ${1:-} in --json) JSON=1 ;; '') ;; --help|-h) printf 'Usage: fm [--harness omp|pi] version [--json]\n'; exit 0 ;; *) printf 'fm-version: unknown argument '\''%s'\''; see fm version --help\n' "$1" >&2; exit 1 ;; esac
 [ -d "$CONFIG_ROOT" ] || { printf 'fm-version: cannot establish firstmate-config path\n' >&2; exit 1; }
 [ -n "$FIRSTMATE_ROOT" ] || { printf 'fm-version: cannot establish official FirstMate path\n' >&2; exit 1; }
 
@@ -56,12 +66,14 @@ if [ "$JSON" -eq 1 ]; then
   printf '"firstmate_config":{"path":%s,"tag":%s,"commit":%s,"state":%s},' "$(jstr "$CONFIG_ROOT")" "$(jstr "$cfg_tag")" "$(jstr "$cfg_commit")" "$(jstr "$cfg_state")"
   printf '"firstmate":{"path":%s,"commit":%s,"state":%s},' "$(jstr "$FIRSTMATE_ROOT")" "$(jstr "$fm_commit")" "$(jstr "$fm_state")"
   printf '"components":{"pi":%s,"omp":%s,"herdr":%s},' "$(jstr "$pi_version")" "$(jstr "$omp_version")" "$(jstr "$herdr_version")"
+  printf '"captain_harness":%s,' "$(jstr "$CAPTAIN_HARNESS")"
   printf '"stack_manifest":{"schema_version":%s,"firstmate_validated_commit":%s},' "$(jstr "$manifest_schema")" "$(jstr "$manifest_baseline")"
   printf '"fm_home":%s,"platform":%s,"architecture":%s' "$(jstr "$FM_HOME")" "$(jstr "$platform")" "$(jstr "$arch")"
   printf '}\n'
 else
   printf 'firstmate-config: %s (%s, %s) %s\n' "$cfg_tag" "$cfg_commit" "$cfg_state" "$CONFIG_ROOT"
   printf 'official FirstMate: %s (%s, %s)\n' "$FIRSTMATE_ROOT" "$fm_commit" "$fm_state"
+  printf 'Captain harness: %s\n' "$CAPTAIN_HARNESS"
   printf 'Pi: %s\n' "$pi_version"
   printf 'OMP: %s\n' "$omp_version"
   printf 'Herdr: %s\n' "$herdr_version"

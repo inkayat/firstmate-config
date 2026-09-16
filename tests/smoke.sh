@@ -55,16 +55,16 @@ for origin in "$plain" "$repo" "$FIRSTMATE_ROOT"; do
   check "[$label] launcher resolves the official checkout" "$FIRSTMATE_ROOT" "$(field "$out" FIRSTMATE_ROOT)"
   check "[$label] launcher resolves the machine-local home" "$FM_HOME" "$(field "$out" FM_HOME)"
   check "[$label] launcher selects the herdr backend" herdr "$(field "$out" FM_BACKEND)"
-  check "[$label] Pi runs in the checkout so AGENTS.md loads" "$FIRSTMATE_ROOT" "$(field "$out" PI_CWD)"
+  check "[$label] Captain runs in the checkout so AGENTS.md loads" "$FIRSTMATE_ROOT" "$(field "$out" CAPTAIN_CWD)"
   check "[$label] the invoking directory is carried through" "$origin" "$(field "$out" FM_FORK_ORIGIN_CWD)"
-  check "[$label] captain startup selects the configured preferred model" 'openai-codex/gpt-5.6-sol' "$(field "$out" SELECTED_MODEL)"
-  check "[$label] captain startup keeps configured preferred effort" high "$(field "$out" SELECTED_EFFORT)"
+  selected=$(field "$out" SELECTED_MODEL)
+  effort=$(field "$out" SELECTED_EFFORT)
+  check "[$label] default Captain is OMP" omp "$(field "$out" CAPTAIN_HARNESS)"
+  check "[$label] extensions use native discovery" discover "$(field "$out" CAPTAIN_EXTENSIONS)"
   case "$(field "$out" COMMAND)" in
-    *'--model openai-codex/gpt-5.6-sol --thinking high'*fm-primary-turnend-guard.ts*fm-primary-pi-watch.ts*)
-      pass "[$label] model flags and both Pi primary extensions are named explicitly" ;;
-    *'--model openai-codex/gpt-5.6-sol --thinking high')
-      pass "[$label] model flags are present and extensions come from Pi's own discovery (checkout is trusted)" ;;
-    *) fail "[$label] command is missing model flags, explicit -e, or trusted discovery: $(field "$out" COMMAND)" ;;
+    *' -e '*|*' --config '*) fail "[$label] Captain command includes explicit extensions or an overlay" ;;
+    *"--model $selected --thinking $effort") pass "[$label] command carries the selected candidate and exact effort" ;;
+    *) fail "[$label] command does not carry the selected model/effort" ;;
   esac
 done
 
@@ -142,10 +142,13 @@ else
   # shellcheck source=/dev/null
   . "$FIRSTMATE_ROOT/bin/fm-supervision-lib.sh"
 
-  if fm_pi_extension_owns_supervision "$STATE" "$FIRSTMATE_ROOT"; then
-    pass 'both Pi primary extensions are loaded at their on-disk build by the lock holder'
+  live_harness=$(sed -n 's/^captain_harness=//p' "$STATE/.fm-launch" 2>/dev/null)
+  # Pre-migration Pi launch records have no harness field.
+  [ -n "$live_harness" ] || live_harness=pi
+  if "fm_${live_harness}_extension_owns_supervision" "$STATE" "$FIRSTMATE_ROOT"; then
+    pass "both $live_harness primary extensions are loaded at their on-disk build by the lock holder"
   else
-    fail 'fm_pi_extension_owns_supervision is false for this home'
+    fail "fm_${live_harness}_extension_owns_supervision is false for this home"
   fi
 
   fm_supervision_status "$STATE" "$GRACE"

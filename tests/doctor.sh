@@ -177,7 +177,6 @@ if [ "${1:-}" = --version ]; then
   exit 0
 fi
 if [ "${1:-}" = models ]; then
-  provider=${2:-}
   json='{"models":['
   first=1
   IFS=',' read -ra entries <<< "${available#,}"
@@ -185,9 +184,8 @@ if [ "${1:-}" = models ]; then
     [ -n "$entry" ] || continue
     p=${entry%%/*}
     id=${entry#*/}
-    [ "$p" = "$provider" ] || continue
     [ "$first" -eq 1 ] || json="$json,"
-    json="$json{\"provider\":\"$p\",\"id\":\"$id\"}"
+    json="$json{\"provider\":\"$p\",\"id\":\"$id\",\"reasoning\":true,\"thinking\":[\"high\",\"xhigh\"]}"
     first=0
   done
   json="$json]}"
@@ -335,7 +333,7 @@ run_doctor() { # [extra args to fm-doctor]
     FM_CONFIG_ENV="$TMP_ROOT/no-such-env-file" \
     FM_SKILLS_ROOT="${RUN_SKILLS_ROOT:-${RUN_HOME:-$FAKE_HOME}/.agents/skills}" \
     FM_TEST_AVAILABLE="${FM_TEST_AVAILABLE-$HEALTHY_AVAILABLE}" \
-    FM_TEST_OMP_AVAILABLE="${FM_TEST_OMP_AVAILABLE-$HEALTHY_AVAILABLE}" \
+    FM_TEST_OMP_AVAILABLE="${FM_TEST_OMP_AVAILABLE-${FM_TEST_AVAILABLE-$HEALTHY_AVAILABLE}}" \
     FM_TEST_SONNET_INSTALLED="${FM_TEST_SONNET_INSTALLED:-yes}" \
     FM_TEST_SONNET_AUTH="${FM_TEST_SONNET_AUTH:-ready}" \
     FM_TEST_HERDR_RUNNING="${FM_TEST_HERDR_RUNNING:-true}" \
@@ -403,7 +401,7 @@ contains 'shadowing fm: overall exit is reported nonzero' "$out" 'exit=1'
 # 4. Sol unavailable, Sonnet usable under corrected provider semantics
 # =============================================================================
 FM_TEST_AVAILABLE='pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra'
-out=$(run_doctor); code=$?
+out=$(run_doctor --harness pi); code=$?
 unset FM_TEST_AVAILABLE
 check 'Sol down: exit code is 0' 0 "$code"
 contains 'Sol down: Sonnet is selected' "$out" 'selected pi-claude-code-provider/sonnet'
@@ -606,7 +604,7 @@ fi
 # the real crew-dispatch.json. Make it available in pi's fake catalog but
 # absent from omp's, so a doctor that still used the Captain's Pi detector for
 # every lane would wrongly report the omp lane available too.
-FM_TEST_OMP_AVAILABLE='anthropic/claude-sonnet-5,anthropic/claude-opus-5'
+FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,anthropic/claude-sonnet-5,anthropic/claude-opus-5'
 out=$(run_doctor); code=$?
 unset FM_TEST_OMP_AVAILABLE
 check 'harness-scoped routing: exit code stays 0 (non-mandatory)' 0 "$code"

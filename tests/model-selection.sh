@@ -119,7 +119,7 @@ run_fm() {
   FM_TEST_ASTRA_THINKING="${FM_TEST_ASTRA_THINKING:-yes}" \
   FM_TEST_SONNET_INSTALLED="${FM_TEST_SONNET_INSTALLED:-yes}" \
   FM_TEST_SONNET_AUTH="${FM_TEST_SONNET_AUTH:-ready}" \
-  "$FM" --print-command
+  "$FM" --harness pi --print-command
 }
 
 out=$(run_fm 2>&1) || { fail "healthy startup command failed: $out"; printf '\nMODEL SELECTION FAIL\n'; exit 1; }

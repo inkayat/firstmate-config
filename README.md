@@ -3,11 +3,11 @@
 Private configuration for a stock FirstMate installation. Nothing here forks or
 patches FirstMate: the official checkout stays byte-identical to upstream and
 everything below reaches it through mechanisms upstream already exposes -
-`FM_HOME`, `config/`, `data/captain.md`, `config/crew-dispatch.json`, Pi launch
-arguments, and the normal global Agent Skills directory.
+`FM_HOME`, `config/`, `data/captain.md`, `config/crew-dispatch.json`, native
+harness launch arguments, and the normal global Agent Skills directory.
 
 ```text
-Pi Captain -> FirstMate -> Herdr -> Pi / OMP
+fm -> OMP Captain -> FirstMate -> Herdr -> Pi / OMP workers
 ```
 
 No OpenCode, OmO, Orca, second orchestrator, custom lifecycle framework, or
@@ -24,8 +24,8 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `firstmate/primary-policy.md` | the captain's operating policy | read by the captain, path named from `data/captain.md` |
 | `firstmate/captain.md` | first-run template for the captain's own notes | copied to `$FM_HOME/data/captain.md` **only when absent** |
 | `firstmate/crew-dispatch.json` | which harness takes which kind of task | symlinked to `$FM_HOME/config/crew-dispatch.json` |
-| `firstmate/captain-startup-models.tsv` | ordered Pi/FirstMate Captain startup model candidates | read by `bin/fm`, never installed as Pi's global default |
-| `firstmate/fm-captain-lib.sh` | the one authoritative Captain model availability path | sourced by both `bin/fm` and `bin/fm-doctor` |
+| `firstmate/captain-startup-models.tsv` | ordered Captain startup model candidates | read by `bin/fm`, never installed as a harness's global default |
+| `firstmate/fm-captain-lib.sh` | the one Captain harness selector and native availability owner | sourced by `bin/fm`, `bin/fm-doctor`, and `bin/fm-version` |
 | `firstmate/stack-manifest.tsv` | the single source of truth for stack compatibility: official FirstMate repo/validated commit, Pi/OMP/Herdr min and tested versions | read by `install.sh` and `bin/fm-doctor` |
 | `firstmate/fm-stack-manifest.sh` | the one parsing/comparison owner for `stack-manifest.tsv` | sourced by `install.sh`, `bin/fm-doctor`, and `bin/fm-version` |
 | `roles/*/ROLE.md` | generic role definitions quoted into worker briefs | read by the captain |
@@ -33,6 +33,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `skills/external.lock` | external skill packs, pinned by commit | cloned to a machine-local cache, symlinked into `~/.agents/skills/` |
 | `install.sh` | idempotent installer | - |
 | `tests/smoke.sh` | acceptance smoke | - |
+| `tests/captain-harness.sh` | default OMP / explicit Pi launch and diagnostic contracts | - |
 | `tests/model-selection.sh` | captain startup model selection acceptance | - |
 | `tests/multi-project-captain.sh` | multi-project resolution/isolation/routing acceptance | - |
 | `tests/doctor.sh` | `fm doctor` acceptance: statuses, exit codes, JSON schema | - |
@@ -53,6 +54,23 @@ Then, from any directory:
 fm
 ```
 
+`fm` starts OMP directly from the official FirstMate checkout; Pi is not an
+intermediate process. `fm --harness omp` makes that choice explicit.
+`fm --harness pi` retains the previous Pi startup path as an explicit fallback.
+Place the selector before diagnostics too: `fm --harness pi --print-command`,
+`fm --harness pi doctor --json`, or `fm --harness pi version`.
+
+OMP auto-discovers the official `.omp/extensions/fm-primary-omp-watch.ts` and
+`.omp/extensions/fm-primary-turnend-guard.ts`. The launcher never copies them,
+passes `-e`, or applies `.omp/fm-worker-overlay.yml`: that overlay is upstream's
+unattended-worker posture, not Captain configuration. Pi alone retains its
+trust-aware extension mode (`FM_PI_EXTENSIONS=auto|explicit|discover`).
+Both paths scrub inherited harness identity markers; OMP needs no forced
+`FM_OMP_HARNESS` marker after that scrub. Herdr and `FM_HOME` keep their existing
+roles, state, registries, and lifecycle ownership. No global model, auth, or
+settings files are rewritten. `FM_OMP_BIN` and `FM_PI_BIN` select executables,
+not worker routing.
+
 Rerunning `install.sh` is a reconcile, not a reinstall: it repairs symlinks,
 refreshes pinned skills, and leaves anything you have edited by hand alone.
 A missing official FirstMate checkout is cloned from `firstmate/stack-manifest.tsv`'s
@@ -64,6 +82,7 @@ Verify an installation at any time:
 
 ```sh
 tests/smoke.sh                     # launcher, install state, skills, herdr
+tests/captain-harness.sh           # OMP default, explicit harnesses, native availability
 tests/smoke.sh --live              # the same, plus a captain that is currently running
 tests/multi-project-captain.sh     # project resolution, isolation, and routing
 tests/doctor.sh                    # fm doctor: statuses, exit codes, JSON schema
@@ -78,9 +97,9 @@ fm version
 fm version --json
 ```
 
-Fast, read-only identity facts for bug reports: firstmate-config tag/commit/state, official FirstMate path/commit/state, Pi/OMP/Herdr versions, the validated FirstMate baseline commit from `firstmate/stack-manifest.tsv`, `FM_HOME`, platform, and architecture. Optional component versions are `unknown` when unavailable; this stays a compact identity report - compatibility verdicts (PASS/WARNING/FAIL) live only in `fm doctor`.
+Fast, read-only identity facts for bug reports: firstmate-config tag/commit/state, official FirstMate path/commit/state, selected Captain harness, Pi/OMP/Herdr versions, the validated FirstMate baseline commit from `firstmate/stack-manifest.tsv`, `FM_HOME`, platform, and architecture. Unavailable component versions are `unknown`; this stays a compact identity report - compatibility verdicts (PASS/WARNING/FAIL) live only in `fm doctor`.
 
-JSON schema (`--json`, `schema_version: 2`) has `firstmate_config`, `firstmate`, `components`, `stack_manifest` (`schema_version` and `firstmate_validated_commit`, both read from `firstmate/stack-manifest.tsv` - never a duplicated literal), `fm_home`, `platform`, and `architecture`.
+JSON schema (`--json`, `schema_version: 2`) has `firstmate_config`, `firstmate`, `components`, `captain_harness`, `stack_manifest` (`schema_version` and `firstmate_validated_commit`, both read from `firstmate/stack-manifest.tsv` - never a duplicated literal), `fm_home`, `platform`, and `architecture`.
 
 ## fm doctor
 
@@ -90,14 +109,14 @@ fm doctor --json       # the same report as machine-readable JSON
 ```
 
 Read-only, cross-platform diagnostics for the whole
-`Pi Captain -> FirstMate -> Herdr -> Pi/OMP` architecture. `fm doctor` never
+`OMP Captain -> FirstMate -> Herdr -> Pi/OMP` architecture. `fm doctor` never
 installs, repairs, or restarts anything, never modifies `FM_HOME` or a
 project, never touches routing or auth, and never makes a paid or live model
 inference call - every availability probe it runs is the same cheap,
 non-billable kind `bin/fm` already uses at startup (`pi auth check`, `pi
 --list-models`, `pi list`, `claude auth status`, `herdr status --json`, `omp
-models --json`), from the one authoritative Captain path both `bin/fm` and
-`bin/fm-doctor` share: `firstmate/fm-captain-lib.sh`. Every Git probe it
+models --json --no-extensions`), from the one authoritative Captain path both
+commands share: `firstmate/fm-captain-lib.sh`. Every Git probe it
 makes (firstmate-config's and the official checkout's own version/commit/
 dirty state) runs with `GIT_OPTIONAL_LOCKS=0`, so a diagnostic run never
 writes an index refresh or ref lock into a repository it merely inspects.
@@ -108,8 +127,8 @@ loaded, the official checkout's relationship to that manifest's validated
 commit, `FM_HOME`, OS, cwd, current Git project
 root), LAUNCHER/PATH (every `fm` discoverable on `PATH`, precedence against
 the one this repository installs, and the executable a plain `fm` currently
-resolves to), CAPTAIN (the configured startup model chain's per-candidate
-availability, selection, and fallback reason), RUNTIME (Herdr installation,
+resolves to), CAPTAIN (selected harness, its executable and required extensions,
+the startup chain's per-candidate availability, selection, and fallback reason), RUNTIME (Herdr installation,
 client/server health and protocol compatibility, fleet lock, watcher,
 heartbeat, wake queue, and task-record metadata - an in-flight count plus an
 honest stale/dead classification (`NOT_APPLICABLE` with nothing in flight,
@@ -123,9 +142,9 @@ JSON parsing only - `jq`, then `python3`, whichever is actually on the
 machine; with neither installed, validity is reported `UNKNOWN`, never a
 false `PASS` and never a brace-balance or field-scan standing in for a real
 parse - and cheap per-lane model availability discovered through each lane's
-own harness catalog: `pi --list-models` for a `pi` lane, `omp models --json`
-for an `omp` lane, never one harness's detector standing in for the other's,
-plus Fable/Qwen's intentionally `DEFERRED` status), ROLES and SKILLS
+own harness catalog: `pi --list-models` for a `pi` lane, OMP's native
+`models --json --no-extensions` for an `omp` lane, never one harness's detector
+standing in for the other's, plus Fable/Qwen's intentionally `DEFERRED` status), ROLES and SKILLS
 (readable role files; global skill installation count, missing entries,
 broken links, unreadable `SKILL.md`), and PROJECTS (registered names from
 FirstMate's own `data/projects.md` via `fm-project-mode.sh`, the confident current project
@@ -143,7 +162,7 @@ failure.
 
 **Stack compatibility.** `firstmate/stack-manifest.tsv` is the single
 source of truth for what "compatible" means across
-`Pi Captain -> FirstMate -> Herdr -> Pi/OMP`: the official FirstMate
+`OMP Captain -> FirstMate -> Herdr -> Pi/OMP`: the official FirstMate
 repo/validated commit, and a min/tested version policy per component
 (`firstmate/fm-stack-manifest.sh` is the one parsing/comparison owner,
 shared with `install.sh` and `fm version`). For each component:
@@ -175,8 +194,8 @@ the official FirstMate checkout is missing or broken, or at a commit behind
 the validated baseline or diverged from it (`firstmate.commit_compat`
 `FAIL`), `crew-dispatch.json` or
 the captain startup model chain is invalid, no configured Captain candidate
-is usable (a missing Pi primary extension, an empty model chain, or every
-candidate `UNAVAILABLE`), the `herdr` CLI is missing, explicitly reports
+is usable (a missing selected harness executable or primary extension, an empty
+model chain, or every candidate `UNAVAILABLE`), the `herdr` CLI is missing, explicitly reports
 `compatible: false`, or its server is definitively stopped or unreachable
 (`running: false`, or the status query itself fails outright with no
 output), Pi, omp, or Herdr installed below its
@@ -192,7 +211,8 @@ while `exit_code` stays `0`.
 `schema_version`, `status`, `exit_code`, `timestamp`, `system` (including
 `fm_home`), `firstmate` (this repository and the official checkout, each with
 its own `commit`), `launcher` (including `resolved`, the executable a plain
-`fm` currently resolves to), `captain`, `runtime` (including a `heartbeat`
+`fm` resolves to, and `expected`, the one this repository installs), `captain`
+(including `harness`), `runtime` (including a `heartbeat`
 object distinct from `watcher`, and `task_metadata.staleness`:
 `NOT_APPLICABLE`/`UNKNOWN`, never a guessed `PASS`/`FAIL`), `harnesses`,
 `routing` (including
@@ -208,27 +228,35 @@ whichever is actually installed; with neither present, `fm-doctor` reports
 ## Captain startup model
 
 `bin/fm` reads `firstmate/captain-startup-models.tsv` and passes the selected
-candidate to Pi with `--model` and `--thinking` only for the FirstMate Captain
-process it starts.
-It does not write Pi's standalone default and it does not affect worker routing.
+exact candidate with `--model` and `--thinking` only to the Captain it starts.
+The ordered chain remains Sol/high, `pi-claude-code-provider/sonnet`/high,
+then Astra/xhigh. On installed OMP 18.1.21, Sol and Astra are native supported
+selectors; the Pi-only Sonnet provider is absent and is skipped if reached.
+It is never translated to a different Sonnet provider/model. Explicit Pi uses
+the same chain with its original provider/auth preflights.
 
 Fallback is availability-only and tri-state: `AVAILABLE` and `UNKNOWN`
-candidates remain eligible, while only an authoritative `UNAVAILABLE` result is
-skipped.
-An exact catalog entry and supported effort establish the model path but do not
-alone prove authentication; an unrecognized broker result stays `UNKNOWN`
-rather than becoming a false negative.
-For `pi-claude-code-provider`, Pi's `auth check` does not load extension
-providers, so the launcher uses the provider's zero-inference `claude auth
-status` preflight and confirms the package is installed.
-It never starts a paid model turn merely to probe availability.
-The launcher prints the preferred candidate, selected candidate, selected
-availability state, and fallback reason when it did not use the preferred
-candidate.
+candidates remain eligible; only authoritative `UNAVAILABLE` results are
+skipped. OMP's native JSON listing filters to resolvable credentials or keyless
+auth; it does not prove live credential validity or quota. The exact effort
+must appear in the catalog's supported efforts, never silently clamped.
+An absent candidate or unsupported effort is `UNAVAILABLE`; failed or
+unparseable catalog output is `UNKNOWN`. JSON parsing uses `jq`, then
+`python3`; with neither present it reports `UNKNOWN`.
+
+The OMP catalog probe runs at the official cwd with `--no-extensions`: unlike
+the actual Captain launch, a diagnostic must not execute extension factories
+that write FirstMate load markers. This probe covers native/configured model
+providers, not extension-registered providers. For Pi's
+`pi-claude-code-provider`, `auth check` does not load extension providers,
+so the shared detector uses zero-inference `claude auth status` and confirms
+the package is installed. Neither path starts a paid turn to probe availability.
+The launcher reports preferred and selected candidates, availability state,
+and the fallback reason. Worker routing and standalone defaults are unchanged.
 
 ## Multi-project captain
 
-One `fm` launch starts one project-neutral Captain session: Pi always runs
+One `fm` launch starts one project-neutral Captain session: its harness always runs
 from the official checkout, never from wherever `fm` was invoked, so no
 project's `AGENTS.md`, `CLAUDE.md`, or project-local skills are ever
 preloaded as global authority. `firstmate/primary-policy.md` section 1

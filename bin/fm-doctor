@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # fm-doctor - read-only, cross-platform diagnostics for the
-# Pi Captain -> FirstMate -> Herdr -> Pi/OMP architecture.
+# OMP Captain -> FirstMate -> Herdr -> Pi/OMP architecture (explicit Pi fallback).
 #
 # Never installs, repairs, or restarts anything. Never modifies FM_HOME,
 # projects, or the official FirstMate checkout. Never makes a paid/live model
 # inference call. Every probe here is the same cheap, non-billable kind bin/fm
 # already uses at startup (pi auth check, pi --list-models, pi list, claude
-# auth status, herdr status --json, omp models --json) - see
+# auth status, herdr status --json, omp models --json --no-extensions) - see
 # firstmate/fm-captain-lib.sh, the one authoritative Captain availability path
 # shared with bin/fm.
 #
 # Usage:
 #   fm doctor             human-readable report
 #   fm doctor --json      the same report as machine-readable JSON
+#   fm --harness pi doctor  diagnose the explicit Pi Captain fallback
 #   fm-doctor --help
 #
 # Exit codes:
@@ -22,7 +23,7 @@
 #       missing or invalid tracked stack manifest (unparseable, missing a
 #       required key, or failing the loader's own value validation),
 #       invalid captain-startup-models.tsv or crew-dispatch.json, no usable
-#       Captain (missing Pi primary extensions, an empty model chain, or
+#       Captain (missing selected executable or primary extensions, an empty model chain, or
 #       every configured model candidate UNAVAILABLE), a missing, explicitly
 #       protocol-incompatible, or definitively stopped/unreachable required
 #       Herdr server (its own status query failing outright, or reporting
@@ -74,11 +75,16 @@ TURNEND_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
 OMP_WATCH_EXT="$FIRSTMATE_ROOT/.omp/extensions/fm-primary-omp-watch.ts"
 OMP_TURNEND_EXT="$FIRSTMATE_ROOT/.omp/extensions/fm-primary-turnend-guard.ts"
 
-# The one authoritative Captain availability path, shared with bin/fm. Sets
-# PI_BIN above first, exactly as bin/fm does, so the two never fork
-# eligibility semantics.
+# Shared Captain harness selection and native model availability.
 # shellcheck source=firstmate/fm-captain-lib.sh
 . "$CONFIG_ROOT/firstmate/fm-captain-lib.sh"
+harness=
+if [ "${1:-}" = --harness ]; then
+  [ "$#" -ge 2 ] && [ -n "$2" ] || { printf 'fm-doctor: --harness requires omp or pi\n' >&2; exit 1; }
+  harness=$2
+  shift 2
+fi
+captain_harness_init "$harness" || exit 1
 
 # The one parsing/comparison owner for stack compatibility, shared with
 # install.sh. Never fork manifest parsing or version comparison between them.
@@ -309,11 +315,18 @@ J_LAUNCHER=$(printf '{"expected":%s,"resolved":%s,"resolves_first":%s,"found":%s
 # =============================================================================
 
 CAPTAIN_EXT_OK=1
-if [ -f "$WATCH_EXT" ] && [ -f "$TURNEND_EXT" ]; then
-  add_check captain.extensions PASS "both Pi primary extensions present" "$WATCH_EXT; $TURNEND_EXT"
+if [ -f "$CAPTAIN_WATCH_EXT" ] && [ -f "$CAPTAIN_TURNEND_EXT" ]; then
+  add_check captain.extensions PASS "both $CAPTAIN_HARNESS primary extensions present" "$CAPTAIN_WATCH_EXT; $CAPTAIN_TURNEND_EXT"
 else
   CAPTAIN_EXT_OK=0
-  add_check captain.extensions FAIL "missing a required Pi primary extension" "$WATCH_EXT; $TURNEND_EXT"
+  add_check captain.extensions FAIL "missing a required $CAPTAIN_HARNESS primary extension" "$CAPTAIN_WATCH_EXT; $CAPTAIN_TURNEND_EXT"
+fi
+CAPTAIN_BIN_OK=1
+if command -v "$CAPTAIN_BIN" >/dev/null 2>&1; then
+  add_check captain.harness PASS "selected Captain harness: $CAPTAIN_HARNESS" "$CAPTAIN_BIN"
+else
+  CAPTAIN_BIN_OK=0
+  add_check captain.harness FAIL "selected Captain executable is missing" "$CAPTAIN_BIN"
 fi
 
 CAPTAIN_CHAIN_OK=1
@@ -327,7 +340,7 @@ if [ -f "$MODEL_CHAIN" ]; then
   reasons=()
   while IFS="$(printf '\t')" read -r model effort _rest || [ -n "${model:-}" ]; do
     case ${model:-} in ''|\#*) continue ;; esac
-    result=$(model_availability "$model" "$effort")
+    result=$(captain_model_availability "$model" "$effort")
     state=${result%%$'\t'*}
     reason=${result#*$'\t'}
     [ "$first_model" -eq 1 ] || CAPTAIN_MODELS_JSON="$CAPTAIN_MODELS_JSON,"
@@ -363,9 +376,10 @@ fi
 CAPTAIN_MODELS_JSON="$CAPTAIN_MODELS_JSON]"
 
 NO_USABLE_CAPTAIN=0
-[ "$CAPTAIN_EXT_OK" -eq 1 ] && [ "$CAPTAIN_CHAIN_OK" -eq 1 ] || NO_USABLE_CAPTAIN=1
+[ "$CAPTAIN_BIN_OK" -eq 1 ] && [ "$CAPTAIN_EXT_OK" -eq 1 ] && [ "$CAPTAIN_CHAIN_OK" -eq 1 ] || NO_USABLE_CAPTAIN=1
 
-J_CAPTAIN=$(printf '{"extensions_present":%s,"selected_model":%s,"selected_effort":%s,"selected_availability":%s,"fallback_reason":%s,"candidates":%s}' \
+J_CAPTAIN=$(printf '{"harness":%s,"extensions_present":%s,"selected_model":%s,"selected_effort":%s,"selected_availability":%s,"fallback_reason":%s,"candidates":%s}' \
+  "$(jstr "$CAPTAIN_HARNESS")" \
   "$([ "$CAPTAIN_EXT_OK" -eq 1 ] && printf true || printf false)" \
   "$(jstr "$SELECTED_MODEL")" "$(jstr "$SELECTED_EFFORT")" "$(jstr "$SELECTED_STATE")" "$(jstr "$FALLBACK_REASON")" "$CAPTAIN_MODELS_JSON")
 
@@ -396,7 +410,7 @@ else
   HERDR_COMPATIBLE=$(json_bool_field "$HERDR_STATUS_JSON" compatible)
   HERDR_SERVER_VERSION=$(json_string_field "$HERDR_STATUS_JSON" version)
   HERDR_CLIENT_VERSION=$(printf '%s' "$HERDR_STATUS_JSON" | tr '\n' ' ' | sed -n 's/.*"client":{[^}]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-  # The mandatory architecture is Pi Captain -> FirstMate -> Herdr ->
+  # The mandatory architecture is the selected Captain -> FirstMate -> Herdr ->
   # Pi/OMP: a definitively stopped or unreachable selected Herdr server is
   # a mandatory FAIL here, not a WARNING. "Definitive" covers herdr's own
   # CLI failing to produce a status at all (nonzero exit or empty stdout -
@@ -545,9 +559,9 @@ else
   add_check harnesses.pi FAIL "Pi executable '$PI_BIN' is not on PATH" ""
 fi
 
-if command -v omp >/dev/null 2>&1; then
-  omp_version=$(omp --version 2>/dev/null | head -1)
-  add_check harnesses.omp PASS "omp installed (${omp_version:-unknown version})" "$(command -v omp)"
+if command -v "${FM_OMP_BIN:-omp}" >/dev/null 2>&1; then
+  omp_version=$("${FM_OMP_BIN:-omp}" --version 2>/dev/null | head -1)
+  add_check harnesses.omp PASS "omp installed (${omp_version:-unknown version})" "$(command -v "${FM_OMP_BIN:-omp}")"
   omp_ver=$(stack_version_extract "$omp_version")
   case $(stack_component_compat "$omp_ver" "$SM_OMP_MIN" "$SM_OMP_TESTED") in
     PASS) add_check harnesses.omp_version PASS "omp $omp_ver satisfies the validated stack policy (tested $SM_OMP_TESTED)" "" ;;
@@ -593,28 +607,12 @@ fi
 
 J_HARNESSES=$(printf '{"pi":{"installed":%s,"version":%s},"omp":{"installed":%s,"version":%s}}' \
   "$(command -v "$PI_BIN" >/dev/null 2>&1 && printf true || printf false)" "$(jstr "${pi_version:-}")" \
-  "$(command -v omp >/dev/null 2>&1 && printf true || printf false)" "$(jstr "${omp_version:-}")")
+  "$(command -v "${FM_OMP_BIN:-omp}" >/dev/null 2>&1 && printf true || printf false)" "$(jstr "${omp_version:-}")")
 
 # =============================================================================
 # ROUTING
 # =============================================================================
 
-# omp_model_availability <model> ; prints STATE<TAB>reason. A cheap,
-# non-billable catalog lookup (`omp models <provider> --json`), the omp
-# equivalent of fm-captain-lib.sh's `pi --list-models` catalog check - never
-# the Pi-specific detector, which knows nothing about omp's own providers.
-omp_model_availability() {
-  local model=$1 provider name out
-  provider=$(model_provider "$model")
-  name=$(model_name "$model")
-  command -v omp >/dev/null 2>&1 || { printf 'UNKNOWN\tomp executable not on PATH'; return; }
-  out=$(omp models "$provider" --json 2>/dev/null) || { printf 'UNKNOWN\tomp models catalog unavailable'; return; }
-  if printf '%s' "$out" | grep -qF "\"id\":\"$name\""; then
-    printf 'AVAILABLE\t'
-  else
-    printf 'UNAVAILABLE\tmodel not in omp %s catalog' "$provider"
-  fi
-}
 
 # crew_dispatch_validate <file> - real JSON parsing only, never a new
 # required dependency:

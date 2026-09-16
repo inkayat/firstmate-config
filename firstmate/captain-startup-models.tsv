@@ -1,4 +1,4 @@
-# Ordered Pi/FirstMate Captain startup model candidates.
+# Ordered Captain startup candidates, checked through the selected harness.
 # Format: model<TAB>effort
 openai-codex/gpt-5.6-sol	high
 pi-claude-code-provider/sonnet	high

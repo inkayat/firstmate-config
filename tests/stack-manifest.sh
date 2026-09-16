@@ -211,7 +211,7 @@ cat > "$DOC_FAKE_BIN/omp" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
   --version) printf 'omp/%s\n' "${FM_TEST_OMP_VERSION:-18.1.21}"; exit 0 ;;
-  models) printf '{"models":[{"provider":"any","id":"claude-sonnet-5"},{"provider":"any","id":"claude-opus-5"},{"provider":"any","id":"gpt-6-astra"}]}\n'; exit 0 ;;
+  models) printf '{"models":[{"provider":"openai-codex","id":"gpt-5.6-sol","thinking":["high"]},{"provider":"pi-claude-code-provider","id":"sonnet","thinking":["high"]},{"provider":"anthropic","id":"claude-sonnet-5","thinking":["high"]},{"provider":"anthropic","id":"claude-opus-5","thinking":["high"]},{"provider":"openai-codex","id":"gpt-6-astra","thinking":["xhigh"]}]}\n'; exit 0 ;;
   *) exit 0 ;;
 esac
 SH
@@ -416,6 +416,7 @@ printf '# captain notes\n' > "$INST_CFG/firstmate/captain.md"
 INST_FAKE_BIN="$TMP_ROOT/inst-fake-bin"
 mkdir -p "$INST_FAKE_BIN"
 : > "$INST_FAKE_BIN/pi"; chmod +x "$INST_FAKE_BIN/pi"
+: > "$INST_FAKE_BIN/omp"; chmod +x "$INST_FAKE_BIN/omp"
 : > "$INST_FAKE_BIN/herdr"; chmod +x "$INST_FAKE_BIN/herdr"
 
 # A real local origin repository (offline clone source): two commits.

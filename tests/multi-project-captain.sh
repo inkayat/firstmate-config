@@ -144,7 +144,7 @@ EOF
 
 # =============================================================================
 # Part 1: launcher reports whether the launch directory is a Git project, and
-# that PI_CWD (where the captain actually runs) never follows it. Launching
+# that CAPTAIN_CWD (where the captain actually runs) never follows it. Launching
 # from inside Project A here, with Project B dispatched for real in Part 2,
 # is the proof that the launch directory never blocks dispatch elsewhere.
 # =============================================================================
@@ -154,6 +154,15 @@ mkdir -p "$fake_bin" "$fake_firstmate/.pi/extensions"
 printf 'test\n' > "$fake_firstmate/AGENTS.md"
 printf 'test\n' > "$fake_firstmate/.pi/extensions/fm-primary-pi-watch.ts"
 printf 'test\n' > "$fake_firstmate/.pi/extensions/fm-primary-turnend-guard.ts"
+mkdir -p "$fake_firstmate/.omp/extensions"
+printf 'test\n' > "$fake_firstmate/.omp/extensions/fm-primary-omp-watch.ts"
+printf 'test\n' > "$fake_firstmate/.omp/extensions/fm-primary-turnend-guard.ts"
+cat > "$fake_bin/omp" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = models ] || exit 64
+printf '{"models":[{"provider":"openai-codex","id":"gpt-5.6-sol","reasoning":true,"thinking":["high"]}]}\n'
+SH
+chmod +x "$fake_bin/omp"
 
 cat > "$fake_bin/herdr" <<'SH'
 #!/usr/bin/env bash
@@ -193,11 +202,11 @@ run_fm_from() { # <origin-dir>
 out=$(run_fm_from "$project_a" 2>&1) || { fail "fm from Project A failed: $out"; out=''; }
 check 'launching from inside Project A reports the hint as usable' true "$(field "$out" FM_FORK_ORIGIN_IS_PROJECT)"
 check 'launch dir origin is Project A' "$project_a" "$(field "$out" FM_FORK_ORIGIN_CWD)"
-check 'the captain still runs in the checkout, never Project A' "$fake_firstmate" "$(field "$out" PI_CWD)"
+check 'the captain still runs in the checkout, never Project A' "$fake_firstmate" "$(field "$out" CAPTAIN_CWD)"
 
 out=$(run_fm_from "$plain_dir" 2>&1) || { fail "fm from a plain directory failed: $out"; out=''; }
 check 'launch dir that is not a Git project reports the hint as unusable' false "$(field "$out" FM_FORK_ORIGIN_IS_PROJECT)"
-check 'the captain still runs in the checkout from a plain launch directory' "$fake_firstmate" "$(field "$out" PI_CWD)"
+check 'the captain still runs in the checkout from a plain launch directory' "$fake_firstmate" "$(field "$out" CAPTAIN_CWD)"
 
 # =============================================================================
 # Part 2a: data/projects.md through the real, unmodified fm-project-mode.sh -

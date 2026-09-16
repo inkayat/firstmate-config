@@ -48,6 +48,7 @@ cp "$CONFIG_ROOT/bin/fm" "$CONFIG_FIXTURE/bin/fm"
 cp "$CONFIG_ROOT/bin/fm-version" "$CONFIG_FIXTURE/bin/fm-version"
 cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$CONFIG_FIXTURE/firstmate/fm-stack-manifest.sh"
 cp "$CONFIG_ROOT/firstmate/stack-manifest.tsv" "$CONFIG_FIXTURE/firstmate/stack-manifest.tsv"
+cp "$CONFIG_ROOT/firstmate/fm-captain-lib.sh" "$CONFIG_FIXTURE/firstmate/fm-captain-lib.sh"
 
 # shellcheck source=firstmate/fm-stack-manifest.sh
 . "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh"

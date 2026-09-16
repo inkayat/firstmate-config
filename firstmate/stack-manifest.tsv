@@ -1,7 +1,7 @@
 # firstmate-config stack compatibility manifest.
 #
 # The single source of truth for stable compatibility information across
-# Pi Captain -> official FirstMate -> Herdr -> Pi / OMP, on macOS and
+# OMP Captain -> official FirstMate -> Herdr -> Pi / OMP, on macOS and
 # Betao/Omarchy Linux. install.sh and bin/fm-doctor both read this file
 # through firstmate/fm-stack-manifest.sh, the one parsing/comparison owner -
 # never duplicate these values as separate hardcoded constants in a script

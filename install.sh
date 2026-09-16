@@ -65,14 +65,14 @@ would() { # <description>
 
 # --- 1. toolchain -----------------------------------------------------------
 step '1. toolchain'
-for tool in git pi herdr; do
+for tool in git pi omp herdr; do
   if command -v "$tool" >/dev/null 2>&1; then
     ok "$tool present"
   else
     failf "$tool is required and not on PATH"
   fi
 done
-for tool in omp jq treehouse gh; do
+for tool in jq treehouse gh; do
   if command -v "$tool" >/dev/null 2>&1; then
     ok "$tool present"
   else

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fm-stack-manifest.sh - the one parsing/comparison owner for
 # firstmate/stack-manifest.tsv, the single source of truth for stable
-# compatibility information across Pi Captain -> official FirstMate ->
+# compatibility information across OMP Captain -> official FirstMate ->
 # Herdr -> Pi / OMP, on macOS and Betao/Omarchy Linux. Sourced by install.sh
 # and bin/fm-doctor; never fork this parsing or the version-comparison
 # logic between them - extend this file instead.

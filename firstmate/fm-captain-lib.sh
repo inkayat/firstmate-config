@@ -1,15 +1,9 @@
 # shellcheck shell=bash
-# fm-captain-lib.sh - the one authoritative Captain model availability path.
+# fm-captain-lib.sh - shared Captain harness and model availability owner.
 #
-# Shared by bin/fm (captain startup model selection) and bin/fm-doctor
-# (read-only availability reporting), so the two never carry forked
-# eligibility semantics. Every probe here is read-only and non-billable: no
-# function in this file ever starts a paid model turn merely to check
-# availability.
-#
-# Callers set PI_BIN before sourcing/calling (bin/fm and bin/fm-doctor both
-# default it to "${FM_PI_BIN:-pi}"). PI_CLAUDE_CODE_PROVIDER_PATH is optional
-# and defaults to "claude" internally.
+# Sourced by bin/fm, bin/fm-doctor, and bin/fm-version. Harness selection never
+# changes worker routing. Availability probes are non-billable; only a known
+# UNAVAILABLE candidate is skipped. Callers set FIRSTMATE_ROOT before init.
 #
 # model_availability <model> <effort> prints "STATE<TAB>reason" where STATE is
 # AVAILABLE, UNAVAILABLE, or UNKNOWN. AVAILABLE and UNKNOWN remain eligible
@@ -20,6 +14,85 @@
 # zero-inference `claude auth status` preflight instead - the corrected
 # semantics documented in README.md "Captain startup model". Do not add a
 # second detector or a paid probe for this provider.
+
+captain_harness_init() { # [omp|pi]; defaults only here
+  CAPTAIN_HARNESS=${1:-omp}
+  case $CAPTAIN_HARNESS in
+    omp)
+      CAPTAIN_BIN=${FM_OMP_BIN:-omp}
+      CAPTAIN_WATCH_EXT="$FIRSTMATE_ROOT/.omp/extensions/fm-primary-omp-watch.ts"
+      CAPTAIN_TURNEND_EXT="$FIRSTMATE_ROOT/.omp/extensions/fm-primary-turnend-guard.ts"
+      ;;
+    pi)
+      CAPTAIN_BIN=${FM_PI_BIN:-pi}
+      CAPTAIN_WATCH_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
+      CAPTAIN_TURNEND_EXT="$FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
+      ;;
+    *) printf 'fm: unsupported Captain harness %s (expected omp or pi)\n' "$CAPTAIN_HARNESS" >&2; return 1 ;;
+  esac
+}
+
+captain_model_availability() {
+  case $CAPTAIN_HARNESS in
+    omp) omp_model_availability "$@" ;;
+    pi) model_availability "$@" ;;
+  esac
+}
+
+# Native OMP's listing uses getAvailable(): resolvable credentials or keyless
+# auth, not a live auth/quota guarantee. Never use Pi's broker for OMP.
+# Disable factories for this read-only probe: FirstMate extension factories
+# write load markers even in `omp models`. Actual launches use discovery.
+# An optional effort checks the exact supported list rather than OMP's clamp.
+omp_model_availability() { # <model> [effort]
+  local model=$1 effort=${2:-} out result
+  command -v "${FM_OMP_BIN:-omp}" >/dev/null 2>&1 \
+    || { printf 'UNAVAILABLE\tomp executable not on PATH'; return; }
+  out=$(cd "$FIRSTMATE_ROOT" && "${FM_OMP_BIN:-omp}" models --json --no-extensions 2>/dev/null) \
+    || { printf 'UNKNOWN\tomp native catalog unavailable'; return; }
+  if command -v jq >/dev/null 2>&1; then
+    result=$(printf '%s' "$out" | jq -er --arg m "$model" --arg e "$effort" '
+      if (.models | type) != "array" or
+        (all(.models[]; (.provider | type) == "string" and (.id | type) == "string") | not)
+      then error("invalid catalog") else
+        [.models[] | select((.provider + "/" + .id) == $m)] as $matches |
+        if ($matches | length) == 0 then "missing"
+        elif ($matches | length) != 1 then error("ambiguous catalog")
+        elif $e == "" then "available"
+        elif $matches[0].thinking == null then
+          if $e == "off" and $matches[0].reasoning == false then "available" else "effort" end
+        elif ($matches[0].thinking | type) != "array" then error("invalid efforts")
+        elif ($matches[0].thinking | index($e)) != null then "available"
+        else "effort" end
+      end' 2>/dev/null) || result=unknown
+  elif command -v python3 >/dev/null 2>&1; then
+    result=$(printf '%s' "$out" | python3 -c '
+import json, sys
+doc = json.load(sys.stdin)
+assert isinstance(doc["models"], list)
+matches = [m for m in doc["models"] if m["provider"] + "/" + m["id"] == sys.argv[1]]
+assert len(matches) <= 1
+effort = sys.argv[2]
+if not matches:
+    print("missing")
+elif not effort:
+    print("available")
+else:
+    m = matches[0]
+    thinking = m.get("thinking")
+    assert thinking is None or isinstance(thinking, list)
+    print("available" if (effort in thinking if thinking is not None else effort == "off" and m.get("reasoning") is False) else "effort")
+' "$model" "$effort" 2>/dev/null) || result=unknown
+  else
+    result=unknown
+  fi
+  case $result in
+    available) printf 'AVAILABLE\tresolvable native OMP auth; live validity and quota unprobed' ;;
+    missing) printf 'UNAVAILABLE\tmodel not in native OMP available catalog (unsupported or credentials unavailable)' ;;
+    effort) printf 'UNAVAILABLE\tunsupported configured effort %s' "$effort" ;;
+    *) printf 'UNKNOWN\tomp native catalog could not be parsed' ;;
+  esac
+}
 
 model_provider() { printf '%s' "${1%%/*}"; }
 model_name() { printf '%s' "${1#*/}"; }
