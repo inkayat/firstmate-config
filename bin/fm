@@ -281,4 +281,9 @@ export FM_CONFIG_ROOT="$CONFIG_ROOT"
 } > "$FM_HOME/state/.fm-launch" 2>/dev/null || true
 
 
+if [ "$CAPTAIN_HARNESS" = omp ]; then
+  # Stock Bash timeouts retain the deadline/group cleanup with one fewer ancestor.
+  # OMP then sits eighth, not ninth, in FirstMate's native startup detector walk.
+  exec env "${SCRUB_ENV[@]}" FM_OMP_HARNESS=omp FM_TIMEOUT_MECHANISM_OVERRIDE=bash "${COMMAND[@]}"
+fi
 exec env "${SCRUB_ENV[@]}" "${COMMAND[@]}"

@@ -65,10 +65,19 @@ OMP auto-discovers the official `.omp/extensions/fm-primary-omp-watch.ts` and
 passes `-e`, or applies `.omp/fm-worker-overlay.yml`: that overlay is upstream's
 unattended-worker posture, not Captain configuration. Pi alone retains its
 trust-aware extension mode (`FM_PI_EXTENSIONS=auto|explicit|discover`).
-Both paths scrub inherited harness identity markers; OMP needs no forced
-`FM_OMP_HARNESS` marker after that scrub. Herdr and `FM_HOME` keep their existing
-roles, state, registries, and lifecycle ownership. No global model, auth, or
-settings files are rewritten. `FM_OMP_BIN` and `FM_PI_BIN` select executables,
+Both paths scrub inherited harness identity markers. Only at the OMP exec
+boundary, the launcher sets `FM_OMP_HARNESS=omp` and the stock
+`FM_TIMEOUT_MECHANISM_OVERRIDE=bash`. FirstMate's native Bash timeout keeps the
+deadline and process-group cleanup while removing the external `timeout` process
+from its startup chain: genuine OMP is then eighth, rather than ninth, in the
+stock detector's eight-process ancestry window. The marker alone cannot fix that
+depth limit because its validation uses the same bound. This is a stock timeout
+selection, not a shell-watcher fallback; the native OMP extensions still own
+supervision. Pi's launch path sets neither variable.
+
+Herdr and `FM_HOME` keep their existing roles, state, registries, and lifecycle
+ownership. No global model, auth, or settings files are rewritten.
+`FM_OMP_BIN` and `FM_PI_BIN` select executables,
 not worker routing.
 
 Rerunning `install.sh` is a reconcile, not a reinstall: it repairs symlinks,

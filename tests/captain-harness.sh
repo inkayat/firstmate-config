@@ -31,7 +31,8 @@ case ${1:-} in
     exit ;;
 esac
 printf 'EXEC_HARNESS=omp\nEXEC_CWD=%s\nEXEC_HOME=%s\nEXEC_BACKEND=%s\nEXEC_ORIGIN=%s\n' "$PWD" "$FM_HOME" "$FM_BACKEND" "$FM_FORK_ORIGIN_CWD"
-printf 'EXEC_FOREIGN=%s%s%s%s\n' "${CLAUDECODE-}" "${PI_CODING_AGENT-}" "${FM_PI_HARNESS-}" "${FM_OMP_HARNESS-}"
+printf 'EXEC_FOREIGN=%s%s%s\n' "${CLAUDECODE-}" "${PI_CODING_AGENT-}" "${FM_PI_HARNESS-}"
+printf 'EXEC_OMP_MARKER=%s\nEXEC_TIMEOUT=%s\n' "${FM_OMP_HARNESS-}" "${FM_TIMEOUT_MECHANISM_OVERRIDE-}"
 printf 'EXEC_ARGS=%s\n' "$*"
 SH
 cat > "$TMP/bin/pi" <<'SH'
@@ -41,7 +42,10 @@ case ${1:-} in
   --list-models) printf 'openai-codex gpt-5.6-sol 1K 1K yes no\n' ;;
   auth) printf '{"status":"ready"}\n' ;;
   list) echo 'No packages installed.' ;;
-  *) printf 'EXEC_HARNESS=pi\n' ;;
+  *)
+    printf 'EXEC_HARNESS=pi\n'
+    printf 'EXEC_OMP_MARKER=%s\nEXEC_TIMEOUT=%s\n' "${FM_OMP_HARNESS-}" "${FM_TIMEOUT_MECHANISM_OVERRIDE-}"
+    ;;
 esac
 SH
 cat > "$TMP/bin/herdr" <<'SH'
@@ -77,13 +81,18 @@ for kind in broken failed invalid_schema; do
 done
 if CATALOG=empty run --check >/dev/null 2>&1; then check 'empty native catalog refuses launch' failure success; else check 'empty native catalog refuses launch' failure failure; fi
 if run --harness invalid --check >/dev/null 2>&1; then check 'unknown harness refuses launch' failure success; else check 'unknown harness refuses launch' failure failure; fi
-out=$(CLAUDECODE=1 PI_CODING_AGENT=1 FM_PI_HARNESS=pi FM_OMP_HARNESS=omp run 2>&1)
+out=$(CLAUDECODE=1 PI_CODING_AGENT=1 FM_PI_HARNESS=pi FM_OMP_HARNESS=foreign FM_TIMEOUT_MECHANISM_OVERRIDE=external run 2>&1)
 check 'real launch crosses directly into OMP' omp "$(field "$out" EXEC_HARNESS)"
 check 'real launch runs at official cwd' "$FIRSTMATE_ROOT" "$(field "$out" EXEC_CWD)"
 check 'real launch preserves operational home' "$FM_HOME" "$(field "$out" EXEC_HOME)"
 check 'real launch preserves Herdr' herdr "$(field "$out" EXEC_BACKEND)"
 check 'real launch preserves origin hint' "$TMP/origin" "$(field "$out" EXEC_ORIGIN)"
-check 'foreign identity is scrubbed without forcing a marker' '' "$(field "$out" EXEC_FOREIGN)"
+check 'foreign Captain identity is scrubbed' '' "$(field "$out" EXEC_FOREIGN)"
+check 'OMP establishes its own identity after scrubbing' omp "$(field "$out" EXEC_OMP_MARKER)"
+check 'OMP selects stock timeout topology within ancestry bound' bash "$(field "$out" EXEC_TIMEOUT)"
+out=$(FM_OMP_HARNESS=omp FM_TIMEOUT_MECHANISM_OVERRIDE= run --harness pi 2>&1)
+check 'Pi fallback does not inherit OMP identity' '' "$(field "$out" EXEC_OMP_MARKER)"
+check 'Pi fallback does not force OMP timeout topology' '' "$(field "$out" EXEC_TIMEOUT)"
 for harness in omp pi; do
   out=$(run --harness "$harness" doctor --json 2>/dev/null)
   actual=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["captain"]["harness"])' 2>/dev/null)
