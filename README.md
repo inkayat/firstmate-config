@@ -309,7 +309,9 @@ tests/worker-context.sh handoff <repo-dir>                  # print the compact,
 tests/worker-context.sh validate <worker-report> [<worktree>]  # check fixture-report evidence; not a task-completion gate
 tests/worker-context.sh internal-prepare <directory>        # write a disposable bounded-internal-delegation canary fixture INSIDE your own real task worktree (a native bounded subagent always shares the parent session's cwd), print the path
 tests/worker-context.sh internal-handoff <directory> <worktree>  # print the read-only task text for a real bounded internal subagent to run against that fixture
-```
+tests/worker-context.sh scope-prepare <directory>           # build a second, open-ended fixture repo at <directory>/repo: root-only launch scope plus two independent nested candidates
+tests/worker-context.sh scope-handoff <repo-dir>             # print the open-ended handoff (task: "Find a small refactoring opportunity."); never names a candidate up front
+tests/worker-context.sh scope-validate <worker-report> [<worktree>]  # advisory check: did the independently selected candidate's own instruction/skill get applied? never checks read order, tool order, or completion
 
 `prepare` builds the fixture once; `handoff` prints the paths/precedence/
 required-actions text to hand a real delegated worker - every path bare
@@ -332,6 +334,16 @@ prove instruction-read order, and a PASS does not authorize completion.
 Live acceptance needs corroborating harness session evidence. The offline
 suite exercises the handoff and report parser, plus the native-loader
 checks above; it is not a runtime policy-enforcement test.
+
+`scope-prepare`/`scope-handoff`/`scope-validate` cover the open-ended case:
+a task that begins with only root-scope context and later requires
+discovering a nested subtree's own instructions and project-local skill,
+proven without naming that subtree up front. It proves discovery still
+works and applied context remains available after a worker independently
+selects a candidate - never that any particular read order, tool order,
+or checkpoint was observed. An earlier version of this same fixture tried
+to gate access on a strict before/after order and was abandoned; this one
+deliberately does not restore that gating.
 
 ## Bounded internal delegation
 

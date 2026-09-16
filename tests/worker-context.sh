@@ -30,6 +30,32 @@
 #                                                      proof; exit 0 only when
 #                                                      every required proof
 #                                                      passes.
+#   tests/worker-context.sh scope-prepare <directory> build a second,
+#                                                      open-ended fixture at
+#                                                      <directory>/repo: root-
+#                                                      only launch scope plus
+#                                                      two independent nested
+#                                                      candidates.
+#   tests/worker-context.sh scope-handoff <repo-dir>  print the open-ended
+#                                                      handoff (task: "Find a
+#                                                      small refactoring
+#                                                      opportunity."); never
+#                                                      names a candidate path.
+#   tests/worker-context.sh scope-validate <worker-report> [<expected-worktree>]
+#                                                      advisory check only:
+#                                                      does the report show
+#                                                      the independently
+#                                                      selected candidate's
+#                                                      own instruction/skill
+#                                                      applied? Never checks
+#                                                      read order, tool
+#                                                      order, or completion -
+#                                                      see the fixture
+#                                                      functions below for why
+#                                                      an earlier ordering-
+#                                                      gate version of this
+#                                                      exact scenario was
+#                                                      written and abandoned.
 #
 # `prepare` + `handoff` + `validate` are the deterministic interface for a
 # live acceptance run: prepare the fixture, hand `handoff`'s output to a real
@@ -96,12 +122,15 @@ C_ROOT_OVERRIDE='ROOT_OVERRIDE_CANARY'
 C_ROOT_AGENTS_SHADOWED='ROOT_AGENTS_SHADOWED_CANARY'
 C_ROOT_CLAUDE_NEVER_WIN='ROOT_CLAUDE_SHOULD_NEVER_WIN_CANARY'
 C_NESTED_SCOPE='NESTED_SCOPE_CANARY'
+C_NESTED_CLAUDE='NESTED_CLAUDE_SCOPE_CANARY'
 C_PROJECT_SKILL_NAME='migration-canary'
 C_PROJECT_SKILL_BODY='PROJECT_SKILL_CANARY_BODY'
 C_SHARED_SKILL_NAME='verification-before-completion'
 C_SHARED_SKILL_BODY='NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE'
 C_PROJECT_WINS='PROJECT_WINS_OVER_SHARED_CANARY'
 C_GLOBAL_LEAK='GLOBAL_ARCHITECTURE_REVIEW_CANARY'
+C_ROOT_AGENTS_SOLE='ROOT_AGENTS_SOLE_AUTHORITY_CANARY'
+C_ROOT_CLAUDE_SOLE='ROOT_CLAUDE_SOLE_AUTHORITY_CANARY'
 C_CAPTAIN_ONLY='captain-hold-lifecycle'
 C_MIGRATION_FILE='migrations/0001_init.sql'
 
@@ -119,7 +148,7 @@ C_MIGRATION_FILE='migrations/0001_init.sql'
 # the caller owns the directory's lifetime.
 fixture_prepare() {
   local dir=$1 repo="$1/repo"
-  mkdir -p "$repo/sub" "$repo/migrations" \
+  mkdir -p "$repo/sub" "$repo/sub2" "$repo/migrations" \
     "$repo/.agents/skills/migration-canary" \
     "$repo/.agents/skills/architecture-review"
 
@@ -148,6 +177,14 @@ EOF
   # Applies only inside sub/ - proves nested-scope precedence.
   cat > "$repo/sub/AGENTS.md" <<EOF
 Rule: $C_NESTED_SCOPE applies only to files under sub/.
+EOF
+
+  # sub2/ carries only a CLAUDE.md, no AGENTS.md - proves a nested CLAUDE.md
+  # is authoritative in its own scope when it is the nearest instruction
+  # file there, independent of the root's own override/AGENTS.md/CLAUDE.md
+  # precedence above.
+  cat > "$repo/sub2/CLAUDE.md" <<EOF
+Rule: $C_NESTED_CLAUDE applies only to files under sub2/.
 EOF
 
   printf -- '-- fixture migration\n' > "$repo/$C_MIGRATION_FILE"
@@ -225,6 +262,7 @@ than one file exists at a scope:
   AGENTS.md            - shadowed by AGENTS.override.md at this scope; not authoritative
   CLAUDE.md            - not authoritative while AGENTS.md exists at this scope
   sub/AGENTS.md        - wins only for files under sub/
+  sub2/CLAUDE.md        - wins only for files under sub2/ (no AGENTS.md there)
 
 Required project skill:
   .agents/skills/migration-canary/SKILL.md
@@ -452,6 +490,8 @@ fixture_validate_live() {
 
   case $t in *"$C_NESTED_SCOPE"*) _req NESTED_SCOPE_APPLIED 0 ;; *) _req NESTED_SCOPE_APPLIED 1 ;; esac
 
+  case $t in *"$C_NESTED_CLAUDE"*) _req NESTED_CLAUDE_APPLIED 0 ;; *) _req NESTED_CLAUDE_APPLIED 1 ;; esac
+
   # Marker presence records reported skill use, not the order of tool access.
   case $t in *"$C_PROJECT_SKILL_BODY"*) _req PROJECT_SKILL_APPLIED 0 ;; *) _req PROJECT_SKILL_APPLIED 1 ;; esac
 
@@ -578,6 +618,192 @@ fixture_validate_live() {
 }
 
 # =============================================================================
+# Open-ended nested-target discovery fixture (advisory only). A prior
+# checkpoint/ordering-gate experiment for this exact scenario (gating a
+# target's access on a strict before/after read order) was written and
+# then abandoned - see this file's git history around
+# "target-discovery checkpoint". This restores only the useful coverage
+# that survives that removal: an open-ended task launched with root-only
+# scope, a worker that independently selects one of several nested
+# candidates, and body-only canary evidence that the selected candidate's
+# own instruction and project-local skill were actually applied. It never
+# checks read order, tool-call order, or task completion, and it never
+# reveals a candidate path up front - discovering one is the point.
+# =============================================================================
+C_OE_ROOT='OPEN_ENDED_ROOT_SCOPE_CANARY'
+C_OE_A_INSTRUCTION='OPEN_ENDED_CANDIDATE_A_INSTRUCTION_CANARY'
+C_OE_A_SKILL_NAME='open-ended-candidate-a-skill'
+C_OE_A_SKILL_BODY='OPEN_ENDED_CANDIDATE_A_SKILL_BODY_CANARY'
+C_OE_A_TARGET='candidate-a/helpers.py'
+C_OE_B_INSTRUCTION='OPEN_ENDED_CANDIDATE_B_INSTRUCTION_CANARY'
+C_OE_B_SKILL_NAME='open-ended-candidate-b-skill'
+C_OE_B_SKILL_BODY='OPEN_ENDED_CANDIDATE_B_SKILL_BODY_CANARY'
+C_OE_B_TARGET='candidate-b/formatters.py'
+
+# fixture_openended_prepare <dir> - builds <dir>/repo: a root-only-scope
+# instruction plus two independent nested candidate subtrees, each with
+# its own AGENTS.md and project-local skill. Never deleted by this
+# function; the caller owns the directory's lifetime.
+fixture_openended_prepare() {
+  local dir=$1 repo="$1/repo"
+  mkdir -p "$repo/candidate-a" "$repo/candidate-b" \
+    "$repo/.agents/skills/$C_OE_A_SKILL_NAME" "$repo/.agents/skills/$C_OE_B_SKILL_NAME"
+
+  cat > "$repo/AGENTS.md" <<EOF
+Rule: $C_OE_ROOT applies at the repository root. No project-local skill is
+required at the root; nested subtrees below carry their own instructions.
+EOF
+
+  cat > "$repo/candidate-a/AGENTS.md" <<EOF
+Rule: $C_OE_A_INSTRUCTION applies to files under candidate-a/.
+
+Required project skill:
+  .agents/skills/$C_OE_A_SKILL_NAME/SKILL.md
+Requirement:
+  Read and apply this skill before reading, writing, reviewing, or editing
+  anything under candidate-a/.
+EOF
+
+  cat > "$repo/.agents/skills/$C_OE_A_SKILL_NAME/SKILL.md" <<EOF
+---
+name: $C_OE_A_SKILL_NAME
+description: Fixture project-local skill required before touching candidate-a/.
+---
+# Candidate A canary
+
+$C_OE_A_SKILL_BODY: read and apply this skill before reading, writing,
+reviewing, or editing anything under candidate-a/.
+EOF
+
+  printf 'def helpers():\n    return helpers()  # looks like an obvious small refactor\n' > "$repo/$C_OE_A_TARGET"
+
+  cat > "$repo/candidate-b/AGENTS.md" <<EOF
+Rule: $C_OE_B_INSTRUCTION applies to files under candidate-b/.
+
+Required project skill:
+  .agents/skills/$C_OE_B_SKILL_NAME/SKILL.md
+Requirement:
+  Read and apply this skill before reading, writing, reviewing, or editing
+  anything under candidate-b/.
+EOF
+
+  cat > "$repo/.agents/skills/$C_OE_B_SKILL_NAME/SKILL.md" <<EOF
+---
+name: $C_OE_B_SKILL_NAME
+description: Fixture project-local skill required before touching candidate-b/.
+---
+# Candidate B canary
+
+$C_OE_B_SKILL_BODY: read and apply this skill before reading, writing,
+reviewing, or editing anything under candidate-b/.
+EOF
+
+  printf 'def format_value(v):\n    return str(v) + "" + ""  # redundant concatenation, another small refactor\n' > "$repo/$C_OE_B_TARGET"
+
+  git -C "$repo" init -q
+  git -C "$repo" add -A
+  git -C "$repo" -c user.email=wc@example.invalid -c user.name=wc commit -q -m fixture
+}
+
+# fixture_openended_handoff <repo-dir> - prints the compact, open-ended
+# handoff: only the root scope and the literal semantic task, never a
+# candidate path, body, or the source fixture's own absolute path.
+fixture_openended_handoff() {
+  local repo=$1
+  if [ ! -f "$repo/AGENTS.md" ]; then
+    printf 'fixture_openended_handoff: %s is missing AGENTS.md; not a prepared fixture\n' "$repo" >&2
+    return 1
+  fi
+  cat <<EOF
+Task worktree: your current isolated task worktree - never the primary or
+source checkout this fixture was prepared from, which does not exist from
+your side and must never be read instead.
+
+Before reading anything below, verify you are standing at that worktree's
+root: run pwd -P and git rev-parse --show-toplevel and confirm they are
+equal.
+
+Covered scope at launch (the only scope resolved so far):
+  AGENTS.md   - repository root; applies everywhere by default
+
+Task:
+  Find a small refactoring opportunity.
+
+This task is open-ended: no specific file is named above. Explore the
+worktree yourself (read, grep, directory listings, or a bounded internal
+helper, as you prefer) and independently pick one concrete candidate to
+improve.
+
+Discovery guidance (firstmate/primary-policy.md section 2, README.md
+"Worker context and skill classes"): once you select a candidate subtree,
+treat it the same as any newly applicable scope - resolve its nearest
+AGENTS.override.md/AGENTS.md/CLAUDE.md and any project-local skill it
+requires, and apply what they say before making the change. This is
+advisory context guidance, not a pre-tool barrier or a mechanically
+enforced gate: nothing here proves or requires a particular read order,
+and it never gates task completion.
+
+Report:
+  OPEN_ENDED_TARGET_SELECTED: <worktree-relative path of the candidate
+    you chose>
+  OPEN_ENDED_INSTRUCTION_APPLIED: <worktree-relative instruction path you
+    read and applied for that subtree>
+  OPEN_ENDED_SKILL_APPLIED: <worktree-relative project-local skill path
+    you read and applied for that subtree, or none if it required none>
+
+Report what you read and applied, and the refactor you made.
+EOF
+}
+
+# fixture_openended_validate_live <report> [expected-worktree] - advisory
+# check only: does the report show the independently selected candidate's
+# own instruction and project-local skill were actually applied (body-only
+# canary present)? Never inspects read order, tool-call order, or whether
+# the change landed - it is not a completion gate. A candidate this report
+# never selects is not gated.
+fixture_openended_validate_live() {
+  local report=$1 expected=${2:-} t all_ok=0 selected
+  if [ ! -r "$report" ]; then
+    printf 'FAIL WORKTREE_REPORT_READABLE   worker report not readable: %s\n' "$report"
+    return 1
+  fi
+  t=$(cat "$report")
+
+  _req() { # <label> <ok:0|1>
+    if [ "$2" -eq 0 ]; then printf 'PASS %-28s\n' "$1"; else printf 'FAIL %-28s\n' "$1"; all_ok=1; fi
+  }
+
+  if [ -n "$expected" ]; then
+    case $t in
+      *"$expected"*) _req EXPECTED_WORKTREE 0 ;;
+      *) _req EXPECTED_WORKTREE 1 ;;
+    esac
+  else
+    printf 'SKIP %-28s (no expected worktree given)\n' EXPECTED_WORKTREE
+  fi
+
+  case $t in *"$C_OE_ROOT"*) _req ROOT_SCOPE_OBSERVED 0 ;; *) _req ROOT_SCOPE_OBSERVED 1 ;; esac
+
+  selected=$(_wc_field "$t" OPEN_ENDED_TARGET_SELECTED)
+  case $selected in
+    *candidate-a*)
+      case $t in *"$C_OE_A_INSTRUCTION"*) _req SELECTED_INSTRUCTION_APPLIED 0 ;; *) _req SELECTED_INSTRUCTION_APPLIED 1 ;; esac
+      case $t in *"$C_OE_A_SKILL_BODY"*) _req SELECTED_SKILL_APPLIED 0 ;; *) _req SELECTED_SKILL_APPLIED 1 ;; esac
+      ;;
+    *candidate-b*)
+      case $t in *"$C_OE_B_INSTRUCTION"*) _req SELECTED_INSTRUCTION_APPLIED 0 ;; *) _req SELECTED_INSTRUCTION_APPLIED 1 ;; esac
+      case $t in *"$C_OE_B_SKILL_BODY"*) _req SELECTED_SKILL_APPLIED 0 ;; *) _req SELECTED_SKILL_APPLIED 1 ;; esac
+      ;;
+    *)
+      _req SELECTED_INSTRUCTION_APPLIED 1
+      _req SELECTED_SKILL_APPLIED 1
+      ;;
+  esac
+
+  return $all_ok
+}
+
+# =============================================================================
 # CLI dispatch - must run before any offline-suite scratch state (TMP_ROOT,
 # its EXIT trap) is created, so prepare/validate/handoff never depend on or
 # disturb the default suite's own temporary root.
@@ -612,9 +838,26 @@ case "${1:-}" in
     fixture_validate_live "$report" "${3:-}"
     exit $?
     ;;
+  scope-prepare)
+    dir=${2:?"usage: $0 scope-prepare <directory>"}
+    mkdir -p "$dir"
+    fixture_openended_prepare "$dir"
+    printf '%s\n' "$dir/repo"
+    exit 0
+    ;;
+  scope-handoff)
+    repo=${2:?"usage: $0 scope-handoff <repo-dir>"}
+    fixture_openended_handoff "$repo"
+    exit 0
+    ;;
+  scope-validate)
+    report=${2:?"usage: $0 scope-validate <worker-report> [expected-worktree]"}
+    fixture_openended_validate_live "$report" "${3:-}"
+    exit $?
+    ;;
   '') ;; # fall through to the offline suite below
   *)
-    printf 'usage: %s [prepare <directory>|handoff <repo-dir>|internal-prepare <directory>|internal-handoff <directory> <expected-worktree>|validate <worker-report> [expected-worktree]]\n' "$0" >&2
+    printf 'usage: %s [prepare <directory>|handoff <repo-dir>|internal-prepare <directory>|internal-handoff <directory> <expected-worktree>|validate <worker-report> [expected-worktree]|scope-prepare <directory>|scope-handoff <repo-dir>|scope-validate <worker-report> [expected-worktree]]\n' "$0" >&2
     exit 2
     ;;
 esac
@@ -748,6 +991,23 @@ description: Fixture stand-in for a selected shared worker skill.
 SHARED_FIXTURE_CANARY
 EOF
 
+  # Root-authority-alone fixtures: a bare root AGENTS.md with no override or
+  # sibling CLAUDE.md, and a bare root CLAUDE.md with no sibling AGENTS.md -
+  # proves each file is authoritative on its own, not only "shadowed by
+  # override" or "never wins alongside AGENTS.md" as the main fixture above
+  # already proves.
+  AGENTS_ONLY_REPO="$TMP_ROOT/root-agents-only-repo"
+  CLAUDE_ONLY_REPO="$TMP_ROOT/root-claude-only-repo"
+  mkdir -p "$AGENTS_ONLY_REPO" "$CLAUDE_ONLY_REPO"
+  cat > "$AGENTS_ONLY_REPO/AGENTS.md" <<EOF
+Rule: $C_ROOT_AGENTS_SOLE applies at the repository root; no override or
+CLAUDE.md exists here.
+EOF
+  cat > "$CLAUDE_ONLY_REPO/CLAUDE.md" <<EOF
+Rule: $C_ROOT_CLAUDE_SOLE applies at the repository root; no AGENTS.md
+exists here.
+EOF
+
   PROBE="$TMP_ROOT/pi-probe.mjs"
   cat > "$PROBE" <<EOF
 import { DefaultResourceLoader, loadProjectContextFiles } from '$PI_PKG_ROOT/dist/core/resource-loader.js';
@@ -769,6 +1029,16 @@ for (const trusted of [false, true]) {
 }
 out.nested = loadProjectContextFiles({ cwd: path.join(repo, 'sub'), agentDir })
   .filter(f => f.path.startsWith(repo)).map(f => f.path);
+out.nested2 = loadProjectContextFiles({ cwd: path.join(repo, 'sub2'), agentDir })
+  .filter(f => f.path.startsWith(repo)).map(f => f.path);
+const rootAlone = async (repoPath) => {
+  const settingsManager = SettingsManager.create(repoPath, agentDir, { projectTrusted: true });
+  const loader = new DefaultResourceLoader({ cwd: repoPath, agentDir, settingsManager, noExtensions: true, noPromptTemplates: true, noThemes: true });
+  await loader.reload();
+  return loader.getAgentsFiles().agentsFiles.filter(f => f.path.startsWith(repoPath)).map(f => f.path);
+};
+out.agentsOnly = await rootAlone('$AGENTS_ONLY_REPO');
+out.claudeOnly = await rootAlone('$CLAUDE_ONLY_REPO');
 console.log(JSON.stringify(out));
 EOF
   probe_out=$(HOME="$PI_HOME" node "$PROBE" 2>&1)
@@ -788,6 +1058,9 @@ EOF
     contains 'Pi native-loader probe: trusted project-local architecture-review wins the same-name collision' "$TRUSTED_PART" "\"path\":\"$PI_REPO/.agents/skills/architecture-review/SKILL.md\""
     not_contains 'Pi native-loader probe: the global architecture-review stand-in never wins once project-local exists' "$TRUSTED_PART" "\"path\":\"$PI_HOME/.agents/skills/architecture-review/SKILL.md\""
     not_contains 'Pi native-loader probe: the official-internal captain-hold-lifecycle name never surfaces as a skill' "$probe_out" "$C_CAPTAIN_ONLY"
+    contains 'Pi native-loader probe: nested sub2/CLAUDE.md applies only in that scope (no sub2/AGENTS.md present)' "$probe_out" "$PI_REPO/sub2/CLAUDE.md"
+    contains 'Pi native-loader probe: a bare root AGENTS.md is authoritative with no override or CLAUDE.md present' "$probe_out" "$AGENTS_ONLY_REPO/AGENTS.md"
+    contains 'Pi native-loader probe: a bare root CLAUDE.md is authoritative with no AGENTS.md present' "$probe_out" "$CLAUDE_ONLY_REPO/CLAUDE.md"
   fi
 fi
 
@@ -855,7 +1128,7 @@ handoff_out=$(bash "$SELF" handoff "$CLI_DIR/repo" 2>&1); handoff_rc=$?
 check 'CLI handoff: exits 0' 0 "$handoff_rc"
 contains 'CLI handoff: names the required project skill path' "$handoff_out" 'migration-canary/SKILL.md'
 contains 'CLI handoff: names the selected shared worker skill' "$handoff_out" "$C_SHARED_SKILL_NAME"
-for marker in "$C_ROOT_OVERRIDE" "$C_ROOT_AGENTS_SHADOWED" "$C_ROOT_CLAUDE_NEVER_WIN" "$C_NESTED_SCOPE" \
+for marker in "$C_ROOT_OVERRIDE" "$C_ROOT_AGENTS_SHADOWED" "$C_ROOT_CLAUDE_NEVER_WIN" "$C_NESTED_SCOPE" "$C_NESTED_CLAUDE" \
   "$C_PROJECT_SKILL_BODY" "$C_SHARED_SKILL_BODY" "$C_PROJECT_WINS" "$C_GLOBAL_LEAK" "$C_CAPTAIN_ONLY"; do
   not_contains "CLI handoff: never quotes the canary marker '$marker'" "$handoff_out" "$marker"
 done
@@ -880,6 +1153,7 @@ not_contains 'CLI handoff: never prints the source/primary checkout absolute pat
 not_contains 'CLI handoff: never prints the unique source-path token' "$source_handoff_out" 'SOURCE-ONLY'
 contains 'CLI handoff: names AGENTS.override.md as a bare worktree-relative path' "$source_handoff_out" 'AGENTS.override.md'
 contains 'CLI handoff: names sub/AGENTS.md as a bare worktree-relative path' "$source_handoff_out" 'sub/AGENTS.md'
+contains 'CLI handoff: names sub2/CLAUDE.md as a bare worktree-relative path' "$source_handoff_out" 'sub2/CLAUDE.md'
 contains 'CLI handoff: names the migration skill as a bare worktree-relative path' "$source_handoff_out" '.agents/skills/migration-canary/SKILL.md'
 contains 'CLI handoff: names the migration file as a bare worktree-relative path' "$source_handoff_out" 'migrations/0001_init.sql'
 contains 'CLI handoff: instructs verifying pwd -P against the current worktree' "$source_handoff_out" 'pwd -P'
@@ -890,6 +1164,7 @@ cat > "$GOOD_REPORT" <<EOF
 Ran in $CLI_DIR/repo.
 $C_ROOT_OVERRIDE observed and followed.
 $C_NESTED_SCOPE observed under sub/.
+$C_NESTED_CLAUDE observed under sub2/.
 $C_PROJECT_SKILL_BODY applied before touching $C_MIGRATION_FILE.
 $C_SHARED_SKILL_BODY confirmed before declaring completion.
 $C_PROJECT_WINS applied for architecture-review.
@@ -1051,6 +1326,98 @@ contains 'CLI validate: a nonzero official-internal-skill count fails the zero-l
 # GOOD_REPORT itself already reports INTERNAL_SUBAGENT_USED: not-applicable
 # (Pi's case) and still exits 0 with the detail checks skipped, not failed.
 contains 'CLI validate: not-applicable skips the detail checks rather than failing them' "$val_out" 'SKIP INTERNAL_SUBAGENT_READ_ONLY'
+
+# =============================================================================
+# 6. Open-ended nested-target discovery (advisory only). An earlier
+#    checkpoint/ordering-gate experiment for this scenario was written and
+#    then abandoned (see this file's git history); this restores only the
+#    useful discovery coverage - root-only launch scope, an independently
+#    selected nested candidate, and body-only canary evidence that the
+#    candidate's own instruction/skill were applied - never read-order,
+#    tool-order, or completion enforcement.
+# =============================================================================
+SCOPE_DIR="$TMP_ROOT/scope-cli"
+scope_prep_out=$(bash "$SELF" scope-prepare "$SCOPE_DIR" 2>&1); scope_prep_rc=$?
+check 'CLI scope-prepare: exits 0' 0 "$scope_prep_rc"
+check 'CLI scope-prepare: prints the fixture repo path' "$SCOPE_DIR/repo" "$scope_prep_out"
+SCOPE_REPO="$SCOPE_DIR/repo"
+
+scope_handoff_out=$(bash "$SELF" scope-handoff "$SCOPE_REPO" 2>&1); scope_handoff_rc=$?
+check 'CLI scope-handoff: exits 0' 0 "$scope_handoff_rc"
+contains 'CLI scope-handoff: states the open-ended semantic task verbatim' "$scope_handoff_out" 'Find a small refactoring opportunity.'
+contains 'CLI scope-handoff: names only the root scope as covered at launch' "$scope_handoff_out" 'AGENTS.md   - repository root'
+not_contains 'CLI scope-handoff: never names candidate-a up front' "$scope_handoff_out" 'candidate-a'
+not_contains 'CLI scope-handoff: never names candidate-b up front' "$scope_handoff_out" 'candidate-b'
+not_contains 'CLI scope-handoff: never claims mechanical enforcement' "$scope_handoff_out" 'checkpoint'
+for marker in "$C_OE_ROOT" "$C_OE_A_INSTRUCTION" "$C_OE_A_SKILL_BODY" "$C_OE_B_INSTRUCTION" "$C_OE_B_SKILL_BODY"; do
+  not_contains "CLI scope-handoff: never quotes the canary marker '$marker'" "$scope_handoff_out" "$marker"
+done
+contains 'CLI scope-handoff: requires OPEN_ENDED_TARGET_SELECTED evidence' "$scope_handoff_out" 'OPEN_ENDED_TARGET_SELECTED'
+contains 'CLI scope-handoff: requires OPEN_ENDED_INSTRUCTION_APPLIED evidence' "$scope_handoff_out" 'OPEN_ENDED_INSTRUCTION_APPLIED'
+contains 'CLI scope-handoff: requires OPEN_ENDED_SKILL_APPLIED evidence' "$scope_handoff_out" 'OPEN_ENDED_SKILL_APPLIED'
+contains 'CLI scope-handoff: states discovery guidance is advisory, never a pre-tool barrier' "$scope_handoff_out" 'not a pre-tool barrier'
+
+SCOPE_SOURCE_DIR="$TMP_ROOT/SCOPE-SOURCE-ONLY-$$-do-not-leak"
+mkdir -p "$SCOPE_SOURCE_DIR"
+fixture_openended_prepare "$SCOPE_SOURCE_DIR"
+SCOPE_SOURCE_REPO="$SCOPE_SOURCE_DIR/repo"
+scope_source_handoff_out=$(bash "$SELF" scope-handoff "$SCOPE_SOURCE_REPO" 2>&1)
+not_contains 'CLI scope-handoff: never prints the source/primary checkout absolute path' "$scope_source_handoff_out" "$SCOPE_SOURCE_REPO"
+not_contains 'CLI scope-handoff: never prints the unique source-path token' "$scope_source_handoff_out" 'SCOPE-SOURCE-ONLY'
+
+GOOD_SCOPE_REPORT_A="$TMP_ROOT/scope-good-report-a.txt"
+cat > "$GOOD_SCOPE_REPORT_A" <<EOF
+Ran in $SCOPE_REPO.
+$C_OE_ROOT observed at launch; covered scope was the repository root only.
+Explored the tree and selected candidate-a/ as a small refactor opportunity.
+OPEN_ENDED_TARGET_SELECTED: $C_OE_A_TARGET
+OPEN_ENDED_INSTRUCTION_APPLIED: candidate-a/AGENTS.md
+OPEN_ENDED_SKILL_APPLIED: .agents/skills/$C_OE_A_SKILL_NAME/SKILL.md
+$C_OE_A_INSTRUCTION observed and followed.
+$C_OE_A_SKILL_BODY applied before touching $C_OE_A_TARGET.
+Refactored the duplicate return in $C_OE_A_TARGET.
+EOF
+scope_val_a_out=$(bash "$SELF" scope-validate "$GOOD_SCOPE_REPORT_A" "$SCOPE_REPO" 2>&1); scope_val_a_rc=$?
+check 'CLI scope-validate: a compliant report selecting candidate A exits 0' 0 "$scope_val_a_rc"
+not_contains 'CLI scope-validate: a compliant report selecting candidate A has no FAIL line' "$scope_val_a_out" 'FAIL'
+
+GOOD_SCOPE_REPORT_B="$TMP_ROOT/scope-good-report-b.txt"
+cat > "$GOOD_SCOPE_REPORT_B" <<EOF
+Ran in $SCOPE_REPO.
+$C_OE_ROOT observed at launch.
+Explored the tree and independently selected candidate-b/ instead.
+OPEN_ENDED_TARGET_SELECTED: $C_OE_B_TARGET
+OPEN_ENDED_INSTRUCTION_APPLIED: candidate-b/AGENTS.md
+OPEN_ENDED_SKILL_APPLIED: .agents/skills/$C_OE_B_SKILL_NAME/SKILL.md
+$C_OE_B_INSTRUCTION observed and followed.
+$C_OE_B_SKILL_BODY applied before touching $C_OE_B_TARGET.
+Refactored the redundant concatenation in $C_OE_B_TARGET.
+EOF
+scope_val_b_out=$(bash "$SELF" scope-validate "$GOOD_SCOPE_REPORT_B" "$SCOPE_REPO" 2>&1); scope_val_b_rc=$?
+check 'CLI scope-validate: a compliant report independently selecting candidate B exits 0' 0 "$scope_val_b_rc"
+not_contains 'CLI scope-validate: a compliant report selecting candidate B has no FAIL line' "$scope_val_b_out" 'FAIL'
+
+NO_SELECTION_REPORT="$TMP_ROOT/scope-no-selection-report.txt"
+cat > "$NO_SELECTION_REPORT" <<EOF
+Ran in $SCOPE_REPO. Looked around a bit, made no change.
+EOF
+scope_val_none_out=$(bash "$SELF" scope-validate "$NO_SELECTION_REPORT" "$SCOPE_REPO" 2>&1); scope_val_none_rc=$?
+if [ "$scope_val_none_rc" -eq 0 ]; then fail 'CLI scope-validate: a report with no candidate selected unexpectedly exits 0'; else pass 'CLI scope-validate: a report with no candidate selected exits nonzero'; fi
+contains 'CLI scope-validate: no candidate selected fails the instruction-applied check' "$scope_val_none_out" 'FAIL SELECTED_INSTRUCTION_APPLIED'
+
+ECHO_ONLY_REPORT="$TMP_ROOT/scope-echo-only-report.txt"
+printf '%s\n' "$scope_handoff_out" > "$ECHO_ONLY_REPORT"
+scope_val_echo_out=$(bash "$SELF" scope-validate "$ECHO_ONLY_REPORT" "$SCOPE_REPO" 2>&1); scope_val_echo_rc=$?
+if [ "$scope_val_echo_rc" -eq 0 ]; then fail 'CLI scope-validate: echoing the handoff alone unexpectedly exits 0'; else pass 'CLI scope-validate: echoing the handoff alone exits nonzero'; fi
+
+MISSING_SKILL_SCOPE_REPORT="$TMP_ROOT/scope-missing-skill-report.txt"
+grep -v -F "$C_OE_A_SKILL_BODY" "$GOOD_SCOPE_REPORT_A" > "$MISSING_SKILL_SCOPE_REPORT"
+scope_val_missing_out=$(bash "$SELF" scope-validate "$MISSING_SKILL_SCOPE_REPORT" "$SCOPE_REPO" 2>&1); scope_val_missing_rc=$?
+if [ "$scope_val_missing_rc" -eq 0 ]; then fail 'CLI scope-validate: a selected candidate with no skill evidence unexpectedly exits 0'; else pass 'CLI scope-validate: a selected candidate with no skill evidence exits nonzero'; fi
+contains 'CLI scope-validate: missing skill evidence fails its specific check' "$scope_val_missing_out" 'FAIL SELECTED_SKILL_APPLIED'
+
+no_scope_expected_out=$(bash "$SELF" scope-validate "$GOOD_SCOPE_REPORT_A" 2>&1)
+contains 'CLI scope-validate: an omitted expected-worktree is reported SKIP, never a false FAIL' "$no_scope_expected_out" 'SKIP EXPECTED_WORKTREE'
 
 usage_out=$(bash "$SELF" bogus-subcommand 2>&1); usage_rc=$?
 if [ "$usage_rc" -eq 0 ]; then fail 'CLI: an unknown subcommand unexpectedly exits 0'; else pass 'CLI: an unknown subcommand exits nonzero'; fi
