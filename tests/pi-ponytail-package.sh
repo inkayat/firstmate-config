@@ -26,6 +26,11 @@ fail() { printf 'FAIL - %s\n' "$1" >&2; failed=1; }
 check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected '$2', got '$3')"; fi; }
 contains() { case $2 in *"$3"*) pass "$1" ;; *) fail "$1 (missing '$3' in '$2')" ;; esac; }
 not_contains() { case $2 in *"$3"*) fail "$1 (unexpectedly found '$3' in '$2')" ;; *) pass "$1" ;; esac; }
+link_target_real() {
+  local target
+  target=$(readlink "$1") || return 1
+  printf '%s/%s\n' "$(cd "$(dirname "$target")" && pwd -P)" "$(basename "$target")"
+}
 
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-pi-ponytail.XXXXXX") || exit 1
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -52,6 +57,8 @@ cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$INST_CFG/firstmate/fm-stack-m
 printf '{}\n' > "$INST_CFG/firstmate/crew-dispatch.json"
 printf '# captain notes\n' > "$INST_CFG/firstmate/captain.md"
 : > "$INST_CFG/bin/fm"; chmod +x "$INST_CFG/bin/fm"
+cp "$CONFIG_ROOT/bin/ponytail-update" "$INST_CFG/bin/ponytail-update"
+chmod +x "$INST_CFG/bin/ponytail-update"
 cat > "$INST_CFG/firstmate/stack-manifest.tsv" <<EOF
 schema_version	1
 firstmate_repo	$TMP_ROOT/unused-firstmate-origin
@@ -122,12 +129,20 @@ run_fake_install() { # <suffix> [install.sh args...]
   "$INST_CFG/install.sh" "$@" 2>&1
 }
 
+mkdir -p "$TMP_ROOT/inst-bin-dir-fresh"
+printf 'leave me alone\n' > "$TMP_ROOT/inst-bin-dir-fresh/unrelated"
+INST_CFG_REAL=$(cd "$INST_CFG" && pwd -P)
+
 # =============================================================================
 # 1. Fresh run converges: separate pinned clone, settings filter, config off
 # =============================================================================
 out=$(run_fake_install fresh); code=$?
 check '1 fresh run: exit code is 0' 0 "$code"
 contains '1 fresh run: reports the Pi Ponytail package step ran' "$out" '9. Pi Ponytail package'
+check '1 launcher: ponytail-update is linked to the tracked helper' \
+  "$INST_CFG_REAL/bin/ponytail-update" "$(link_target_real "$TMP_ROOT/inst-bin-dir-fresh/ponytail-update" 2>/dev/null || printf '')"
+check '1 launcher: unrelated bin file is preserved' 'leave me alone' \
+  "$(cat "$TMP_ROOT/inst-bin-dir-fresh/unrelated" 2>/dev/null)"
 
 PI_PKG_DIR="$TMP_ROOT/inst-pi-agent-fresh/git/github.com/DietrichGebert/ponytail"
 SKILL_CACHE_DIR="$TMP_ROOT/inst-skill-cache-fresh/DietrichGebert-ponytail"
@@ -168,6 +183,25 @@ not_contains '2 second run: pi package clone reports no change' "$out2" 'pi pack
 not_contains '2 second run: pi settings reports no change' "$out2" 'skills filter in'
 not_contains '2 second run: ponytail config reports no change' "$out2" 'set defaultMode=off'
 contains '2 second run: install reports 0 change(s)' "$out2" 'install: 0 change(s), 0 failure(s)'
+
+# A missing or wrong managed launcher is reported without replacing unrelated
+# files or mutating anything in --verify mode.
+rm "$TMP_ROOT/inst-bin-dir-fresh/ponytail-update"
+launcher_verify=$(run_fake_install fresh --verify)
+contains '2 missing launcher: verify reports drift' "$launcher_verify" 'ponytail-update'
+check '2 missing launcher: verify stays read-only' '' \
+  "$(readlink "$TMP_ROOT/inst-bin-dir-fresh/ponytail-update" 2>/dev/null || printf '')"
+run_fake_install fresh >/dev/null
+ln -sfn "$TMP_ROOT/wrong-ponytail-update" "$TMP_ROOT/inst-bin-dir-fresh/ponytail-update"
+launcher_verify=$(run_fake_install fresh --verify)
+contains '2 wrong launcher: verify reports drift' "$launcher_verify" 'ponytail-update'
+check '2 wrong launcher: verify does not repoint it' "$TMP_ROOT/wrong-ponytail-update" \
+  "$(readlink "$TMP_ROOT/inst-bin-dir-fresh/ponytail-update")"
+run_fake_install fresh >/dev/null
+check '2 launcher repair: real install restores the tracked helper' \
+  "$INST_CFG_REAL/bin/ponytail-update" "$(link_target_real "$TMP_ROOT/inst-bin-dir-fresh/ponytail-update")"
+check '2 launcher repair: unrelated bin file remains untouched' 'leave me alone' \
+  "$(cat "$TMP_ROOT/inst-bin-dir-fresh/unrelated")"
 
 # =============================================================================
 # 3. Managed drift: --verify detects it; a real run corrects it

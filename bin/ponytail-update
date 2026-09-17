@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# ponytail-update - safely prepare a reviewed, uncommitted Ponytail pin update.
+set -euo pipefail
+
+ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
+# shellcheck source=/dev/null
+[ ! -f "$ENV_FILE" ] || . "$ENV_FILE"
+
+self=${BASH_SOURCE[0]}
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self="$(cd "$(dirname "$self")" && pwd)/$target" ;;
+  esac
+done
+script_root=$(cd "$(dirname "$self")/.." && pwd -P)
+CONFIG_ROOT=${FM_CONFIG_ROOT:-$script_root}
+
+fail() { printf 'ponytail-update: %s\n' "$1" >&2; exit 1; }
+git_c() { git -C "$CONFIG_ROOT" "$@"; }
+field() { printf '%s\n' "$1" | sed -n "s/^$2: //p"; }
+
+[ "$#" -eq 0 ] || fail 'this command takes no arguments'
+command -v git >/dev/null 2>&1 || fail 'git is not on PATH'
+CONFIG_ROOT=$(cd "$CONFIG_ROOT" 2>/dev/null && pwd -P) \
+  || fail "cannot resolve firstmate-config repository at $CONFIG_ROOT"
+for required in install.sh scripts/update-ponytail.sh skills/external.lock bin/ponytail-update; do
+  [ -e "$CONFIG_ROOT/$required" ] \
+    || fail "$CONFIG_ROOT is not a firstmate-config repository (missing $required)"
+done
+repo_root=$(git_c rev-parse --show-toplevel 2>/dev/null) \
+  || fail "$CONFIG_ROOT is not a Git repository"
+[ "$repo_root" = "$CONFIG_ROOT" ] \
+  || fail "$CONFIG_ROOT is not the root of its Git repository ($repo_root)"
+
+branch=$(git_c symbolic-ref --quiet --short HEAD) \
+  || fail 'firstmate-config is on a detached HEAD; check out main and retry'
+[ "$branch" = main ] \
+  || fail "firstmate-config must be on main, not $branch; nothing was changed"
+
+if [ -n "$(git_c status --porcelain)" ]; then
+  printf 'ponytail-update: working tree is dirty; refusing to continue:\n' >&2
+  git_c status --short >&2
+  fail 'commit, stash, or discard those changes yourself; nothing was changed'
+fi
+
+printf 'Checking main and origin/main history...\n'
+git_c fetch --quiet origin main \
+  || fail 'could not fetch origin/main; nothing was changed'
+origin_main=$(git_c rev-parse --verify refs/remotes/origin/main 2>/dev/null) \
+  || fail 'origin/main does not exist; nothing was changed'
+if ! git_c merge-base --is-ancestor HEAD "$origin_main" \
+   && ! git_c merge-base --is-ancestor "$origin_main" HEAD; then
+  fail 'local main cannot fast-forward with origin/main; resolve the divergence manually'
+fi
+git_c pull --ff-only origin main
+
+printf '\nChecking the latest stable Ponytail release...\n'
+check_output=$(cd "$CONFIG_ROOT" && ./scripts/update-ponytail.sh --check)
+printf '%s\n' "$check_output"
+available=$(field "$check_output" UPDATE_AVAILABLE)
+current_version=$(field "$check_output" CURRENT_VERSION)
+current_pin=$(field "$check_output" CURRENT_PIN)
+
+case $available in
+  false)
+    printf '\nUPDATE_APPLIED: false\n'
+    printf 'FINAL_VERSION: %s\n' "$current_version"
+    printf 'FINAL_PIN: %s\n' "$current_pin"
+    printf 'FINAL_UPDATE_AVAILABLE: false\n'
+    printf 'Ponytail is already at the latest stable release; nothing else ran.\n'
+    exit 0
+    ;;
+  true) ;;
+  *) fail "unexpected UPDATE_AVAILABLE value: ${available:-missing}" ;;
+esac
+
+printf '\nApplying the latest stable Ponytail pin...\n'
+(cd "$CONFIG_ROOT" && ./scripts/update-ponytail.sh)
+printf 'UPDATE_APPLIED: true\n'
+
+if git_c diff --quiet -- skills/external.lock; then
+  fail 'the updater reported an available update but left no tracked pin diff'
+fi
+printf '\nTracked pin diff:\n'
+git_c --no-pager diff -- skills/external.lock
+
+printf '\nRunning Ponytail update tests...\n'
+(cd "$CONFIG_ROOT" && bash tests/update-ponytail.sh)
+(cd "$CONFIG_ROOT" && bash tests/pi-ponytail-package.sh)
+printf 'TESTS_RESULT: passed\n'
+
+printf '\nApplying the tracked pin to this machine...\n'
+(cd "$CONFIG_ROOT" && ./install.sh)
+printf 'INSTALL_RESULT: passed\n'
+
+printf '\nVerifying installed state...\n'
+verify_output=$(cd "$CONFIG_ROOT" && ./install.sh --verify)
+printf '%s\n' "$verify_output"
+case $verify_output in
+  *'verify: 0 drift item(s), 0 failure(s)'*) ;;
+  *) fail 'install verification reported drift or failure' ;;
+esac
+printf 'VERIFY_RESULT: passed\n'
+
+printf '\nRunning the final Ponytail update check...\n'
+final_output=$(cd "$CONFIG_ROOT" && ./scripts/update-ponytail.sh --check)
+printf '%s\n' "$final_output"
+final_available=$(field "$final_output" UPDATE_AVAILABLE)
+final_version=$(field "$final_output" CURRENT_VERSION)
+final_pin=$(field "$final_output" CURRENT_PIN)
+[ "$final_available" = false ] \
+  || fail "final UPDATE_AVAILABLE is ${final_available:-missing}, expected false"
+printf 'FINAL_VERSION: %s\n' "$final_version"
+printf 'FINAL_PIN: %s\n' "$final_pin"
+printf 'FINAL_UPDATE_AVAILABLE: false\n'
+
+printf '\nPonytail update prepared successfully.\n'
+printf 'Review:\n  git diff -- skills/external.lock\n\n'
+printf 'Then commit/push through the normal firstmate-config workflow.\n'

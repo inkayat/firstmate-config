@@ -22,6 +22,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `bin/fm-doctor` | read-only architecture diagnostics: `fm doctor` / `fm doctor --json` | invoked by `bin/fm doctor` |
 | `bin/fm-version` | compact read-only identity/version summary: `fm version` / `fm version --json` | invoked by `bin/fm version` |
 | `bin/fm-update` | fast-forward-only self-update of this checkout: `fm update` | invoked by `bin/fm update` |
+| `bin/ponytail-update` | safe local Ponytail update/test/reconcile workflow: `ponytail-update` | symlinked onto `PATH` |
 | `firstmate/primary-policy.md` | the captain's operating policy | read by the captain, path named from `data/captain.md` |
 | `firstmate/captain.md` | first-run template for the captain's own notes | copied to `$FM_HOME/data/captain.md` **only when absent** |
 | `firstmate/crew-dispatch.json` | which harness takes which kind of task | symlinked to `$FM_HOME/config/crew-dispatch.json` |
@@ -45,6 +46,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `tests/update.sh` | `fm update` acceptance: up-to-date, fast-forward, dirty and diverged refusals | - |
 | `tests/pi-ponytail-package.sh` | Pi Ponytail package reconciliation acceptance: separate pinned checkout, skills-filter and `defaultMode` structural merges, idempotency, drift | - |
 | `tests/update-ponytail.sh` | `scripts/update-ponytail.sh` acceptance: stable-release selection, prerelease exclusion, `--ref`, ambiguity refusal, idempotent pin advance, never-commits proof | - |
+| `tests/ponytail-update.sh` | `ponytail-update` acceptance: fast-forward, safety refusals, short-circuit, full workflow, failure stops, forbidden Git actions | - |
 
 ## Install
 
@@ -64,6 +66,7 @@ Then, from any directory:
 
 ```sh
 fm
+ponytail-update
 ```
 
 `fm` starts OMP directly from the official FirstMate checkout; Pi is not an
@@ -111,6 +114,7 @@ tests/routing-taxonomy.sh          # eleven-category dispatch taxonomy: pinned r
 tests/stack-manifest.sh            # stack compatibility manifest: install.sh/fm-doctor/fm-version
 tests/worker-context.sh            # delegated-worker context/skill-class handoff fixtures
 tests/update.sh                    # fm update: up-to-date, fast-forward, dirty/diverged refusal
+tests/ponytail-update.sh           # ponytail-update: safe full workflow and failure boundaries
 tests/pi-ponytail-package.sh       # Pi Ponytail package: separate pinned checkout, settings/config merge, drift
 tests/update-ponytail.sh           # scripts/update-ponytail.sh: stable-release selection, --ref, ambiguity refusal
 ```
@@ -132,12 +136,16 @@ in this repository.
 **Intentional upgrade** (deliberate, reviewed, occasional):
 
 ```sh
-scripts/update-ponytail.sh --check   # report only: CURRENT_VERSION, CURRENT_PIN, LATEST_STABLE_VERSION, LATEST_STABLE_PIN, UPDATE_AVAILABLE
-scripts/update-ponytail.sh           # move the pin to the latest stable release and refresh local caches to match
-git diff -- skills/external.lock     # review the one-line pin change
-tests/update-ponytail.sh             # and the rest of the suite in "Install" above
+ponytail-update                    # fast-forward main, check, update, test, install, verify, and check again
+git diff -- skills/external.lock   # review the prepared one-line pin change
 git commit -m 'skills: bump ponytail pin' -- skills/external.lock
 ```
+
+`ponytail-update` refuses a dirty tree, a branch other than `main`, and any
+local history that cannot fast-forward to `origin/main`. If the tracked pin is
+already current, it stops after the read-only check. It never commits, merges,
+rebases, pushes, creates or deletes branches, or tags; a successful update
+leaves `skills/external.lock` changed and uncommitted for review.
 
 Then push/merge through the normal workflow, and on every other machine:
 `git pull && ./install.sh`.

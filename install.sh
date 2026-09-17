@@ -252,9 +252,10 @@ else
   [ ! -d "$addy_refs" ] || link_to "$addy_refs" "$(dirname "$SKILLS_ROOT")/references"
 fi
 
-# --- 8. launcher ------------------------------------------------------------
-step '8. fm launcher'
+# --- 8. command launchers ---------------------------------------------------
+step '8. command launchers'
 link_to "$CONFIG_ROOT/bin/fm" "$BIN_DIR/fm"
+link_to "$CONFIG_ROOT/bin/ponytail-update" "$BIN_DIR/ponytail-update"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ok "$BIN_DIR is on PATH" ;;
   *) warn "$BIN_DIR is not on PATH; add it to your shell profile" ;;
