@@ -211,7 +211,7 @@ cat > "$DOC_FAKE_BIN/omp" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
   --version) printf 'omp/%s\n' "${FM_TEST_OMP_VERSION:-18.1.21}"; exit 0 ;;
-  models) printf '{"models":[{"provider":"openai-codex","id":"gpt-5.6-sol","thinking":["high"]},{"provider":"pi-claude-code-provider","id":"sonnet","thinking":["high"]},{"provider":"anthropic","id":"claude-sonnet-5","thinking":["high"]},{"provider":"anthropic","id":"claude-opus-5","thinking":["high"]},{"provider":"openai-codex","id":"gpt-6-astra","thinking":["xhigh"]}]}\n'; exit 0 ;;
+  models) printf '{"models":[{"provider":"openai-codex","id":"gpt-5.6-sol","thinking":["high"]},{"provider":"pi-claude-code-provider","id":"sonnet","thinking":["high"]},{"provider":"anthropic","id":"claude-sonnet-5","thinking":["high"]},{"provider":"anthropic","id":"claude-opus-5","thinking":["high"]},{"provider":"openai-codex","id":"gpt-6-astra","thinking":["xhigh"]},{"provider":"anthropic","id":"claude-haiku-4-5","thinking":["low"]},{"provider":"openai-codex","id":"gpt-5.6-luna","thinking":["low"]}]}\n'; exit 0 ;;
   *) exit 0 ;;
 esac
 SH

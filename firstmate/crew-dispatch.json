@@ -1,51 +1,37 @@
 {
   "rules": [
     {
-      "when": "a small or surgical change in a known place, a one-file fix, a rename, a config edit, or a quick factual question about how something works",
+      "category": "QUICK",
+      "when": "a tiny or surgical change in a known place: a rename, an obvious one-file or config edit, mechanical cleanup, or a quick factual question about how something already works. If it needs a design decision, touches more than one coherent unit, or requires new tests or non-trivial logic, that is IMPLEMENT instead, not QUICK.",
       "use": [
         {
-          "harness": "pi",
-          "model": "openai-codex/gpt-5.3-codex-spark",
+          "harness": "omp",
+          "model": "anthropic/claude-haiku-4-5",
+          "effort": "low"
+        },
+        {
+          "harness": "omp",
+          "model": "openai-codex/gpt-5.6-luna",
           "effort": "low"
         }
       ],
-      "why": "bounded and quick; the cheap fast lane is enough and a strong model at high effort buys nothing here"
+      "why": "Claude practical capacity is about 20 versus GPT's about 5 on this fleet - roughly 4:1, not 20:1 - so the smallest ordinary lane defaults to Claude Haiku rather than spending scarcer GPT headroom on trivial work. Haiku and Luna are genuinely interchangeable same-tier candidates for this bucket (both cheap, both low effort, neither semantically preferred over the other) so FirstMate's quota-array procedure may resolve between them after this rule matches. Escalate to anthropic/claude-sonnet-5 at low or medium, by explicit captain choice, only if the task needs more reasoning than either cheap-tier model comfortably gives - never Astra or Opus for ordinary quick work; those are reserved for genuinely hard reasoning (DEEP) or broad sustained execution (IMPLEMENT-LARGE). QUICK versus IMPLEMENT is a size/decision test, not a keyword match: a rename is QUICK, a rename that also requires touching call sites across a module and deciding a new interface is IMPLEMENT."
     },
     {
-      "when": "ordinary investigation, code reading, reviewing someone else's proposal, or analysis that needs real understanding but not a structural decision",
+      "category": "EXPLORE",
+      "when": "read-only reconnaissance inside our own repository: finding files, callers, existing patterns, an inventory of something, or where a capability is implemented, with no external research and no code changes. If the question is about an external library, API, framework, or standard rather than our own code, that is RESEARCH instead.",
       "use": [
         {
-          "harness": "pi",
-          "model": "openai-codex/gpt-5.5",
-          "effort": "medium"
+          "harness": "omp",
+          "model": "anthropic/claude-haiku-4-5",
+          "effort": "low"
         }
       ],
-      "why": "reads and reasons rather than writing code; medium effort is the honest middle"
+      "why": "Ordinary in-repo recon is cheap, bounded work: Haiku at low effort reads and reports without needing deep synthesis - never Sol, Astra, or Opus for ordinary exploration; those buy nothing a careful read does not already give here. EXPLORE never leaves this repository's own source; RESEARCH is aimed at documentation, APIs, or code outside it - that is the line between them."
     },
     {
-      "when": "difficult, broad, or high-impact architecture: a system boundary, a data model, a migration shape, an ambiguous design with long-term consequences",
-      "use": [
-        {
-          "harness": "pi",
-          "model": "openai-codex/gpt-6-astra",
-          "effort": "xhigh"
-        }
-      ],
-      "why": "v0.1 architecture lane. Pi with anthropic/claude-fable-5-1 at xhigh was the originally intended lane and is deferred to a later release: Pi has no anthropic credential here and adopting one is a separate decision. This is the strongest verified Pi lane and holds the architecture slot at the same effort."
-    },
-    {
-      "when": "adversarial review, tenth-man challenge of a plan or a completion claim, or risk analysis before an expensive commitment",
-      "use": [
-        {
-          "harness": "pi",
-          "model": "openai-codex/gpt-6-astra",
-          "effort": "xhigh"
-        }
-      ],
-      "why": "independent scrutiny, deliberately on Pi and away from the implementation session. Independence is the point: when the work under review was itself produced on gpt-6-astra, override to another strong model such as openai-codex/gpt-5.6-sol so the reviewer is not the author"
-    },
-    {
-      "when": "ordinary substantial implementation: a bounded feature, normal debugging, a normal refactor, or writing and repairing tests, with a blast radius you can hold in your head",
+      "category": "EXPLORE",
+      "when": "the same read-only, in-repository reconnaissance as ordinary EXPLORE above, but the reasoning is materially harder than a lookup - for example an unusually tangled call graph, or untangling behavior across many indirection layers. This is a separate, more specific rule within EXPLORE, not a quota-resolved peer of the ordinary case: pick this rule only when the harder-reasoning condition genuinely applies, not by default.",
       "use": [
         {
           "harness": "omp",
@@ -53,10 +39,83 @@
           "effort": "medium"
         }
       ],
-      "why": "the everyday coding lane"
+      "why": "Sonnet at medium effort is the deliberate escalation once plain reading stops being enough, still well short of RESEARCH's external-synthesis effort or DEEP's reasoning-difficulty bar - this is still in-repository recon, just harder recon."
     },
     {
-      "when": "the same kind of implementation work when it spans several files or the design is not fully settled at intake",
+      "category": "RESEARCH",
+      "when": "questions that require looking outside our own repository: external documentation, third-party APIs, dependency behavior, framework or protocol semantics, standards, or comparing our approach against upstream/OSS source. If the target is our own code rather than an external system, that is EXPLORE instead; if the deliverable is a judgment on a proposed change rather than an information-gathering pass, that is REVIEW instead.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-sonnet-5",
+          "effort": "medium"
+        }
+      ],
+      "why": "Sonnet at medium effort is the honest default for synthesizing external material."
+    },
+    {
+      "category": "RESEARCH",
+      "when": "the same external-research work as ordinary RESEARCH above, specifically when Pi's own tooling (its research-oriented extensions or browsing) is materially better suited to the research target than a cold OMP session. This is a tooling condition, a separate more specific rule, never a default fallback chosen by quota.",
+      "use": [
+        {
+          "harness": "pi",
+          "model": "openai-codex/gpt-5.6-sol",
+          "effort": "medium"
+        }
+      ],
+      "why": "Sol on Pi is the deliberate route once Pi's own tooling is the better fit for the research target: it fits Pi's tooling profile for this specific job better than a cold OMP session would, at the same medium effort as the OMP default."
+    },
+    {
+      "category": "REVIEW",
+      "when": "ordinary review of code, a diff, a proposal, or a completion claim for correctness, maintainability, or regression risk - not adversarial challenge, not a structural/architecture decision, and not a deep root-cause investigation. If the deliverable is external information-gathering rather than judgment on our own change, that is RESEARCH instead; if independence from the author is the point, that is TENTH-MAN instead; if the question is about system boundaries or long-term structure, that is ARCHITECTURE instead.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-sonnet-5",
+          "effort": "medium"
+        }
+      ],
+      "why": "Medium effort covers an ordinary review; raise to high (the same Sonnet lane IMPLEMENT-LARGE already validates), by explicit captain choice, only for genuinely broader scope, never because the request sounds urgent. REVIEW stays on the same OMP session/harness family as implementation because it is not seeking independence - that is what separates it from TENTH-MAN, which deliberately runs on Pi, away from the implementation session. REVIEW also never owns a structural verdict about boundaries or migrations; that judgment belongs to ARCHITECTURE."
+    },
+    {
+      "category": "ARCHITECTURE",
+      "when": "structural decisions with real blast radius: a system or module boundary, an API or domain boundary, a data model, a migration shape, or any ambiguous design with long-term consequences. Use role architecture. If the deliverable is approval or risk-flagging of someone else's proposal rather than an independent structural recommendation, that is REVIEW instead; if the trigger is a hard-to-diagnose bug or subtle reasoning problem rather than a forward design decision, that is DEEP instead.",
+      "use": [
+        {
+          "harness": "pi",
+          "model": "openai-codex/gpt-6-astra",
+          "effort": "xhigh"
+        }
+      ],
+      "why": "Astra on Pi is the active primary architecture lane at max non-negotiable effort, kept on Pi to hold the structural call outside the implementation session. anthropic/claude-opus-5 on OMP at high or xhigh is an explicit availability/semantic override the captain may choose - for example when deep familiarity with an already-open OMP-side implementation matters more than a fresh Pi read, or when Astra is genuinely unavailable - never a quota-selected peer automatically resolved alongside Astra: the two are not proven interchangeable, so Opus is documented here rather than added to this rule's candidate array. Consultation here never automatically owns the implementation that follows."
+    },
+    {
+      "category": "TENTH-MAN",
+      "when": "deliberate adversarial challenge: an independent second opinion, a stress test of a plan's assumptions and failure modes, or scrutiny of a completion claim before an expensive or hard-to-reverse commitment. Use role tenth-man. Never routine; risk-triggered or explicitly requested. If the goal is ordinary correctness/maintainability feedback rather than adversarial challenge, that is REVIEW instead; if the goal is a forward structural recommendation rather than challenging an existing one, that is ARCHITECTURE instead.",
+      "use": [
+        {
+          "harness": "pi",
+          "model": "openai-codex/gpt-6-astra",
+          "effort": "xhigh"
+        }
+      ],
+      "why": "Independence is the entire point: this lane runs on Pi, deliberately away from the OMP session that likely produced the work under review, and Astra stays the active primary at non-negotiable xhigh. anthropic/claude-opus-5 on OMP at high or xhigh is an explicit availability/semantic override, never a quota-selected peer in this rule's array - reach for it deliberately, not by automatic resolution. If the work under review was itself produced on gpt-6-astra, override to a different strong model (for example openai-codex/gpt-5.6-sol) so the reviewer is never the author. TENTH-MAN versus DEEP: DEEP investigates why something is broken; TENTH-MAN challenges whether a plan or a completion claim actually holds, broken or not."
+    },
+    {
+      "category": "IMPLEMENT",
+      "when": "ordinary bounded engineering: a feature, a bug fix, normal debugging, a normal refactor, or writing/repairing tests, with a blast radius you can hold in your head. This is the main coding lane and the unmarked default for real code changes. If the change is a one-file mechanical edit or a factual question, that is QUICK instead; if it spans many files or the design is not settled yet, that is IMPLEMENT-LARGE instead; if the change is primarily frontend/browser-visible behavior, that is UI/BROWSER instead.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-sonnet-5",
+          "effort": "medium"
+        }
+      ],
+      "why": "The everyday coding lane: OMP + Sonnet at medium effort. This is the default assumption for 'write code' work; only move to a neighboring category when one of its specific triggers actually applies, not because the request feels bigger or smaller than usual."
+    },
+    {
+      "category": "IMPLEMENT-LARGE",
+      "when": "broad multi-file or long-horizon implementation where the direction is mostly already known - more files than IMPLEMENT, but not an unsettled reasoning problem. If the change is small enough to hold in your head, that is IMPLEMENT instead; if the difficulty is in figuring out what is wrong or what is true rather than in the amount of settled work to do, that is DEEP instead.",
       "use": [
         {
           "harness": "omp",
@@ -64,23 +123,55 @@
           "effort": "high"
         }
       ],
-      "why": "same lane, more thinking; choose between medium and high on actual complexity, not on how the request is phrased"
+      "why": "Sonnet at high effort is the default for broad, mostly-settled execution."
     },
     {
-      "when": "hard or large implementation: broad blast radius, cross-stack work, security-sensitive, migration-sensitive, data-integrity-sensitive or concurrency-sensitive changes, difficult production bugs, high-risk refactors",
+      "category": "IMPLEMENT-LARGE",
+      "when": "the same broad, mostly-settled IMPLEMENT-LARGE work above, specifically when the sheer sustained execution - not merely the file count - justifies a stronger model: a long autonomous run across many coordinated changes where Sonnet-high's throughput is genuinely the limiting factor. This is a separate, more specific rule, not a quota-resolved peer of the ordinary case; do not pick it, and never pick Astra, just because many files are touched.",
       "use": [
         {
           "harness": "omp",
           "model": "anthropic/claude-opus-5",
+          "effort": "high"
+        }
+      ],
+      "why": "Opus here is difficult execution, not difficult reasoning - that is what separates this escalation from DEEP's Astra/Opus lanes. Escalate to xhigh, by explicit captain choice, only when even high effort is not enough."
+    },
+    {
+      "category": "DEEP",
+      "when": "subtle root-cause work that calls for read-only diagnosis first: an intermittent bug, a concurrency or race condition, an algorithmic problem, a security or data-integrity issue, highly coupled reasoning across a system, or a problem that has already survived repeated attempts, where the immediate deliverable is finding the root cause rather than fixing it yet (the scout form). This is a difficulty-of-reasoning test, not a size test - many files touched does not imply DEEP, and a single concurrency bug can. If the work is mostly settled, broad execution rather than an unsettled reasoning problem, that is IMPLEMENT-LARGE instead; if the deliverable is a forward structural recommendation rather than a diagnosis, that is ARCHITECTURE instead; if the deliverable is adversarial challenge of someone else's plan or claim rather than your own diagnosis, that is TENTH-MAN instead.",
+      "use": [
+        {
+          "harness": "pi",
+          "model": "openai-codex/gpt-6-astra",
           "effort": "xhigh"
-        },
+        }
+      ],
+      "why": "Astra at xhigh on Pi, read-only, is the preferred lane for the diagnosis form: find the root cause, do not fix it yet. Kept separate from the implementation form below rather than pooled as interchangeable candidates, because harness and mutability differ, not just provider."
+    },
+    {
+      "category": "DEEP",
+      "when": "the same reasoning-difficulty DEEP work above, once the difficult implementation and its supporting tools are clean enough to diagnose and fix in one session (the ship form), rather than requiring a separate read-only diagnosis pass first.",
+      "use": [
         {
           "harness": "omp",
           "model": "openai-codex/gpt-6-astra",
           "effort": "xhigh"
         }
       ],
-      "why": "two peer lanes, both at xhigh, never downgraded. Choose semantically per task: Opus for long-context work across an unfamiliar repository, subtle invariants, and careful migrations; Astra for dense algorithmic or protocol work and long autonomous tool loops. Weigh task shape, blast radius, reasoning needs, repository context and current provider headroom. Do not reach for Astra merely because a task is difficult, and do not make either the universal default"
+      "why": "Astra at xhigh on OMP is the preferred lane once diagnosis and fix belong in the same mutating session. anthropic/claude-opus-5 at high or xhigh remains an explicit fallback the captain may choose when Astra is unavailable or when deep familiarity with an already-open OMP session outweighs Astra's reasoning edge - never a quota pool member automatically resolved alongside Astra in either DEEP rule's array. Astra is difficult reasoning; Opus is difficult execution - prefer Astra here specifically because DEEP is defined by the reasoning axis, not the execution axis IMPLEMENT-LARGE owns."
+    },
+    {
+      "category": "UI/BROWSER",
+      "when": "frontend or browser-visible behavior: forms, validation, navigation, interactive components, browser-side state, or end-to-end user flows where automated tests can pass while real user behavior is wrong. If there is no browser-visible behavior at stake, that is IMPLEMENT instead.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-sonnet-5",
+          "effort": "high"
+        }
+      ],
+      "why": "OMP + Sonnet at high effort, paired with this configuration's existing browser/manual verification policy (primary-policy.md section 7). Browser-visible surface alone is never a reason to reach for Opus or Astra; if the underlying bug is a genuinely hard reasoning problem rather than an ordinary UI change, route it to DEEP instead and still apply browser verification to confirm the fix."
     }
   ],
   "default": [
