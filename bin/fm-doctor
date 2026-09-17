@@ -808,14 +808,14 @@ for i in "${!ROUTING_MODELS[@]}"; do
   esac
 done
 
-fable_qwen_found=0
+qwen_ollama_found=0
 for m in "${ROUTING_MODELS[@]}"; do
-  case $m in *fable*|*qwen*|*ollama*) fable_qwen_found=1; break ;; esac
+  case $m in *qwen*|*ollama*) qwen_ollama_found=1; break ;; esac
 done
-if [ "$fable_qwen_found" -eq 1 ]; then
-  add_check routing.fable_qwen_deferred FAIL "a configured lane's model names Fable and/or Qwen/Ollama; v0.1 policy defers them" "$CREW_DISPATCH"
+if [ "$qwen_ollama_found" -eq 1 ]; then
+  add_check routing.qwen_ollama_deferred FAIL "a configured lane names Qwen/Ollama; current policy defers local models" "$CREW_DISPATCH"
 else
-  add_check routing.fable_qwen_deferred DEFERRED "Fable and Qwen/Ollama are intentionally absent from configured crew-dispatch.json lanes; deferred to a later release" ""
+  add_check routing.qwen_ollama_deferred DEFERRED "Qwen/Ollama are intentionally absent from configured crew-dispatch.json lanes; deferred to a later release" ""
 fi
 
 J_ROUTING=$(printf '{"crew_dispatch_path":%s,"valid":%s,"lane_count":%s,"parse_method":%s}' \

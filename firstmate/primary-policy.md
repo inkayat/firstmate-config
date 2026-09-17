@@ -153,18 +153,18 @@ wins over the table.
 | EXPLORE | omp `anthropic/claude-haiku-4-5` low | senior-fullstack |
 | RESEARCH | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
 | REVIEW | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
-| ARCHITECTURE | pi `openai-codex/gpt-6-astra` xhigh | architecture |
+| ARCHITECTURE | pi `openai-codex/gpt-6-astra` xhigh or omp `anthropic/claude-fable-5-1` xhigh | architecture |
 | TENTH-MAN | pi `openai-codex/gpt-6-astra` xhigh | tenth-man |
 | IMPLEMENT | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
 | IMPLEMENT-LARGE | omp `anthropic/claude-sonnet-5` high | senior-fullstack |
-| DEEP | pi `openai-codex/gpt-6-astra` xhigh (diagnosis) / omp `openai-codex/gpt-6-astra` xhigh (implementation) | senior-fullstack |
+| DEEP | omp `anthropic/claude-fable-5-1` xhigh or Astra xhigh (Pi for diagnosis, omp for implementation) | senior-fullstack |
 | UI/BROWSER | omp `anthropic/claude-sonnet-5` high | senior-fullstack |
 | DEFAULT | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
 
-This table shows each category's active primary route only. Separate
-more-specific rules and documented overrides (below) are not primary/
-fallback pairs and are deliberately left off this table so it cannot be
-misread as a fallback list.
+This table summarizes each category's active candidate set. Separate
+more-specific rules and documented overrides (below) are not fallback pairs;
+they remain explicit so semantic escalation cannot be mistaken for quota
+selection.
 
 `config/crew-dispatch.json` carries fourteen `rules` entries (ten distinct
 `category` values; EXPLORE, RESEARCH, IMPLEMENT-LARGE, and DEEP each span
@@ -181,51 +181,35 @@ blocked and the work waits for a decision.
 capacity on this fleet is roughly Claude 20 against GPT 5 - a ratio of about
 4:1, not 20:1 - so ordinary, comparable work defaults to a Claude lane
 (Haiku for QUICK/EXPLORE, Sonnet for RESEARCH/REVIEW/IMPLEMENT/
-IMPLEMENT-LARGE/UI-BROWSER). Scarcer GPT capacity is spent deliberately,
-only where OpenAI reasoning materially helps: Astra for ARCHITECTURE,
-TENTH-MAN and DEEP, where the point is either independence from the OMP
-implementation session (Pi, away from that session) or genuinely hard
-reasoning. Semantic fit is decided first, per the category table above;
-provider availability and capacity only break ties within a rule's own
-listed candidates, never override the category or rule itself.
+IMPLEMENT-LARGE/UI-BROWSER). Architecture and DEEP instead pair Claude Fable
+5.1 with GPT-6 Astra at xhigh because those categories are defined by
+structural or root-cause reasoning. TENTH-MAN stays on Astra so adversarial
+review remains independent from the OMP implementation session. Semantic fit
+is decided first; provider availability and capacity only break ties within a
+rule's own listed candidates, never override the category or rule itself.
 
 **`use` arrays versus separate rules versus documented overrides.**
-FirstMate resolves a matched rule's `use` array through its own
-quota-array procedure, so an array must contain only candidates that are
-genuinely, semantically interchangeable - never a mix of semantic
-escalations, tooling conditions, or mutability choices dressed up as one
-array. QUICK's Haiku/Luna pair is the one case in this configuration that
-qualifies: both are the same cheap tier, at the same effort, with no
-semantic reason to prefer one over the other. Every other apparent
-"alternative" is instead one of two things:
+FirstMate resolves a matched rule's `use` array through its quota-array
+procedure, so an array contains only candidates intended as semantic peers:
 
-- **A separate, more specific rule carrying the same `category` value**,
-  used when the difference is a genuine semantic trigger FirstMate should
-  match on its own `when` text, not resolve by quota: EXPLORE's
-  harder-reasoning rule (Sonnet), RESEARCH's Pi-tooling-better rule
-  (`openai-codex/gpt-5.6-sol` on Pi), IMPLEMENT-LARGE's sustained-execution
-  rule (Opus), and DEEP's diagnosis rule (Pi + Astra, read-only) versus its
-  implementation rule (OMP + Astra, mutating) - harness and mutability
-  differ between them, not just provider.
-- **A documented availability/semantic override, never encoded in a `use`
-  array**, for a candidate that is not proven interchangeable with the
-  active primary: `anthropic/claude-opus-5` for ARCHITECTURE and
-  TENTH-MAN (Astra stays the sole active primary on Pi), and for DEEP's
-  implementation rule (Astra stays the sole active primary on OMP). The
-  captain reaches for Opus deliberately in these three cases - unavailable
-  Astra, or OMP-session familiarity outweighing Astra's reasoning edge -
-  never as a quota-resolved peer.
+- QUICK pairs Haiku and Luna at low effort.
+- ARCHITECTURE pairs Pi + Astra and OMP + Fable 5.1 at xhigh.
+- DEEP diagnosis pairs OMP + Fable 5.1 with Pi + Astra at xhigh; DEEP
+  implementation pairs both models on OMP at xhigh.
 
-**Opus versus Astra** stays a semantic choice, never a size-driven default
-and never a shared candidate array: Opus is difficult *execution* - long
-sustained work across an unfamiliar repository, subtle invariants, careful
-migrations, broad but mostly-settled implementation (IMPLEMENT-LARGE's own
-escalation rule) - while Astra is difficult *reasoning* - dense algorithmic
-or protocol work, structural judgment, adversarial scrutiny, root-cause
-diagnosis (ARCHITECTURE, TENTH-MAN, and both DEEP rules, where Astra is the
-active primary and Opus is a documented override, per above). Many files
-touched does not by itself select Astra or Opus; a single hard concurrency
-bug can.
+Separate, more-specific rules carry the same `category` value when the
+difference is a semantic trigger rather than a quota choice: EXPLORE's
+harder-reasoning rule, RESEARCH's Pi-tooling-better rule,
+IMPLEMENT-LARGE's sustained-execution rule, and DEEP diagnosis versus
+implementation. TENTH-MAN keeps Astra as its sole active candidate; Opus
+remains a deliberate documented override there when independence requires a
+different strong model.
+
+**Opus, Astra, and Fable** stay semantically scoped. Opus is difficult
+*execution* for IMPLEMENT-LARGE's sustained-work escalation. Astra and Fable
+5.1 are difficult *reasoning* peers for ARCHITECTURE and DEEP. Astra remains
+TENTH-MAN's independent adversarial lane. Many files touched does not itself
+select any of them; a single hard concurrency bug can.
 
 **Tenth-man independence.** Review on a model that did not produce the work.
 If the change came from Astra, override to a different strong model (for
@@ -249,28 +233,19 @@ ship. Judge the actual task, not the category label.
 
 **Model catalog adoption.** `openai-codex/gpt-5.6-luna` is adopted as
 QUICK's genuinely-interchangeable OMP array peer: OMP's native catalog
-reports its explicit supported effort list (low through max, including
-low); Pi's own catalog reports only a bare `thinking: yes/no` column with
-no per-level enumeration, so this adoption claim rests on OMP's explicit
-levels, not on Pi ever having enumerated Luna's or Astra's individual
-effort support - Pi-side effort checks continue to rely on FirstMate's
-existing, unchanged detector, which accepts any requested effort once
-`thinking` reads `yes`. `openai-codex/gpt-5.6-sol` remains the
-Captain-startup-only candidate in `captain-startup-models.tsv` (unchanged)
-and is now also RESEARCH's Pi-tooling-better route and the named
-tenth-man-independence override above - one model, matched independently
-by each rule's own `when` condition, never conflated. `openai-codex/gpt-5.5`
-is retired from worker routing entirely: no active route, fallback, or
-lane anywhere in this configuration uses it.
+reports its explicit supported effort list (low through max, including low).
+`anthropic/claude-fable-5-1` is likewise an active OMP candidate for
+ARCHITECTURE and both DEEP forms; OMP's catalog reports xhigh support, while
+Pi exposes no Anthropic provider on this machine. Pi therefore carries Astra,
+and OMP carries Fable 5.1 plus Astra where the mutating DEEP form requires
+that harness. `openai-codex/gpt-5.6-sol` remains the Captain-startup
+candidate in `captain-startup-models.tsv`, RESEARCH's Pi-tooling-better
+route, and the named tenth-man-independence override. `openai-codex/gpt-5.5`
+remains retired from worker routing.
 
-**Deferred to a later release.** Two lanes are deliberately absent rather
-than blocked by it. Pi with `anthropic/claude-fable-5-1` at xhigh was the
-originally intended architecture lane; Pi has no anthropic credential on
-this machine, and adopting it is a later decision, so the architecture slot
-runs on the strongest verified Pi lane (Astra) at the same effort. The local
-Qwen and Ollama lane is likewise deferred while that machine is offline.
-Neither is configured anywhere in this repository; adding one is a release
-of its own, not a config tweak.
+**Deferred to a later release.** The local Qwen/Ollama lane remains absent
+while that machine is offline. It is not configured anywhere in this
+repository.
 
 **Collisions.** The full disambiguating language for every adjacent-category
 pair a task could plausibly straddle (QUICK/IMPLEMENT, EXPLORE/RESEARCH,
