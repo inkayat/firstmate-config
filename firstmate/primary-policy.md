@@ -140,45 +140,148 @@ Five decisions, kept separate on purpose: **role** (how to work), **harness**
 the others along - a hard task does not automatically mean the strongest
 model, and a strong model does not automatically mean maximum effort.
 
-| Work | Harness | Model | Effort |
-| --- | --- | --- | --- |
-| small or surgical edit, quick factual question | Pi | `openai-codex/gpt-5.3-codex-spark` | low |
-| ordinary analysis, investigation, reviewing a proposal | Pi | `openai-codex/gpt-5.5` | medium |
-| difficult, broad or high-impact architecture | Pi | `openai-codex/gpt-6-astra` **(interim, see below)** | xhigh |
-| adversarial review, tenth-man | Pi | a strong model the work under review did not use | xhigh |
-| ordinary substantial implementation, normal debugging, refactors, tests | omp | `anthropic/claude-sonnet-5` | medium or high |
-| hard or large implementation, broad blast radius, security / migration / data-integrity / concurrency sensitive, difficult production bugs, high-risk refactors | omp | `anthropic/claude-opus-5` **or** `openai-codex/gpt-6-astra` | xhigh |
+**Category first.** Every delegated task maps to exactly one of eleven
+dispatch categories before harness/model/effort are chosen. Categories are a
+semantic-fit classification, not a size ladder and not a keyword match - read
+the full "when"/"why" text for each in `config/crew-dispatch.json`, the
+authoritative source this table summarizes. An explicit captain choice always
+wins over the table.
 
-`config/crew-dispatch.json` carries the same table in the form Firstmate reads
-at intake. An explicit captain choice always wins over it.
+| Category | Primary route | Role |
+| --- | --- | --- |
+| QUICK | omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-5.6-luna` low - genuinely interchangeable) | senior-fullstack |
+| EXPLORE | omp `anthropic/claude-haiku-4-5` low | senior-fullstack |
+| RESEARCH | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
+| REVIEW | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
+| ARCHITECTURE | pi `openai-codex/gpt-6-astra` xhigh | architecture |
+| TENTH-MAN | pi `openai-codex/gpt-6-astra` xhigh | tenth-man |
+| IMPLEMENT | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
+| IMPLEMENT-LARGE | omp `anthropic/claude-sonnet-5` high | senior-fullstack |
+| DEEP | pi `openai-codex/gpt-6-astra` xhigh (diagnosis) / omp `openai-codex/gpt-6-astra` xhigh (implementation) | senior-fullstack |
+| UI/BROWSER | omp `anthropic/claude-sonnet-5` high | senior-fullstack |
+| DEFAULT | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
 
-**Effort is not negotiable downward.** Where this table says xhigh, a lane
+This table shows each category's active primary route only. Separate
+more-specific rules and documented overrides (below) are not primary/
+fallback pairs and are deliberately left off this table so it cannot be
+misread as a fallback list.
+
+`config/crew-dispatch.json` carries fourteen `rules` entries (ten distinct
+`category` values; EXPLORE, RESEARCH, IMPLEMENT-LARGE, and DEEP each span
+two more-specific rules sharing the same category value) plus `default` for
+the DEFAULT catch-all, in the form Firstmate reads at intake, each with the
+full natural-language `when`/`why` text this table compresses. An explicit
+captain choice always wins over it.
+
+**Effort is not negotiable downward.** Where the table says xhigh, a lane
 that cannot run xhigh does not run at reduced effort; it is reported as
 blocked and the work waits for a decision.
 
-**Medium versus high** on the Sonnet lane is a judgement about actual
-complexity - files touched, how settled the design is, how much of the system
-the change can disturb - never about how urgently the request was phrased.
+**Claude-heavy by design, GPT where reasoning materially helps.** Practical
+capacity on this fleet is roughly Claude 20 against GPT 5 - a ratio of about
+4:1, not 20:1 - so ordinary, comparable work defaults to a Claude lane
+(Haiku for QUICK/EXPLORE, Sonnet for RESEARCH/REVIEW/IMPLEMENT/
+IMPLEMENT-LARGE/UI-BROWSER). Scarcer GPT capacity is spent deliberately,
+only where OpenAI reasoning materially helps: Astra for ARCHITECTURE,
+TENTH-MAN and DEEP, where the point is either independence from the OMP
+implementation session (Pi, away from that session) or genuinely hard
+reasoning. Semantic fit is decided first, per the category table above;
+provider availability and capacity only break ties within a rule's own
+listed candidates, never override the category or rule itself.
 
-**Opus versus Astra** is a semantic choice between two peers, both at xhigh,
-made per task: Opus for long-context work across an unfamiliar repository,
-subtle invariants and careful migrations; Astra for dense algorithmic or
-protocol work and long autonomous tool loops. Weigh task shape, blast radius,
-reasoning needs, repository context and current provider headroom. Difficulty
-alone does not select Astra, and neither model is the default for everything.
+**`use` arrays versus separate rules versus documented overrides.**
+FirstMate resolves a matched rule's `use` array through its own
+quota-array procedure, so an array must contain only candidates that are
+genuinely, semantically interchangeable - never a mix of semantic
+escalations, tooling conditions, or mutability choices dressed up as one
+array. QUICK's Haiku/Luna pair is the one case in this configuration that
+qualifies: both are the same cheap tier, at the same effort, with no
+semantic reason to prefer one over the other. Every other apparent
+"alternative" is instead one of two things:
+
+- **A separate, more specific rule carrying the same `category` value**,
+  used when the difference is a genuine semantic trigger FirstMate should
+  match on its own `when` text, not resolve by quota: EXPLORE's
+  harder-reasoning rule (Sonnet), RESEARCH's Pi-tooling-better rule
+  (`openai-codex/gpt-5.6-sol` on Pi), IMPLEMENT-LARGE's sustained-execution
+  rule (Opus), and DEEP's diagnosis rule (Pi + Astra, read-only) versus its
+  implementation rule (OMP + Astra, mutating) - harness and mutability
+  differ between them, not just provider.
+- **A documented availability/semantic override, never encoded in a `use`
+  array**, for a candidate that is not proven interchangeable with the
+  active primary: `anthropic/claude-opus-5` for ARCHITECTURE and
+  TENTH-MAN (Astra stays the sole active primary on Pi), and for DEEP's
+  implementation rule (Astra stays the sole active primary on OMP). The
+  captain reaches for Opus deliberately in these three cases - unavailable
+  Astra, or OMP-session familiarity outweighing Astra's reasoning edge -
+  never as a quota-resolved peer.
+
+**Opus versus Astra** stays a semantic choice, never a size-driven default
+and never a shared candidate array: Opus is difficult *execution* - long
+sustained work across an unfamiliar repository, subtle invariants, careful
+migrations, broad but mostly-settled implementation (IMPLEMENT-LARGE's own
+escalation rule) - while Astra is difficult *reasoning* - dense algorithmic
+or protocol work, structural judgment, adversarial scrutiny, root-cause
+diagnosis (ARCHITECTURE, TENTH-MAN, and both DEEP rules, where Astra is the
+active primary and Opus is a documented override, per above). Many files
+touched does not by itself select Astra or Opus; a single hard concurrency
+bug can.
 
 **Tenth-man independence.** Review on a model that did not produce the work.
-If the change came from Astra, review on a different strong model rather than
-the same one.
+If the change came from Astra, override to a different strong model (for
+example `openai-codex/gpt-5.6-sol`) rather than the same one.
 
-**Deferred to a later release.** Two lanes are deliberately absent from v0.1
-rather than blocked by it. Pi with `anthropic/claude-fable-5-1` at xhigh was
-the originally intended architecture lane; Pi has no anthropic credential on
+**Role stays separate from category.** The category table selects
+harness/model/effort; it never selects a role. Only three roles exist
+(section 4): `senior-fullstack` is the default for every category above
+except the two that name a different one. `architecture` and `tenth-man`
+are used only for their matching categories, and only because those
+categories are explicitly risk-triggered or structural, never because a
+category happens to route through a strong model.
+
+**Scout or ship is chosen per task, not per category.** EXPLORE, RESEARCH,
+REVIEW, ARCHITECTURE, and TENTH-MAN are commonly read-only and commonly run
+as a scout; QUICK, IMPLEMENT, IMPLEMENT-LARGE, UI/BROWSER, and the
+implementation form of DEEP are commonly mutating and commonly run as a
+ship. Neither mapping is fixed: a QUICK question can be a scout, a QUICK
+rename a ship; a DEEP diagnosis is naturally a scout, a DEEP fix naturally a
+ship. Judge the actual task, not the category label.
+
+**Model catalog adoption.** `openai-codex/gpt-5.6-luna` is adopted as
+QUICK's genuinely-interchangeable OMP array peer: OMP's native catalog
+reports its explicit supported effort list (low through max, including
+low); Pi's own catalog reports only a bare `thinking: yes/no` column with
+no per-level enumeration, so this adoption claim rests on OMP's explicit
+levels, not on Pi ever having enumerated Luna's or Astra's individual
+effort support - Pi-side effort checks continue to rely on FirstMate's
+existing, unchanged detector, which accepts any requested effort once
+`thinking` reads `yes`. `openai-codex/gpt-5.6-sol` remains the
+Captain-startup-only candidate in `captain-startup-models.tsv` (unchanged)
+and is now also RESEARCH's Pi-tooling-better route and the named
+tenth-man-independence override above - one model, matched independently
+by each rule's own `when` condition, never conflated. `openai-codex/gpt-5.5`
+is retired from worker routing entirely: no active route, fallback, or
+lane anywhere in this configuration uses it.
+
+**Deferred to a later release.** Two lanes are deliberately absent rather
+than blocked by it. Pi with `anthropic/claude-fable-5-1` at xhigh was the
+originally intended architecture lane; Pi has no anthropic credential on
 this machine, and adopting it is a later decision, so the architecture slot
-runs on the strongest verified Pi lane at the same effort. The local Qwen and
-Ollama lane is likewise deferred while that machine is offline. Neither is
-configured anywhere in this repository; adding one is a release of its own,
-not a config tweak.
+runs on the strongest verified Pi lane (Astra) at the same effort. The local
+Qwen and Ollama lane is likewise deferred while that machine is offline.
+Neither is configured anywhere in this repository; adding one is a release
+of its own, not a config tweak.
+
+**Collisions.** The full disambiguating language for every adjacent-category
+pair a task could plausibly straddle (QUICK/IMPLEMENT, EXPLORE/RESEARCH,
+RESEARCH/REVIEW, REVIEW/TENTH-MAN, REVIEW/ARCHITECTURE, ARCHITECTURE/DEEP,
+IMPLEMENT/IMPLEMENT-LARGE, IMPLEMENT-LARGE/DEEP, IMPLEMENT/UI-BROWSER,
+DEEP/TENTH-MAN) lives in each category's own primary rule's `when` text in
+`config/crew-dispatch.json`, not as a separate keyword table here: that
+`when` clause names the neighboring category it could be confused with and
+states the concrete test that resolves it. A category's more-specific
+secondary rule(s) instead state the narrower trigger that distinguishes
+them from their own category's primary rule.
 
 ## 4. Roles
 

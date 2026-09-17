@@ -38,6 +38,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `tests/model-selection.sh` | captain startup model selection acceptance | - |
 | `tests/multi-project-captain.sh` | multi-project resolution/isolation/routing acceptance | - |
 | `tests/doctor.sh` | `fm doctor` acceptance: statuses, exit codes, JSON schema | - |
+| `tests/routing-taxonomy.sh` | eleven-category dispatch taxonomy acceptance: pinned routes, collision disambiguation, fixtures, retired-model reference scan | - |
 | `tests/stack-manifest.sh` | stack compatibility manifest acceptance: `install.sh`/`fm-doctor`/`fm-version` sharing one baseline | - |
 | `tests/worker-context.sh` | delegated-worker context/skill-class acceptance, plus a `prepare`/`handoff`/`validate` CLI for a real live fixture run | - |
 | `tests/update.sh` | `fm update` acceptance: up-to-date, fast-forward, dirty and diverged refusals | - |
@@ -103,6 +104,7 @@ tests/captain-harness.sh           # OMP default, explicit harnesses, native ava
 tests/smoke.sh --live              # the same, plus a captain that is currently running
 tests/multi-project-captain.sh     # project resolution, isolation, and routing
 tests/doctor.sh                    # fm doctor: statuses, exit codes, JSON schema
+tests/routing-taxonomy.sh          # eleven-category dispatch taxonomy: pinned routes, collisions, fixtures
 tests/stack-manifest.sh            # stack compatibility manifest: install.sh/fm-doctor/fm-version
 tests/worker-context.sh            # delegated-worker context/skill-class handoff fixtures
 tests/update.sh                    # fm update: up-to-date, fast-forward, dirty/diverged refusal
@@ -428,21 +430,70 @@ treated as automatically trusted evidence.
 
 ## Routing in v0.1
 
-Every lane below was probed directly and then again through a real
+Every category below was probed directly and then again through a real
 FirstMate -> Herdr -> worker lifecycle before it was written into
 `firstmate/crew-dispatch.json`. Effort is never negotiated downward.
 
-| Work | Harness | Model | Effort |
-| --- | --- | --- | --- |
-| small, surgical, quick question | Pi | `openai-codex/gpt-5.3-codex-spark` | low |
-| ordinary analysis and review | Pi | `openai-codex/gpt-5.5` | medium |
-| difficult, broad architecture | Pi | `openai-codex/gpt-6-astra` | xhigh |
-| tenth-man, adversarial review | Pi | a strong model the work under review did not use | xhigh |
-| ordinary implementation, debugging, refactors, tests | omp | `anthropic/claude-sonnet-5` | medium or high |
-| hard, large or high-risk implementation | omp | `anthropic/claude-opus-5` or `openai-codex/gpt-6-astra` | xhigh |
+Every delegated task maps to exactly one of eleven dispatch categories -
+a semantic-fit classification, not a size ladder - before harness, model,
+and effort are chosen. `firstmate/crew-dispatch.json` is the authoritative
+source: its fourteen `rules` entries (ten distinct `category` values;
+EXPLORE, RESEARCH, IMPLEMENT-LARGE, and DEEP each span two more-specific
+rules sharing the same category value) plus its `default` entry carry the
+full natural-language `when`/`why` text this table compresses, including
+the disambiguating rule for every pair of categories a task could
+plausibly straddle. `firstmate/primary-policy.md` section 3 carries the
+same table for the captain, plus the Claude-heavy/GPT-deliberate rationale,
+the `use`-array-versus-separate-rule-versus-documented-override
+distinction, the Opus-versus-Astra (execution versus reasoning)
+distinction, role and scout/ship mapping, and model catalog adoption notes.
 
-Opus and Astra are peers, chosen per task on shape, blast radius, reasoning
-needs and provider headroom - not by keyword and not by difficulty alone.
+| Category | Primary route | Role |
+| --- | --- | --- |
+| QUICK | omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-5.6-luna` low - genuinely interchangeable) | senior-fullstack |
+| EXPLORE | omp `anthropic/claude-haiku-4-5` low | senior-fullstack |
+| RESEARCH | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
+| REVIEW | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
+| ARCHITECTURE | pi `openai-codex/gpt-6-astra` xhigh | architecture |
+| TENTH-MAN | pi `openai-codex/gpt-6-astra` xhigh | tenth-man |
+| IMPLEMENT | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
+| IMPLEMENT-LARGE | omp `anthropic/claude-sonnet-5` high | senior-fullstack |
+| DEEP | pi `openai-codex/gpt-6-astra` xhigh (diagnosis) / omp `openai-codex/gpt-6-astra` xhigh (implementation) | senior-fullstack |
+| UI/BROWSER | omp `anthropic/claude-sonnet-5` high | senior-fullstack |
+| DEFAULT | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
+
+This is each category's active primary route only - not a primary/fallback
+pair. FirstMate resolves a rule's `use` array through its own quota-array
+procedure, so that array holds only genuinely interchangeable candidates
+(QUICK's Haiku/Luna pair is the one case here). Genuine semantic
+escalations - EXPLORE's harder-reasoning rule (Sonnet), RESEARCH's
+Pi-tooling-better rule (`openai-codex/gpt-5.6-sol` on Pi), IMPLEMENT-LARGE's
+sustained-execution rule (Opus), and DEEP's diagnosis-versus-implementation
+split - are separate `rules` entries sharing the same category value
+instead. `anthropic/claude-opus-5` for ARCHITECTURE, TENTH-MAN, and DEEP's
+implementation rule is a documented availability/semantic override the
+captain reaches for deliberately, never encoded in either rule's `use`
+array alongside Astra: the two are not proven interchangeable.
+
+Opus and Astra are never a shared candidate array; capacity on this fleet
+is roughly Claude 20 against GPT 5 (about 4:1, not 20:1). Scout versus ship
+is chosen per task, not fixed per category: EXPLORE, RESEARCH, REVIEW,
+ARCHITECTURE, and TENTH-MAN are commonly scouts; QUICK, IMPLEMENT,
+IMPLEMENT-LARGE, UI/BROWSER, and the implementation form of DEEP are
+commonly ships.
+
+`openai-codex/gpt-5.6-luna` is adopted as QUICK's genuinely-interchangeable
+OMP array peer: OMP's native catalog reports its explicit per-level effort
+support; Pi's own catalog reports only a bare `thinking: yes/no` column,
+never a per-level enumeration, so Pi-side effort checks still rely on
+FirstMate's existing, unchanged "any requested effort once `thinking` reads
+yes" detector. `openai-codex/gpt-5.6-sol` remains the Captain-startup-only
+candidate (see "Captain startup model" above) and is also RESEARCH's
+Pi-tooling-better route and the named tenth-man-independence override -
+the same model, two separate, independently matched uses, never confused
+with each other. `openai-codex/gpt-5.5` is retired from worker routing
+entirely: no active route, fallback, or lane anywhere in this
+configuration uses it.
 
 Deferred to a later release, and absent from this configuration: Pi with
 `anthropic/claude-fable-5-1`, and the local Qwen/Ollama lane.
