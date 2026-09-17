@@ -42,6 +42,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `tests/stack-manifest.sh` | stack compatibility manifest acceptance: `install.sh`/`fm-doctor`/`fm-version` sharing one baseline | - |
 | `tests/worker-context.sh` | delegated-worker context/skill-class acceptance, plus a `prepare`/`handoff`/`validate` CLI for a real live fixture run | - |
 | `tests/update.sh` | `fm update` acceptance: up-to-date, fast-forward, dirty and diverged refusals | - |
+| `tests/pi-ponytail-package.sh` | Pi Ponytail package reconciliation acceptance: separate pinned checkout, skills-filter and `defaultMode` structural merges, idempotency, drift | - |
 
 ## Install
 
@@ -108,6 +109,7 @@ tests/routing-taxonomy.sh          # eleven-category dispatch taxonomy: pinned r
 tests/stack-manifest.sh            # stack compatibility manifest: install.sh/fm-doctor/fm-version
 tests/worker-context.sh            # delegated-worker context/skill-class handoff fixtures
 tests/update.sh                    # fm update: up-to-date, fast-forward, dirty/diverged refusal
+tests/pi-ponytail-package.sh       # Pi Ponytail package: separate pinned checkout, settings/config merge, drift
 ```
 
 ## fm version
