@@ -85,9 +85,14 @@
           "harness": "pi",
           "model": "openai-codex/gpt-6-astra",
           "effort": "xhigh"
+        },
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-fable-5-1",
+          "effort": "xhigh"
         }
       ],
-      "why": "Astra on Pi is the active primary architecture lane at max non-negotiable effort, kept on Pi to hold the structural call outside the implementation session. anthropic/claude-opus-5 on OMP at high or xhigh is an explicit availability/semantic override the captain may choose - for example when deep familiarity with an already-open OMP-side implementation matters more than a fresh Pi read, or when Astra is genuinely unavailable - never a quota-selected peer automatically resolved alongside Astra: the two are not proven interchangeable, so Opus is documented here rather than added to this rule's candidate array. Consultation here never automatically owns the implementation that follows."
+      "why": "openai-codex/gpt-6-astra on Pi and anthropic/claude-fable-5-1 on OMP are active xhigh architecture peers. Both are reserved for structural decisions with real blast radius; FirstMate resolves between them through the quota-array procedure after this rule matches. Consultation here never automatically owns the implementation that follows."
     },
     {
       "category": "TENTH-MAN",
@@ -135,19 +140,24 @@
           "effort": "high"
         }
       ],
-      "why": "Opus here is difficult execution, not difficult reasoning - that is what separates this escalation from DEEP's Astra/Opus lanes. Escalate to xhigh, by explicit captain choice, only when even high effort is not enough."
+      "why": "Opus here is difficult execution, not difficult reasoning - that is what separates this escalation from DEEP's Fable/Astra lanes. Escalate to xhigh, by explicit captain choice, only when even high effort is not enough."
     },
     {
       "category": "DEEP",
       "when": "subtle root-cause work that calls for read-only diagnosis first: an intermittent bug, a concurrency or race condition, an algorithmic problem, a security or data-integrity issue, highly coupled reasoning across a system, or a problem that has already survived repeated attempts, where the immediate deliverable is finding the root cause rather than fixing it yet (the scout form). This is a difficulty-of-reasoning test, not a size test - many files touched does not imply DEEP, and a single concurrency bug can. If the work is mostly settled, broad execution rather than an unsettled reasoning problem, that is IMPLEMENT-LARGE instead; if the deliverable is a forward structural recommendation rather than a diagnosis, that is ARCHITECTURE instead; if the deliverable is adversarial challenge of someone else's plan or claim rather than your own diagnosis, that is TENTH-MAN instead.",
       "use": [
         {
+          "harness": "omp",
+          "model": "anthropic/claude-fable-5-1",
+          "effort": "xhigh"
+        },
+        {
           "harness": "pi",
           "model": "openai-codex/gpt-6-astra",
           "effort": "xhigh"
         }
       ],
-      "why": "Astra at xhigh on Pi, read-only, is the preferred lane for the diagnosis form: find the root cause, do not fix it yet. Kept separate from the implementation form below rather than pooled as interchangeable candidates, because harness and mutability differ, not just provider."
+      "why": "anthropic/claude-fable-5-1 on OMP and openai-codex/gpt-6-astra on Pi are active xhigh peers for the read-only diagnosis form: find the root cause, do not fix it yet. FirstMate resolves between them through the quota-array procedure after this rule matches."
     },
     {
       "category": "DEEP",
@@ -155,11 +165,16 @@
       "use": [
         {
           "harness": "omp",
+          "model": "anthropic/claude-fable-5-1",
+          "effort": "xhigh"
+        },
+        {
+          "harness": "omp",
           "model": "openai-codex/gpt-6-astra",
           "effort": "xhigh"
         }
       ],
-      "why": "Astra at xhigh on OMP is the preferred lane once diagnosis and fix belong in the same mutating session. anthropic/claude-opus-5 at high or xhigh remains an explicit fallback the captain may choose when Astra is unavailable or when deep familiarity with an already-open OMP session outweighs Astra's reasoning edge - never a quota pool member automatically resolved alongside Astra in either DEEP rule's array. Astra is difficult reasoning; Opus is difficult execution - prefer Astra here specifically because DEEP is defined by the reasoning axis, not the execution axis IMPLEMENT-LARGE owns."
+      "why": "anthropic/claude-fable-5-1 and openai-codex/gpt-6-astra on OMP are active xhigh peers once diagnosis and the difficult implementation belong in the same mutating session. FirstMate resolves between them through the quota-array procedure after this rule matches."
     },
     {
       "category": "UI/BROWSER",
@@ -171,7 +186,7 @@
           "effort": "high"
         }
       ],
-      "why": "OMP + Sonnet at high effort, paired with this configuration's existing browser/manual verification policy (primary-policy.md section 7). Browser-visible surface alone is never a reason to reach for Opus or Astra; if the underlying bug is a genuinely hard reasoning problem rather than an ordinary UI change, route it to DEEP instead and still apply browser verification to confirm the fix."
+      "why": "OMP + Sonnet at high effort, paired with this configuration's existing browser/manual verification policy (primary-policy.md section 7). Browser-visible surface alone is never a reason to reach for Opus, Fable, or Astra; if the underlying bug is a genuinely hard reasoning problem rather than an ordinary UI change, route it to DEEP instead and still apply browser verification to confirm the fix."
     }
   ],
   "default": [

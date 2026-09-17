@@ -96,9 +96,9 @@ PY
 }
 
 # category_rule_use_length <category> <rule-occurrence 1-based> - how many
-# `use` entries that specific rule's array carries. Used to enforce the
-# quota-array-purity rule: only QUICK's one rule may legitimately have more
-# than one candidate.
+# `use` entries that specific rule's array carries. Used to enforce that
+# multi-candidate arrays contain only the deliberately paired peers documented
+# by this routing policy.
 category_rule_use_length() {
   local cat=$1 occ=$2
   if [ "$PARSE_METHOD" = jq ]; then
@@ -171,22 +171,16 @@ for pair in QUICK:1 EXPLORE:2 RESEARCH:2 REVIEW:1 ARCHITECTURE:1 TENTH-MAN:1 IMP
 done
 
 # =============================================================================
-# 2. Pinned active-primary route per category rule (regression protection):
-#    harness/model/effort exactly as documented in primary-policy.md section
-#    3 and README.md "Routing in v0.1". Quota-array purity: only QUICK's one
-#    rule may legitimately carry more than one `use` candidate (Haiku/Luna
-#    are genuinely interchangeable); every other rule below is asserted to
-#    carry exactly one candidate, so a semantic escalation or a documented
-#    override can never silently regress back into a quota-array peer.
+# 2. Pinned active route per category rule (regression protection):
+#    harness/model/effort exactly as documented in primary-policy.md and
+#    README.md. Multi-candidate arrays are limited to the deliberate peer sets
+#    for QUICK, ARCHITECTURE, and DEEP; semantic escalations and documented
+#    overrides remain separate.
 # =============================================================================
 check_rule_use() { # <category> <rule-occurrence, for the message only> <aggregated-line-number> <harness> <model> <effort>
   # <aggregated-line-number> indexes category_field's own output, which is
   # every `use` entry from every rule sharing this category, concatenated
-  # in document order - not an index local to one rule. Every split-
-  # category rule below carries exactly one `use` entry, so that rule's
-  # occurrence number equals its aggregated line number; only QUICK's
-  # single rule has more than one entry, so its two calls both pass
-  # occurrence 1 with aggregated lines 1 and 2.
+  # in document order - not an index local to one rule.
   local cat=$1 occ=$2 line_no=$3 h=$4 m=$5 e=$6 line
   line=$(category_field "$cat" use | sed -n "${line_no}p")
   check "$cat rule #$occ: use entry is $h/$m/$e" "$h	$m	$e" "$line"
@@ -202,8 +196,8 @@ no_opus_in_array() { # <category> - checks every use array across all of
   local cat=$1 models
   models=$(category_field "$cat" use | cut -f2)
   case $models in
-    *opus*) fail "$cat: an opus model wrongly appears in a use array (must be a documented override only)" ;;
-    *) pass "$cat: no opus model appears in any use array (documented override only)" ;;
+    *opus*) fail "$cat: an opus model wrongly appears in a use array" ;;
+    *) pass "$cat: no opus model appears in any use array" ;;
   esac
 }
 
@@ -228,15 +222,15 @@ check_rule_use RESEARCH 2 2 pi openai-codex/gpt-5.6-sol medium
 check_array_length REVIEW 1 1
 check_rule_use REVIEW 1 1 omp anthropic/claude-sonnet-5 medium
 
-# ARCHITECTURE: one rule, Astra only - Opus is a documented override, never
-# a second array candidate.
-check_array_length ARCHITECTURE 1 1
+# ARCHITECTURE: Astra and Fable 5.1 are active xhigh peers.
+check_array_length ARCHITECTURE 1 2
 check_rule_use ARCHITECTURE 1 1 pi openai-codex/gpt-6-astra xhigh
+check_rule_use ARCHITECTURE 1 2 omp anthropic/claude-fable-5-1 xhigh
 no_opus_in_array ARCHITECTURE
 arch_why=$(category_field ARCHITECTURE why)
-contains 'ARCHITECTURE: Opus is documented as an override in why-text' "$(printf '%s' "$arch_why" | tr '[:upper:]' '[:lower:]')" 'opus'
+contains 'ARCHITECTURE: why-text names Fable 5.1' "$arch_why" 'anthropic/claude-fable-5-1'
 
-# TENTH-MAN: one rule, Astra only - same override treatment as ARCHITECTURE.
+# TENTH-MAN: one rule, Astra only, with Opus as a prose-only override.
 check_array_length TENTH-MAN 1 1
 check_rule_use TENTH-MAN 1 1 pi openai-codex/gpt-6-astra xhigh
 no_opus_in_array TENTH-MAN
@@ -248,23 +242,23 @@ check_array_length IMPLEMENT 1 1
 check_rule_use IMPLEMENT 1 1 omp anthropic/claude-sonnet-5 medium
 
 # IMPLEMENT-LARGE: two separate rules (ordinary broad, then the
-# sustained-execution escalation to Opus - a real rule, unlike
-# ARCHITECTURE/TENTH-MAN/DEEP's prose-only Opus override).
+# sustained-execution escalation to Opus - a real rule, unlike TENTH-MAN's
+# prose-only Opus override).
 check_array_length IMPLEMENT-LARGE 1 1
 check_array_length IMPLEMENT-LARGE 2 1
 check_rule_use IMPLEMENT-LARGE 1 1 omp anthropic/claude-sonnet-5 high
 check_rule_use IMPLEMENT-LARGE 2 2 omp anthropic/claude-opus-5 high
 
-# DEEP: two separate rules (Pi+Astra diagnosis, OMP+Astra implementation) -
-# Opus is a documented override on the implementation rule, never a second
-# array candidate on either rule.
-check_array_length DEEP 1 1
-check_array_length DEEP 2 1
-check_rule_use DEEP 1 1 pi openai-codex/gpt-6-astra xhigh
-check_rule_use DEEP 2 2 omp openai-codex/gpt-6-astra xhigh
+# DEEP: diagnosis and implementation each pair Fable 5.1 with Astra at xhigh.
+check_array_length DEEP 1 2
+check_array_length DEEP 2 2
+check_rule_use DEEP 1 1 omp anthropic/claude-fable-5-1 xhigh
+check_rule_use DEEP 1 2 pi openai-codex/gpt-6-astra xhigh
+check_rule_use DEEP 2 3 omp anthropic/claude-fable-5-1 xhigh
+check_rule_use DEEP 2 4 omp openai-codex/gpt-6-astra xhigh
 no_opus_in_array DEEP
 deep_why=$(category_field DEEP why)
-contains 'DEEP: Opus is documented as an override in why-text' "$(printf '%s' "$deep_why" | tr '[:upper:]' '[:lower:]')" 'opus'
+contains 'DEEP: why-text names Fable 5.1' "$deep_why" 'anthropic/claude-fable-5-1'
 
 # UI/BROWSER: one rule, one candidate.
 check_array_length UI/BROWSER 1 1

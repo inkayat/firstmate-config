@@ -294,7 +294,7 @@ chmod +x "$LAUNCHER_OTHER/fm"
 
 # Every model this repository's crew-dispatch.json and captain-startup-models
 # reference, so the fully-healthy scenario has nothing left UNAVAILABLE.
-HEALTHY_AVAILABLE="openai-codex/gpt-5.6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5,anthropic/claude-haiku-4-5,openai-codex/gpt-5.6-luna"
+HEALTHY_AVAILABLE="openai-codex/gpt-5.6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5,anthropic/claude-haiku-4-5,anthropic/claude-fable-5-1,openai-codex/gpt-5.6-luna"
 
 # A fully hermetic system PATH: symlink only the exact utilities fm-doctor
 # needs, never a whole real bin directory. On macOS, /usr/bin itself ships a
@@ -366,8 +366,8 @@ contains 'healthy: an explicit heartbeat check is reported' "$out" 'runtime.hear
 contains 'healthy: roles all readable' "$out" 'PASS          roles.tenth-man'
 contains 'healthy: skills fully installed' "$out" 'PASS          skills.global_installation'
 contains 'healthy: no official-internal skill leakage' "$out" 'PASS          skills.no_official_internal_leak'
-contains 'healthy: Fable/Qwen reported DEFERRED, not FAIL' "$out" 'DEFERRED      routing.fable_qwen_deferred'
-not_contains 'healthy: Fable/Qwen deferred check is never FAIL' "$out" 'FAIL          routing.fable_qwen_deferred'
+contains 'healthy: Fable is an active available routing model' "$out" 'PASS          routing.model.omp.anthropic/claude-fable-5-1'
+contains 'healthy: Qwen/Ollama remain deferred' "$out" 'DEFERRED      routing.qwen_ollama_deferred'
 contains 'healthy: stack manifest loaded' "$out" 'PASS          stack.manifest'
 contains 'healthy: Pi version matches the tested baseline' "$out" "PASS          harnesses.pi_version"
 contains 'healthy: omp version matches the tested baseline' "$out" "PASS          harnesses.omp_version"
@@ -592,7 +592,7 @@ if [ -n "$SYS_JQ" ]; then
   unset RUN_PATH
   check 'jq tier: exit code is 0' 0 "$code"
   contains 'jq tier: crew-dispatch reports it was parsed via jq' "$out" 'parsed via jq'
-  contains 'jq tier: the real crew-dispatch.json has 16 lanes' "$out" '16 lane(s)'
+  contains 'jq tier: the real crew-dispatch.json has 19 lanes' "$out" '19 lane(s)'
 else
   pass 'jq tier: skipped (no jq installed on the test runner)'
 fi
@@ -604,7 +604,7 @@ fi
 # the real crew-dispatch.json. Make it available in pi's fake catalog but
 # absent from omp's, so a doctor that still used the Captain's Pi detector for
 # every lane would wrongly report the omp lane available too.
-FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,anthropic/claude-sonnet-5,anthropic/claude-opus-5'
+FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,anthropic/claude-sonnet-5,anthropic/claude-opus-5,anthropic/claude-fable-5-1'
 out=$(run_doctor); code=$?
 unset FM_TEST_OMP_AVAILABLE
 check 'harness-scoped routing: exit code stays 0 (non-mandatory)' 0 "$code"
@@ -774,9 +774,9 @@ status_exit_agree '20a healthy' "$out20a" "$json20a" "$code20a"
 # (fm-doctor's default), Sol and Astra are available in OMP's native
 # catalog, but the Pi-only Sonnet provider is not - exactly the shape
 # README.md documents as expected on OMP. Selection still succeeds via Sol.
-FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5,anthropic/claude-haiku-4-5,openai-codex/gpt-5.6-luna'
+FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5,anthropic/claude-haiku-4-5,anthropic/claude-fable-5-1,openai-codex/gpt-5.6-luna'
 out20b=$(run_doctor); code20b=$?
-json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5,anthropic/claude-haiku-4-5,openai-codex/gpt-5.6-luna' run_doctor --json)
+json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5,anthropic/claude-haiku-4-5,anthropic/claude-fable-5-1,openai-codex/gpt-5.6-luna' run_doctor --json)
 unset FM_TEST_OMP_AVAILABLE
 check '20b optional-unavailable: exit code stays 0' 0 "$code20b"
 contains '20b optional-unavailable: Sol is selected as preferred' "$out20b" 'selected preferred candidate openai-codex/gpt-5.6-sol'
