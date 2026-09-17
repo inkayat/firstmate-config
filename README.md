@@ -32,6 +32,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `roles/*/ROLE.md` | generic role definitions quoted into worker briefs | read by the captain |
 | `skills/*/SKILL.md` | our own global skills | symlinked into `~/.agents/skills/` |
 | `skills/external.lock` | external skill packs, pinned by commit | cloned to a machine-local cache, symlinked into `~/.agents/skills/` |
+| `scripts/update-ponytail.sh` | intentional, reviewable Ponytail version bump: moves the pinned commit forward, never runs automatically, never commits/pushes/merges/tags | run manually, see "Updating Ponytail" below |
 | `install.sh` | idempotent installer | - |
 | `tests/smoke.sh` | acceptance smoke | - |
 | `tests/captain-harness.sh` | default OMP / explicit Pi launch and diagnostic contracts | - |
@@ -43,6 +44,7 @@ mechanism: fleet lock, watcher, heartbeat, wake queue, spawn, teardown.
 | `tests/worker-context.sh` | delegated-worker context/skill-class acceptance, plus a `prepare`/`handoff`/`validate` CLI for a real live fixture run | - |
 | `tests/update.sh` | `fm update` acceptance: up-to-date, fast-forward, dirty and diverged refusals | - |
 | `tests/pi-ponytail-package.sh` | Pi Ponytail package reconciliation acceptance: separate pinned checkout, skills-filter and `defaultMode` structural merges, idempotency, drift | - |
+| `tests/update-ponytail.sh` | `scripts/update-ponytail.sh` acceptance: stable-release selection, prerelease exclusion, `--ref`, ambiguity refusal, idempotent pin advance, never-commits proof | - |
 
 ## Install
 
@@ -110,7 +112,56 @@ tests/stack-manifest.sh            # stack compatibility manifest: install.sh/fm
 tests/worker-context.sh            # delegated-worker context/skill-class handoff fixtures
 tests/update.sh                    # fm update: up-to-date, fast-forward, dirty/diverged refusal
 tests/pi-ponytail-package.sh       # Pi Ponytail package: separate pinned checkout, settings/config merge, drift
+tests/update-ponytail.sh           # scripts/update-ponytail.sh: stable-release selection, --ref, ambiguity refusal
 ```
+
+## Updating Ponytail
+
+firstmate-config intentionally pins Ponytail (the shared `ponytail`/
+`ponytail-review` skills and the Pi package's own separate checkout) to one
+exact commit in `skills/external.lock`, for the same reason every other
+external pin in this repository is a commit and not a branch: an unpinned
+global skill or package changes the behavior of every project on every
+machine without a diff. `install.sh` only ever reconciles machines to that
+tracked pin; it never tracks or adopts upstream's latest commit itself.
+
+**Normal convergence** (every machine, every day): `git pull` then
+`./install.sh`. Nothing about Ponytail changes unless the pin itself changed
+in this repository.
+
+**Intentional upgrade** (deliberate, reviewed, occasional):
+
+```sh
+scripts/update-ponytail.sh --check   # report only: CURRENT_VERSION, CURRENT_PIN, LATEST_STABLE_VERSION, LATEST_STABLE_PIN, UPDATE_AVAILABLE
+scripts/update-ponytail.sh           # move the pin to the latest stable release and refresh local caches to match
+git diff -- skills/external.lock     # review the one-line pin change
+tests/update-ponytail.sh             # and the rest of the suite in "Install" above
+git commit -m 'skills: bump ponytail pin' -- skills/external.lock
+```
+
+Then push/merge through the normal workflow, and on every other machine:
+`git pull && ./install.sh`.
+
+`scripts/update-ponytail.sh` never commits, merges, pushes, or tags - it only
+edits the tracked lock file and refreshes this machine's local Ponytail
+caches (the shared skill clone and the Pi package's own separate checkout)
+to match, leaving a reviewable `git diff` for a human. Its default target is
+never upstream's default-branch HEAD and never a bare tag name resolved
+loosely: it discovers every stable release tag (`vX.Y.Z`, excluding
+prerelease/beta/rc tags such as `v1.2.0-rc.1`), picks the highest by
+semantic version, and resolves that exact tag to its exact commit SHA -
+human intent is the release version, machine desired state is always the
+SHA. If the highest version has tags pointing at different commits, or no
+stable release tag exists at all, it refuses to guess and fails with an
+actionable error instead of silently picking one. `--ref <tag-or-sha>`
+targets an exact tag or a full commit SHA for deliberate testing - never a
+branch name, so it cannot recreate automatic branch tracking through the
+back door.
+
+A manually updated Pi package checkout (for example from `pi update`) is
+not itself authoritative: the next `./install.sh` run reconciles it back to
+`skills/external.lock`'s tracked commit, exactly like any other managed
+drift.
 
 ## fm version
 
