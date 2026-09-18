@@ -430,4 +430,88 @@ run6 show a-working-1 >/dev/null
 calls=$(sort -u "$CREW_CALLS" 2>/dev/null | tr '\n' ' ')
 check '17 narrow reconcile: show only calls crew-state for the requested id' "$calls" 'a-working-1 '
 
+# =============================================================================
+# Scenario 7: landed entries carry no `repo` (the real
+# fm-secondmate-home-summary.v1 shape) - a completed task must still group
+# under its actual project, never under "".
+# =============================================================================
+HOME7="$TMP_ROOT/home7"
+FIRSTMATE7="$TMP_ROOT/firstmate7"
+mkdir -p "$HOME7/state" "$FIRSTMATE7/bin"
+TASKS_AXI_CALLS="$TMP_ROOT/tasks-axi-calls.log"
+
+cat > "$FIRSTMATE7/bin/fm-crew-state.sh" <<SH
+#!/usr/bin/env bash
+printf 'state: working . source: stub . busy\n'
+SH
+chmod +x "$FIRSTMATE7/bin/fm-crew-state.sh"
+
+# Archived-task lookup fallback, consulted only when the board has no
+# previously known project for a landed id.
+cat > "$FIRSTMATE7/bin/fm-tasks-axi.sh" <<SH
+#!/usr/bin/env bash
+printf '%s %s\n' "\$1" "\$2" >> "$TASKS_AXI_CALLS"
+case "\$2" in
+  archived-fresh-1) printf 'id: archived-fresh-1\nrepo: proj-fresh\nstatus: landed\n' ;;
+  *) printf 'id: %s\nstatus: landed\n' "\$2" ;;
+esac
+SH
+chmod +x "$FIRSTMATE7/bin/fm-tasks-axi.sh"
+
+run7() { FM_HOME="$HOME7" FIRSTMATE_ROOT="$FIRSTMATE7" PATH="/usr/bin:/bin" "$BOARD" "$@"; }
+
+# Version A: cross-1 is active, with a repo, proving the normal projected path.
+cat > "$HOME7/state/home-summary.json" <<'JSON'
+{
+  "schema": "fm-secondmate-home-summary.v1",
+  "queued": [],
+  "active_children": [
+    {"id": "cross-1", "repo": "proj-cross", "kind": "ship", "name": "Cross task"}
+  ],
+  "endpoints": [],
+  "holds": [],
+  "decisions_open": [],
+  "landed": []
+}
+JSON
+run7 show cross-1 --json >/dev/null
+
+# Version B: cross-1 lands (real shape: landed entries carry no `repo`), and a
+# never-before-seen archived task appears only in `landed`, also without
+# `repo` - the "fresh board" case.
+cat > "$HOME7/state/home-summary.json" <<'JSON'
+{
+  "schema": "fm-secondmate-home-summary.v1",
+  "queued": [],
+  "active_children": [],
+  "endpoints": [],
+  "holds": [],
+  "decisions_open": [],
+  "landed": [
+    {"id": "cross-1", "title": "Cross task", "kind": "ship", "completion": {"date": "2026-09-16"}},
+    {"id": "archived-fresh-1", "title": "Archived fresh task", "kind": "ship", "completion": {"date": "2026-09-16"}}
+  ]
+}
+JSON
+rm -f "$TASKS_AXI_CALLS"
+run7 show cross-1 --json >/dev/null
+run7 show archived-fresh-1 --json >/dev/null
+
+json=$(run7 show cross-1 --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="done", o; assert o["project"]=="proj-cross", o' "$json"; then
+  pass '18 landed without repo: previously projected task keeps its known project'
+else
+  fail '18 landed without repo: previously projected task keeps its known project'
+fi
+
+json=$(run7 show archived-fresh-1 --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="done", o; assert o["project"]=="proj-fresh", o' "$json"; then
+  pass '18 landed without repo: fresh board resolves archived project via fm-tasks-axi.sh'
+else
+  fail '18 landed without repo: fresh board resolves archived project via fm-tasks-axi.sh'
+fi
+
+calls=$(sort -u "$TASKS_AXI_CALLS" 2>/dev/null | tr '\n' ' ')
+check '18 landed without repo: archive lookup skipped when project already known' "$calls" 'show archived-fresh-1 '
+
 [ "$failed" -eq 0 ] || exit 1
