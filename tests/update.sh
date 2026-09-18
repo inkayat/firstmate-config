@@ -19,8 +19,8 @@ failed=0
 pass(){ printf 'ok   - %s\n' "$1"; }
 fail(){ printf 'FAIL - %s\n' "$1" >&2; failed=1; }
 contains(){ case $2 in *"$3"*) pass "$1";; *) fail "$1 (missing '$3' in: $2)";; esac; }
-equals(){ [ "$2" = "$3" ] && pass "$1" || fail "$1 (expected '$3', got '$2')"; }
-nonzero(){ [ "$2" -ne 0 ] && pass "$1" || fail "$1 (expected nonzero exit, got 0)"; }
+equals(){ if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected '$3', got '$2')"; fi; }
+nonzero(){ if [ "$2" -ne 0 ]; then pass "$1"; else fail "$1 (expected nonzero exit, got 0)"; fi; }
 
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-update-test.XXXXXX") || exit 1
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -30,7 +30,7 @@ git_q(){ git -C "$1" -c user.email=test@example.invalid -c user.name=Test "${@:2
 
 # A fresh remote + installed-checkout pair per scenario.
 make_pair(){ # <name>
-  local name=$1 remote="$TMP_ROOT/$1.git" clone="$TMP_ROOT/$1"
+  local remote="$TMP_ROOT/$1.git" clone="$TMP_ROOT/$1"
   git init -q --bare "$remote"
   local seed="$TMP_ROOT/$1-seed"
   git init -q "$seed"
