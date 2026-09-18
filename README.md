@@ -126,7 +126,7 @@ Read-only drift check:
 | `fm --harness pi` | Start the Captain with the explicit Pi fallback |
 | `fm doctor` | Run read-only architecture, compatibility, routing, and installation diagnostics |
 | `fm version` | Print compact stack identity and version information |
-| `fm update` | Fast-forward the `firstmate-config` checkout; refuse dirty or diverged state |
+| `fm update` | Fast-forward the `firstmate-config` checkout, then reconcile and verify this machine via its own `install.sh`; refuse dirty or diverged state |
 | `ponytail-update` | Prepare and validate a local Ponytail pin update without committing or pushing |
 
 `fm doctor --json` and `fm version --json` provide machine-readable output.
@@ -155,8 +155,14 @@ Update the tracked configuration and reconcile installed state:
 
 ```sh
 fm update
-./install.sh
 ```
+
+`fm update` fast-forwards the checkout to its remote tip (refusing a dirty or
+diverged checkout, exactly as before) and then runs that checkout's own
+`./install.sh` followed by `./install.sh --verify`, so machine-local state
+never lags behind the tracked repository. A separate manual `./install.sh` is
+no longer required after a successful `fm update`; run it directly only when
+diagnosing installed state without pulling.
 
 Prepare a Ponytail dependency update:
 
@@ -170,7 +176,6 @@ machines then converge with:
 
 ```sh
 fm update
-./install.sh
 ```
 
 ## Roadmap

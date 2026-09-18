@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# fm-update - bring this firstmate-config checkout to its remote tip.
+# fm-update - bring this firstmate-config checkout to its remote tip, then
+# reconcile this machine to that checkout via its own install.sh.
 #
-# Only ever a fast-forward. It never stashes, resets, merges, rebases, or
-# discards local state: a dirty or diverged checkout is reported and left
-# exactly as it was, for a human to resolve.
+# The Git step is only ever a fast-forward. It never stashes, resets, merges,
+# rebases, or discards local state: a dirty or diverged checkout is reported
+# and left exactly as it was, for a human to resolve. Once the checkout is
+# safely at the remote tip (or was already there), fm-update runs that
+# checkout's own ./install.sh and then ./install.sh --verify so machine-local
+# state (shared skills, Pi package pins, launchers, settings) never lags
+# behind the tracked repository the way a bare `fm update` used to leave it.
+# fm-update never reimplements any of install.sh's reconciliation steps.
 #
 # Usage: fm update
 set -u
@@ -53,8 +59,27 @@ upstream=$(git_c rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/de
   || die "branch '$branch' has no upstream; set one with 'git branch -u $remote/$branch'"
 new=$(git_c rev-parse --short "$upstream")
 
+reconcile() { # <label> after the checkout is settled at its final commit
+  printf '\nReconciling machine state (%s)...\n' "$1"
+  install_out=$("$CONFIG_ROOT/install.sh"); install_status=$?
+  printf '%s\n' "$install_out"
+  [ "$install_status" -eq 0 ] \
+    || die "install.sh failed after update; repository is at $(git_c rev-parse --short HEAD) but machine state was not reconciled"
+
+  printf '\nVerifying reconciled state...\n'
+  verify_out=$("$CONFIG_ROOT/install.sh" --verify); verify_status=$?
+  printf '%s\n' "$verify_out"
+  [ "$verify_status" -eq 0 ] \
+    || die 'install.sh --verify failed after reconciling; investigate machine state'
+  case $verify_out in
+    *'verify: 0 drift item(s), 0 failure(s)'*) ;;
+    *) die 'install.sh --verify reported drift after reconciling; investigate machine state' ;;
+  esac
+}
+
 if [ "$(git_c rev-parse HEAD)" = "$(git_c rev-parse "$upstream")" ]; then
   printf 'Already up to date: %s at %s (%s)\n' "$branch" "$old" "$upstream"
+  reconcile 'already up to date'
   exit 0
 fi
 git_c merge-base --is-ancestor HEAD "$upstream" \
@@ -66,3 +91,4 @@ git_c merge --ff-only --quiet "$upstream" \
 printf 'Updated %s: %s -> %s (%s commits from %s)\n' \
   "$branch" "$old" "$new" "$(git_c rev-list --count "$old..HEAD")" "$upstream"
 git_c --no-pager log --oneline "$old..HEAD"
+reconcile 'updated to '"$new"
