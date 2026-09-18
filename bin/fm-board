@@ -1,0 +1,618 @@
+#!/usr/bin/env python3
+"""fm-board - persistent, deterministic Kanban projection of Firstmate work.
+
+Current-state model: `$FM_HOME/data/board/state.json` (one record per task,
+keyed by a stable id that is never regenerated) plus an append-only
+`$FM_HOME/data/board/events.jsonl` used for debugging/history only. Rendering
+and every CLI read depend on current state, never on replaying events.
+
+Firstmate's own backlog and execution records remain authoritative for real
+work; this board is their persistent, machine-readable projection, not a
+competing task database. `reconcile()` upserts board records for every task
+id found in Firstmate's own state (`$FM_HOME/state/home-summary.json`,
+`$FIRSTMATE_ROOT/bin/fm-crew-state.sh`, `$FM_HOME/state/<id>.meta`); it never
+touches an id it does not find there, so manually added tasks (used for
+throwaway verification) and unrelated tasks are always preserved untouched.
+See `AGENTS.md` for the full state-to-board lifecycle mapping table.
+
+No step here calls an LLM. `list`/`show`/`summary`/`render`/`open` perform a
+bounded, deterministic reconcile against already-published Firstmate state;
+none of them invoke a model, a daemon, or a network service beyond the
+existing `fm-crew-state.sh` (itself LLM-free and already used by Firstmate).
+
+Usage:
+  fm-board add --project P --title T --id ID [--agent A] [--note N]
+  fm-board update ID [--project P] [--title T] [--agent A] [--note N]
+  fm-board move ID STATE
+  fm-board list [--project P] [--state S] [--json]
+  fm-board show ID [--json]
+  fm-board summary [--project P] [--json]
+  fm-board render
+  fm-board open [--lavish]
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+STATES = ("todo", "in_progress", "waiting_review", "blocked", "done")
+SCHEMA = "fm-board.v1"
+
+# Fields reconcile() is allowed to own on a Firstmate-sourced task. Anything
+# else already present on the record (a manual `note`, a future field an
+# operator or newer fm-board wrote directly) is left exactly as found.
+RECONCILE_OWNED_FIELDS = (
+    "project", "title", "state", "agent", "kind", "source", "since",
+    "running", "captain_review", "hold_reason",
+)
+
+
+def die(msg: str) -> "None":
+    print(f"fm-board: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# --- paths -------------------------------------------------------------------
+
+def fm_home() -> str:
+    return os.environ.get("FM_HOME") or os.path.expanduser("~/.firstmate")
+
+
+def firstmate_root() -> str:
+    return os.environ.get("FIRSTMATE_ROOT") or os.path.expanduser("~/Developer/tools/firstmate")
+
+
+def board_dir() -> str:
+    return os.path.join(fm_home(), "data", "board")
+
+
+def state_path() -> str:
+    return os.path.join(board_dir(), "state.json")
+
+
+def events_path() -> str:
+    return os.path.join(board_dir(), "events.jsonl")
+
+
+def lock_path() -> str:
+    return os.path.join(board_dir(), ".state.lock")
+
+
+def board_html_path() -> str:
+    return os.path.join(board_dir(), "board.html")
+
+
+def board_data_path() -> str:
+    return os.path.join(board_dir(), "board-data.js")
+
+
+def template_html_path() -> str:
+    # bin/fm-board -> repo root -> board/board.html
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(repo_root, "board", "board.html")
+
+
+# --- state.json: locked read-modify-write, atomic replace --------------------
+
+@contextlib.contextmanager
+def _lock():
+    """Hold the one exclusive lock guarding every board mutation (state.json
+    writes and events.jsonl appends alike), so they never interleave."""
+    os.makedirs(board_dir(), exist_ok=True)
+    lock_fd = os.open(lock_path(), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+def _atomic_write(path: str, content: str) -> None:
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
+
+
+@contextlib.contextmanager
+def locked_state():
+    """Yield the parsed state dict under the exclusive lock; persist changes
+    made to the yielded dict on clean exit. Practical concurrency protection:
+    one flock-guarded critical section per mutating command, atomic tempfile
+    rename so a killed writer never leaves a torn state.json."""
+    with _lock():
+        if os.path.exists(state_path()):
+            with open(state_path(), "r", encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            data = {"schema": SCHEMA, "tasks": {}}
+        data.setdefault("schema", SCHEMA)
+        data.setdefault("tasks", {})
+        yield data
+        data["updated_at"] = now_iso()
+        _atomic_write(state_path(), json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def read_state() -> dict:
+    if not os.path.exists(state_path()):
+        return {"schema": SCHEMA, "tasks": {}}
+    with open(state_path(), "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def append_event(event: dict) -> None:
+    with _lock():
+        event = {"ts": now_iso(), **event}
+        with open(events_path(), "a", encoding="utf-8") as f:
+            f.write(json.dumps(event, sort_keys=True) + "\n")
+
+
+# --- id validation --------------------------------------------------------
+
+ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def require_new_id(data: dict, task_id: str | None) -> str:
+    # Deterministic by design: no random or time-derived suffix. The caller
+    # always names the id explicitly, so it is stable and reproducible.
+    if not task_id:
+        die("--id is required (task ids are explicit and deterministic, never generated)")
+    if not ID_RE.match(task_id):
+        die(f"invalid task id '{task_id}' (lowercase letters, digits, hyphens; must start with a letter or digit)")
+    if task_id in data["tasks"]:
+        die(f"task id '{task_id}' already exists")
+    return task_id
+
+
+# --- validation ----------------------------------------------------------------
+
+def require_state(value: str) -> str:
+    if value not in STATES:
+        die(f"invalid state '{value}' (expected one of: {', '.join(STATES)})")
+    return value
+
+
+def require_task(data: dict, task_id: str) -> dict:
+    task = data["tasks"].get(task_id)
+    if task is None:
+        die(f"no such task '{task_id}'")
+    return task
+
+
+def new_task_record(task_id: str, project: str, title: str, state: str,
+                     agent: str | None, note: str | None, source: str) -> dict:
+    ts = now_iso()
+    return {
+        "id": task_id,
+        "project": project,
+        "title": title,
+        "state": state,
+        "agent": agent,
+        "kind": "manual",
+        "source": source,
+        "note": note,
+        "since": ts[:10],
+        "running": None,
+        "captain_review": state == "waiting_review",
+        "hold_reason": None,
+        "created_at": ts,
+        "updated_at": ts,
+    }
+
+
+# --- commands --------------------------------------------------------------
+
+def cmd_add(args: argparse.Namespace) -> None:
+    with locked_state() as data:
+        task_id = require_new_id(data, args.id)
+        data["tasks"][task_id] = new_task_record(
+            task_id, args.project, args.title, "todo", args.agent, args.note, "manual",
+        )
+    append_event({"event": "add", "id": task_id, "project": args.project,
+                  "title": args.title, "state": "todo"})
+    print(f"added: {task_id}")
+
+
+def cmd_update(args: argparse.Namespace) -> None:
+    fields = {}
+    if args.title is not None:
+        fields["title"] = args.title
+    if args.agent is not None:
+        fields["agent"] = args.agent
+    if args.note is not None:
+        fields["note"] = args.note
+    if args.project is not None:
+        fields["project"] = args.project
+    with locked_state() as data:
+        task = require_task(data, args.id)
+        task.update(fields)
+        task["updated_at"] = now_iso()
+    append_event({"event": "update", "id": args.id, "fields": fields})
+    print(f"updated: {args.id}")
+
+
+def cmd_move(args: argparse.Namespace) -> None:
+    new_state = require_state(args.state)
+    with locked_state() as data:
+        task = require_task(data, args.id)
+        old_state = task.get("state")
+        task["state"] = new_state
+        task["captain_review"] = new_state == "waiting_review"
+        task["updated_at"] = now_iso()
+    append_event({"event": "move", "id": args.id, "from": old_state, "to": new_state})
+    print(f"moved: {args.id} {old_state} -> {new_state}")
+
+
+LIST_FIELDS = ("id", "project", "title", "state", "agent", "kind", "source",
+               "since", "running", "captain_review", "updated_at")
+
+
+def project_of(task: dict) -> str:
+    return task.get("project") or ""
+
+
+def cmd_list(args: argparse.Namespace) -> None:
+    reconcile_if_possible()
+    data = read_state()
+    tasks = list(data["tasks"].values())
+    if args.project:
+        tasks = [t for t in tasks if project_of(t) == args.project]
+    if args.state:
+        want = require_state(args.state)
+        tasks = [t for t in tasks if t.get("state") == want]
+    tasks.sort(key=lambda t: (project_of(t), t.get("id", "")))
+    if args.json:
+        narrow = [{k: t.get(k) for k in LIST_FIELDS} for t in tasks]
+        print(json.dumps(narrow, sort_keys=True))
+        return
+    if not tasks:
+        print("(no tasks)")
+        return
+    for t in tasks:
+        agent = t.get("agent") or "-"
+        print(f"{t['id']}\t{project_of(t)}\t{t.get('state')}\t{t.get('title')}\t{agent}")
+
+
+SHOW_FIELDS = ("id", "project", "title", "state", "agent", "kind", "source",
+               "since", "running", "captain_review", "hold_reason", "note",
+               "created_at", "updated_at")
+
+
+def cmd_show(args: argparse.Namespace) -> None:
+    reconcile_if_possible(only_id=args.id)
+    data = read_state()
+    task = require_task(data, args.id)
+    narrow = {k: task.get(k) for k in SHOW_FIELDS}
+    if args.json:
+        print(json.dumps(narrow, sort_keys=True))
+        return
+    for k in SHOW_FIELDS:
+        v = narrow[k]
+        print(f"{k}:".ljust(15) + (str(v) if v is not None else "(none)"))
+
+
+def cmd_summary(args: argparse.Namespace) -> None:
+    reconcile_if_possible()
+    data = read_state()
+    tasks = list(data["tasks"].values())
+    if args.project:
+        tasks = [t for t in tasks if project_of(t) == args.project]
+    projects: dict = {}
+    total = {s: 0 for s in STATES}
+    total["review"] = 0
+    for t in tasks:
+        p = project_of(t)
+        bucket = projects.setdefault(p, {s: 0 for s in STATES})
+        bucket.setdefault("review", 0)
+        s = t.get("state")
+        if s in STATES:
+            bucket[s] += 1
+            total[s] += 1
+        if t.get("captain_review"):
+            bucket["review"] += 1
+            total["review"] += 1
+    if args.json:
+        print(json.dumps({"projects": projects, "total": total}, sort_keys=True))
+        return
+    for p in sorted(projects):
+        b = projects[p]
+        counts = "  ".join(f"{s}: {b[s]}" for s in STATES)
+        print(f"{p}:")
+        print(f"  {counts}")
+        print(f"  review: {b['review']}")
+    counts = "  ".join(f"{s}: {total[s]}" for s in STATES)
+    print("TOTAL:")
+    print(f"  {counts}")
+    print(f"  review: {total['review']}")
+
+
+def cmd_render(_args: argparse.Namespace) -> None:
+    reconcile_if_possible()
+    data = read_state()
+    tasks = sorted(data["tasks"].values(), key=lambda t: t.get("id", ""))
+    payload = {"generated_at": now_iso(), "schema": SCHEMA, "tasks": tasks}
+    os.makedirs(board_dir(), exist_ok=True)
+    js = "window.BOARD_DATA = " + json.dumps(payload, indent=2, sort_keys=True) + ";\n"
+    _atomic_write(board_data_path(), js)
+    template = template_html_path()
+    if os.path.exists(template):
+        with open(template, "r", encoding="utf-8") as f:
+            html = f.read()
+        # Materialize the static template verbatim; content never changes per
+        # render, only board-data.js does, so this is deterministic and
+        # produces byte-identical output across renders for the same source.
+        _atomic_write(board_html_path(), html)
+    print(f"rendered: {board_html_path()}")
+
+
+def cmd_open(args: argparse.Namespace) -> None:
+    cmd_render(args)
+    path = board_html_path()
+    if args.lavish:
+        binary = "lavish-axi"
+        cmd = [binary, path]
+    else:
+        binary = "terminal-browser"
+        cmd = [binary, "open", path]
+    if not _which(binary):
+        print(f"fm-board: '{binary}' is not on PATH; open this file directly: {path}")
+        return
+    subprocess.run(cmd, check=False)
+
+
+def _which(binary: str) -> bool:
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if d and os.path.isfile(os.path.join(d, binary)) and os.access(os.path.join(d, binary), os.X_OK):
+            return True
+    return False
+
+
+# --- reconcile: project Firstmate's own authoritative state onto the board --
+
+def reconcile_if_possible(only_id: str | None = None) -> None:
+    try:
+        reconcile(only_id=only_id)
+    except Exception as exc:  # noqa: BLE001 - reconcile is best-effort/advisory
+        print(f"fm-board: reconcile skipped ({exc})", file=sys.stderr)
+
+
+def _meta_value(meta_path: str, key: str) -> str | None:
+    if not os.path.isfile(meta_path):
+        return None
+    value = None
+    with open(meta_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith(key + "="):
+                value = line.split("=", 1)[1].strip()
+    return value
+
+
+def _agent_label(task_id: str) -> str | None:
+    meta = os.path.join(fm_home(), "state", f"{task_id}.meta")
+    harness = _meta_value(meta, "harness")
+    model = _meta_value(meta, "model")
+    effort = _meta_value(meta, "effort")
+    if not harness and not model:
+        return None
+    label = harness or "?"
+    if model:
+        label += f" \u00b7 {model.split('/')[-1]}"
+    if effort:
+        label += f" ({effort})"
+    return label
+
+
+def _crew_state(task_id: str) -> tuple[str, str] | None:
+    """Call the official, LLM-free fm-crew-state.sh for one task id. Returns
+    (state, detail) from its `state: X <sep> source: Y <sep> detail` line, or
+    None when the script or a usable answer is unavailable."""
+    script = os.path.join(firstmate_root(), "bin", "fm-crew-state.sh")
+    if not os.path.isfile(script):
+        return None
+    try:
+        out = subprocess.run(
+            [script, task_id], capture_output=True, text=True, timeout=15,
+            env={**os.environ, "FM_HOME": fm_home()},
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    line = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else ""
+    m = re.match(r"state:\s*(\S+)", line)
+    if not m:
+        return None
+    detail = line.split("\u00b7", 2)[-1].strip() if "\u00b7" in line else line
+    return m.group(1), detail
+
+
+# Deterministic crew-state -> board-state projection. `done` here means the
+# no-mistakes/status-log run is complete, i.e. implementation is finished and
+# ready for the captain - never the board's own `done`, which is reserved for
+# a task the captain has actually approved and landed (see landed handling
+# below). `parked`/`blocked`/`paused`/`failed` all mean the agent cannot make
+# further progress without outside action, so they collapse onto the board's
+# single `blocked` column.
+CREW_STATE_TO_BOARD = {
+    "working": "in_progress",
+    "parked": "blocked",
+    "blocked": "blocked",
+    "paused": "blocked",
+    "failed": "blocked",
+    "done": "waiting_review",
+}
+
+
+def _projection(tid: str, project: str | None, title: str | None, state: str,
+                 kind: str | None, agent: str | None = None, since: str | None = None,
+                 running: str | None = None, captain_review: bool = False,
+                 hold_reason: str | None = None) -> dict:
+    """The one record shape every reconcile source (queued/active/landed)
+    fills in; only the values differ per source."""
+    return {
+        "project": project or "",
+        "title": title or tid,
+        "state": state,
+        "agent": agent,
+        "kind": kind or "ship",
+        "source": "firstmate",
+        "since": since,
+        "running": running,
+        "captain_review": captain_review,
+        "hold_reason": hold_reason,
+    }
+
+
+def reconcile(only_id: str | None = None) -> None:
+    summary_path = os.path.join(fm_home(), "state", "home-summary.json")
+    if not os.path.isfile(summary_path):
+        return
+    with open(summary_path, "r", encoding="utf-8") as f:
+        ledger = json.load(f)
+
+    holds_by_id = {h.get("id"): h for h in ledger.get("holds", []) if h.get("id")}
+    decisions_by_id = {d.get("id"): d for d in ledger.get("decisions_open", []) if d.get("id")}
+    queued_by_id = {q.get("id"): q for q in ledger.get("queued", []) if q.get("id")}
+
+    updates: dict[str, dict] = {}
+
+    for q in ledger.get("queued", []):
+        tid = q.get("id")
+        if not tid or (only_id and tid != only_id):
+            continue
+        blocked = q.get("hold_kind") == "captain" and q.get("captain_actionable")
+        updates[tid] = _projection(
+            tid, q.get("repo"), q.get("title"), "blocked" if blocked else "todo",
+            q.get("kind"), since=q.get("since"),
+            hold_reason=q.get("hold_reason") if blocked else None,
+        )
+
+    for child in ledger.get("active_children", []) + ledger.get("endpoints", []):
+        tid = child.get("id")
+        if not tid or (only_id and tid != only_id):
+            continue
+        crew = _crew_state(tid)
+        board_state = CREW_STATE_TO_BOARD.get(crew[0], "in_progress") if crew else "in_progress"
+        detail = crew[1] if crew else child.get("doing")
+        hold = holds_by_id.get(tid) or decisions_by_id.get(tid)
+        captain_review = board_state == "waiting_review"
+        hold_reason = None
+        if board_state == "blocked" and hold:
+            hold_reason = hold.get("reason")
+            captain_review = captain_review or hold.get("hold_kind", "captain") == "captain"
+        q = queued_by_id.get(tid, {})
+        updates.setdefault(tid, {}).update(_projection(
+            tid, child.get("repo") or q.get("repo"), child.get("name") or q.get("title"),
+            board_state, child.get("kind") or q.get("kind"), agent=_agent_label(tid),
+            since=q.get("since"), running=detail, captain_review=captain_review,
+            hold_reason=hold_reason,
+        ))
+
+    for landed in ledger.get("landed", []):
+        tid = landed.get("id")
+        if not tid or (only_id and tid != only_id):
+            continue
+        completion = landed.get("completion") or {}
+        updates[tid] = _projection(
+            tid, landed.get("repo"), landed.get("title"), "done",
+            landed.get("kind"), since=completion.get("date"),
+        )
+
+
+    if not updates:
+        return
+
+    with locked_state() as data:
+        for tid, fields in updates.items():
+            task = data["tasks"].get(tid)
+            if task is None:
+                ts = now_iso()
+                task = {
+                    "id": tid, "note": None, "created_at": ts, "updated_at": ts,
+                }
+                data["tasks"][tid] = task
+            for key in RECONCILE_OWNED_FIELDS:
+                if key in fields:
+                    task[key] = fields[key]
+            task["updated_at"] = now_iso()
+    append_event({"event": "reconcile", "ids": sorted(updates.keys())})
+
+
+# --- CLI wiring --------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="fm-board", description=__doc__.splitlines()[0])
+    sub = p.add_subparsers(dest="command", required=True)
+
+    a = sub.add_parser("add")
+    a.add_argument("--project", required=True)
+    a.add_argument("--title", required=True)
+    a.add_argument("--id")
+    a.add_argument("--agent")
+    a.add_argument("--note")
+    a.set_defaults(func=cmd_add)
+
+    u = sub.add_parser("update")
+    u.add_argument("id")
+    u.add_argument("--project")
+    u.add_argument("--title")
+    u.add_argument("--agent")
+    u.add_argument("--note")
+    u.set_defaults(func=cmd_update)
+
+    m = sub.add_parser("move")
+    m.add_argument("id")
+    m.add_argument("state")
+    m.set_defaults(func=cmd_move)
+
+    l_ = sub.add_parser("list")
+    l_.add_argument("--project")
+    l_.add_argument("--state")
+    l_.add_argument("--json", action="store_true")
+    l_.set_defaults(func=cmd_list)
+
+    s = sub.add_parser("show")
+    s.add_argument("id")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_show)
+
+    sm = sub.add_parser("summary")
+    sm.add_argument("--project")
+    sm.add_argument("--json", action="store_true")
+    sm.set_defaults(func=cmd_summary)
+
+    r = sub.add_parser("render")
+    r.set_defaults(func=cmd_render)
+
+    o = sub.add_parser("open")
+    o.add_argument("--lavish", action="store_true")
+    o.set_defaults(func=cmd_open)
+
+    return p
+
+
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    args.func(args)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

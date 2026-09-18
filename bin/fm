@@ -54,6 +54,10 @@
 #   fm version --json     the same facts as machine-readable JSON
 #   fm update             fast-forward this firstmate-config checkout to its
 #                         remote tip; never resets, stashes, or merges
+#   fm board             open the persistent Kanban board (bin/fm-board's
+#                         own --help documents the full add/update/move/list/
+#                         show/summary/render/open CLI); fm board --lavish
+#                         opens the same static file through Lavish instead
 #   fm --help
 set -u
 
@@ -120,6 +124,10 @@ case ${1:-} in
   update)
     shift
     exec "$CONFIG_ROOT/bin/fm-update" "$@"
+    ;;
+  board)
+    shift
+    exec "$CONFIG_ROOT/bin/fm-board" open "$@"
     ;;
 esac
 

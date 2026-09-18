@@ -127,9 +127,12 @@ Read-only drift check:
 | `fm doctor` | Run read-only architecture, compatibility, routing, and installation diagnostics |
 | `fm version` | Print compact stack identity and version information |
 | `fm update` | Fast-forward the `firstmate-config` checkout, then reconcile and verify this machine via its own `install.sh`; refuse dirty or diverged state |
+| `fm board` / `fm board --lavish` | Open the persistent Kanban board (terminal-browser by default, Lavish with `--lavish`); render a deterministically refreshed, LLM-free data projection with the same static template |
 | `ponytail-update` | Prepare and validate a local Ponytail pin update without committing or pushing |
 
 `fm doctor --json` and `fm version --json` provide machine-readable output.
+
+`bin/fm-board` owns the board's `add`/`update`/`move`/`list`/`show`/`summary`/`render` CLI. Its persistent files live under `$FM_HOME/data/board/` (`state.json`, append-only `events.jsonl`, generated `board-data.js`); actual FirstMate backlog and execution records (`data/backlog.md`, `state/home-summary.json`) remain authoritative, and the board is only their deterministic, LLM-free projection.
 
 `ponytail-update` checks the latest stable Ponytail release. If an update is
 available, it updates `skills/external.lock`, shows the diff, runs the Ponytail
