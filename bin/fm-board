@@ -442,28 +442,35 @@ def _crew_state(task_id: str) -> tuple[str, str] | None:
     return m.group(1), detail
 
 
-def _archived_repo(task_id: str) -> str | None:
-    """Fallback lookup for a landed task's project. `landed` entries in
-    home-summary.json never carry `repo` (queued/active are the proven
-    source for it); this is consulted only when the board also has no
-    previously known project for the id - a fresh board seeing archived
-    work for the first time - via the official, LLM-free
-    `fm-tasks-axi.sh show <id>`, which retains `repo:` for archived tasks."""
+def _archived_identity(task_id: str) -> tuple[str | None, str | None]:
+    """Fallback lookup for a task's durable project/title when neither the
+    live Firstmate projection nor an existing board record has them: a
+    `landed` entry never carries `repo`, and an `active_children`/`endpoints`
+    entry (review-ready/running work) intentionally omits `repo` and `name`
+    (minimal endpoint metadata). Consulted only when the board also has no
+    previously known identity for the id, via the official, LLM-free
+    `fm-tasks-axi.sh show <id>`, which retains `repo:`/`title:` for every
+    task it knows - one subprocess call recovers both fields at once."""
     script = os.path.join(firstmate_root(), "bin", "fm-tasks-axi.sh")
     if not os.path.isfile(script):
-        return None
+        return None, None
     try:
         out = subprocess.run(
             [script, "show", task_id], capture_output=True, text=True, timeout=15,
             env={**os.environ, "FM_HOME": fm_home()},
         )
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        return None, None
+    repo = title = None
     for line in out.stdout.splitlines():
-        m = re.match(r"repo:\s*(\S+)", line.strip())
+        line = line.strip()
+        m = re.match(r"repo:\s*(\S+)", line)
         if m:
-            return m.group(1)
-    return None
+            repo = m.group(1)
+        m = re.match(r"title:\s*(.+)", line)
+        if m:
+            title = m.group(1).strip()
+    return repo, title
 
 
 # Deterministic crew-state -> board-state projection. `done` here means the
@@ -513,6 +520,7 @@ def reconcile(only_id: str | None = None) -> None:
     holds_by_id = {h.get("id"): h for h in ledger.get("holds", []) if h.get("id")}
     decisions_by_id = {d.get("id"): d for d in ledger.get("decisions_open", []) if d.get("id")}
     queued_by_id = {q.get("id"): q for q in ledger.get("queued", []) if q.get("id")}
+    existing_tasks = read_state().get("tasks", {})
 
     updates: dict[str, dict] = {}
 
@@ -541,14 +549,29 @@ def reconcile(only_id: str | None = None) -> None:
             hold_reason = hold.get("reason")
             captain_review = captain_review or hold.get("hold_kind", "captain") == "captain"
         q = queued_by_id.get(tid, {})
+        repo = child.get("repo") or q.get("repo")
+        title = child.get("name") or q.get("title")
+        # Endpoint entries intentionally omit `repo`/`name` (minimal
+        # metadata). Recover durable identity from an existing board record
+        # first - a corrupted prior projection ("" / the bare id) does not
+        # count as known - and only fall back to the archive lookup when
+        # the board has never seen this id's identity either.
+        known = existing_tasks.get(tid, {})
+        if not repo and known.get("project"):
+            repo = known["project"]
+        if not title and known.get("title") and known.get("title") != tid:
+            title = known["title"]
+        if not repo or not title:
+            arch_repo, arch_title = _archived_identity(tid)
+            repo = repo or arch_repo
+            title = title or arch_title
         updates.setdefault(tid, {}).update(_projection(
-            tid, child.get("repo") or q.get("repo"), child.get("name") or q.get("title"),
+            tid, repo, title,
             board_state, child.get("kind") or q.get("kind"), agent=_agent_label(tid),
             since=q.get("since"), running=detail, captain_review=captain_review,
             hold_reason=hold_reason,
         ))
 
-    existing_tasks = read_state().get("tasks", {})
     for landed in ledger.get("landed", []):
         tid = landed.get("id")
         if not tid or (only_id and tid != only_id):
@@ -564,7 +587,7 @@ def reconcile(only_id: str | None = None) -> None:
             if existing_tasks.get(tid, {}).get("project"):
                 keep_known_project = True
             else:
-                repo = _archived_repo(tid)
+                repo, _title = _archived_identity(tid)
         fields = _projection(
             tid, repo, landed.get("title"), "done",
             landed.get("kind"), since=completion.get("date"),
@@ -572,7 +595,6 @@ def reconcile(only_id: str | None = None) -> None:
         if keep_known_project:
             fields.pop("project", None)
         updates[tid] = fields
-
 
     if not updates:
         return

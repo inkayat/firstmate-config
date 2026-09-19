@@ -514,4 +514,88 @@ fi
 calls=$(sort -u "$TASKS_AXI_CALLS" 2>/dev/null | tr '\n' ' ')
 check '18 landed without repo: archive lookup skipped when project already known' "$calls" 'show archived-fresh-1 '
 
+# =============================================================================
+# Scenario 8: endpoint entries carry no `repo`/`name` (the real
+# fm-secondmate-home-summary.v1 shape for review-ready work, e.g.
+# `uw-m0-foundation`) - such a task must still group under its actual
+# project with its actual title, never "Unassigned"/the bare id, and an
+# already-corrupted board record (project="", title=id from a prior buggy
+# reconcile) must self-heal on the next ordinary reconciliation.
+# =============================================================================
+HOME8="$TMP_ROOT/home8"
+FIRSTMATE8="$TMP_ROOT/firstmate8"
+mkdir -p "$HOME8/state" "$FIRSTMATE8/bin"
+TASKS_AXI_CALLS8="$TMP_ROOT/tasks-axi-calls8.log"
+
+cat > "$FIRSTMATE8/bin/fm-crew-state.sh" <<SH
+#!/usr/bin/env bash
+printf 'state: done . source: stub . checks green\n'
+SH
+chmod +x "$FIRSTMATE8/bin/fm-crew-state.sh"
+
+cat > "$FIRSTMATE8/bin/fm-tasks-axi.sh" <<SH
+#!/usr/bin/env bash
+printf '%s %s\n' "\$1" "\$2" >> "$TASKS_AXI_CALLS8"
+case "\$2" in
+  uw-m0-foundation) printf 'id: uw-m0-foundation\nrepo: universal-wishlist\ntitle: M0-01 monorepo foundation and product contracts\nstatus: waiting_review\n' ;;
+  *) printf 'id: %s\nstatus: waiting_review\n' "\$2" ;;
+esac
+SH
+chmod +x "$FIRSTMATE8/bin/fm-tasks-axi.sh"
+
+cat > "$HOME8/state/home-summary.json" <<'JSON'
+{
+  "schema": "fm-secondmate-home-summary.v1",
+  "queued": [],
+  "active_children": [],
+  "endpoints": [
+    {"id": "uw-m0-foundation", "state": "done"}
+  ],
+  "holds": [],
+  "decisions_open": [],
+  "landed": []
+}
+JSON
+
+run8() { FM_HOME="$HOME8" FIRSTMATE_ROOT="$FIRSTMATE8" PATH="/usr/bin:/bin" "$BOARD" "$@"; }
+
+# Fresh board, never seen this id before: reconcile must recover both
+# project and title via the single fm-tasks-axi.sh lookup.
+json=$(run8 show uw-m0-foundation --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["project"]=="universal-wishlist", o; assert o["title"]=="M0-01 monorepo foundation and product contracts", o' "$json"; then
+  pass '19 endpoint without repo/name: fresh board resolves durable project and title'
+else
+  fail '19 endpoint without repo/name: fresh board resolves durable project and title'
+fi
+
+summary_json=$(run8 summary --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["projects"]["universal-wishlist"]["waiting_review"]==1, o' "$summary_json"; then
+  pass '19 endpoint without repo/name: task groups under its real project, not Unassigned'
+else
+  fail '19 endpoint without repo/name: task groups under its real project, not Unassigned'
+fi
+
+calls8=$(wc -l < "$TASKS_AXI_CALLS8" | tr -d ' ')
+check '19 endpoint without repo/name: at most one archive lookup per reconcile' "$calls8" '1'
+
+# Simulate the exact `uw-m0-foundation` corruption (a prior buggy reconcile
+# already stomped project to "" and title to the bare id) and prove an
+# ordinary reconciliation repairs it with no manual state edit.
+python3 - "$HOME8/data/board/state.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    data = json.load(f)
+data["tasks"]["uw-m0-foundation"]["project"] = ""
+data["tasks"]["uw-m0-foundation"]["title"] = "uw-m0-foundation"
+with open(path, "w") as f:
+    json.dump(data, f)
+PY
+json=$(run8 show uw-m0-foundation --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["project"]=="universal-wishlist", o; assert o["title"]=="M0-01 monorepo foundation and product contracts", o' "$json"; then
+  pass '20 endpoint without repo/name: corrupted card self-heals via ordinary reconcile'
+else
+  fail '20 endpoint without repo/name: corrupted card self-heals via ordinary reconcile'
+fi
+
 [ "$failed" -eq 0 ] || exit 1
