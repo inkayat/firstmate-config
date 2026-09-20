@@ -598,4 +598,47 @@ else
   fail '20 endpoint without repo/name: corrupted card self-heals via ordinary reconcile'
 fi
 
+# =============================================================================
+# Scenario 9: a browser refresh only re-reads board-data.js, so while the viewer
+# `fm-board open` launched is still running, the on-disk projection must follow
+# Firstmate's state; the refresh loop must end as soon as the viewer exits.
+# The stub viewer blocks like the real interactive path (terminal-browser open
+# takes over the pane until the browser closes).
+# =============================================================================
+HOME9="$TMP_ROOT/home9"
+mkdir -p "$HOME9/state"
+BLOCK_BIN="$TMP_ROOT/blocking-bin"
+mkdir -p "$BLOCK_BIN"
+VIEWER_GATE="$TMP_ROOT/close-viewer"
+cat > "$BLOCK_BIN/terminal-browser" <<SH
+#!/usr/bin/env bash
+while [ ! -e "$VIEWER_GATE" ]; do sleep 0.1; done
+SH
+chmod +x "$BLOCK_BIN/terminal-browser"
+summary9() {
+  cat > "$HOME9/state/home-summary.json" <<JSON
+{"queued": [{"id": "live-1", "repo": "demo", "title": "$1", "kind": "ship", "since": "2026-09-20"}],
+ "active_children": [], "endpoints": [], "holds": [], "decisions_open": [], "landed": []}
+JSON
+}
+file_contains_within() { # <file> <needle> <tenths-of-a-second>
+  local i=0
+  while [ "$i" -lt "$3" ]; do
+    case $(cat "$1" 2>/dev/null) in *"$2"*) return 0 ;; esac
+    sleep 0.1; i=$((i + 1))
+  done
+  return 1
+}
+summary9 "Title before"
+FM_HOME="$HOME9" FIRSTMATE_ROOT="$TMP_ROOT/no-such-firstmate" PATH="$BLOCK_BIN:/usr/bin:/bin" "$BOARD" open >/dev/null 2>&1 &
+OPEN_PID=$!
+if file_contains_within "$HOME9/data/board/board-data.js" "Title before" 50; then pass '21 open: projection rendered before the viewer starts'; else fail '21 open: projection rendered before the viewer starts'; fi
+summary9 "Title after"
+if file_contains_within "$HOME9/data/board/board-data.js" "Title after" 50; then pass '21 open: projection follows Firstmate state while the viewer is open'; else fail '21 open: projection follows Firstmate state while the viewer is open'; fi
+touch "$VIEWER_GATE"
+i=0
+while kill -0 "$OPEN_PID" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+if kill -0 "$OPEN_PID" 2>/dev/null; then fail '21 open: exits promptly once the viewer closes'; kill "$OPEN_PID" 2>/dev/null; else pass '21 open: exits promptly once the viewer closes'; fi
+wait "$OPEN_PID" 2>/dev/null
+
 [ "$failed" -eq 0 ] || exit 1
