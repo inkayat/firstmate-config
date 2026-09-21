@@ -20,6 +20,9 @@
 #      settings so its bundled ponytail/ponytail-review duplicates never
 #      collide with step 7's authoritative copies, and defaultMode=off in
 #      ponytail's own config
+#  10. clones/pins the optional specialist skill vault (agent-skill-vault)
+#      into an install-managed cache, detached at the exact commit in
+#      skills/vault.lock; never symlinked into ~/.agents/skills
 #
 # What it never does: store a credential, touch a project repository, or modify
 # anything tracked in the official FirstMate checkout.
@@ -86,7 +89,7 @@ for tool in git pi omp herdr; do
     failf "$tool is required and not on PATH"
   fi
 done
-for tool in jq treehouse gh; do
+for tool in jq treehouse gh bun; do
   if command -v "$tool" >/dev/null 2>&1; then
     ok "$tool present"
   else
@@ -437,7 +440,9 @@ else
   if [ -d "$VAULT_DIR/.git" ]; then
     vault_cur=$(git -C "$VAULT_DIR" rev-parse HEAD 2>/dev/null)
     vault_dirty=$(git -C "$VAULT_DIR" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$vault_dirty" != 0 ]; then
+    if [ -z "$vault_cur" ]; then
+      failf "$VAULT_REPO cache at $VAULT_DIR is corrupt (not a readable git checkout); remove it and rerun ./install.sh"
+    elif [ "$vault_dirty" != 0 ]; then
       failf "$VAULT_REPO cache at $VAULT_DIR has $vault_dirty local modification(s); this cache is install-managed and must never be hand-edited - remove it and rerun ./install.sh"
     elif [ "$vault_cur" = "$VAULT_SHA" ]; then
       printf '  ok      %s at %s\n' "$VAULT_REPO" "${VAULT_SHA%"${VAULT_SHA#???????}"}"
@@ -451,9 +456,11 @@ else
         failf "$VAULT_REPO has no commit $VAULT_SHA (offline, or the pin is wrong)"
       fi
     fi
+  elif [ -e "$VAULT_DIR" ]; then
+    failf "$VAULT_DIR exists but is not a git checkout; this cache is install-managed - remove it and rerun ./install.sh"
   elif would "clone $VAULT_REPO into $VAULT_DIR, pinned to $VAULT_SHA"; then
     mkdir -p "$VAULT_CACHE"
-    if git clone -q "https://github.com/$VAULT_REPO.git" "$VAULT_DIR" 2>/dev/null \
+    if git clone -q "https://github.com/$VAULT_REPO.git" "$VAULT_DIR" \
        && git -C "$VAULT_DIR" checkout -q --detach "$VAULT_SHA" 2>/dev/null; then
       changedf "cloned $VAULT_REPO into $VAULT_DIR, pinned to ${VAULT_SHA%"${VAULT_SHA#???????}"}"
     else

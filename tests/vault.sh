@@ -209,6 +209,55 @@ out7=$(HOME="$TMP_ROOT/inst-home-bad" FIRSTMATE_ROOT="$TMP_ROOT/inst-dest-bad" \
 if [ "$code7" -eq 0 ]; then fail '7 malformed lock: expected nonzero exit, got 0'; else pass '7 malformed lock: exit code is nonzero'; fi
 contains '7 malformed lock: names it malformed' "$out7" 'malformed'
 
+# --- 8. Pre-existing non-git directory at the cache path: refused, never
+#    deleted (an unverified directory must never be rm -rf'd on the way to
+#    a fresh clone) -----------------------------------------------------
+mkdir -p "$TMP_ROOT/inst-vault-cache-nongit/test-owner-test-vault"
+printf 'precious\n' > "$TMP_ROOT/inst-vault-cache-nongit/test-owner-test-vault/precious.txt"
+out8=$(run_fake_install nongit); code8=$?
+if [ "$code8" -eq 0 ]; then fail '8 non-git cache dir: expected nonzero exit, got 0'; else pass '8 non-git cache dir: exit code is nonzero'; fi
+contains '8 non-git cache dir: refuses without attempting a clone' "$out8" 'is not a git checkout'
+contains '8 non-git cache dir: names it install-managed' "$out8" 'install-managed'
+if [ -f "$TMP_ROOT/inst-vault-cache-nongit/test-owner-test-vault/precious.txt" ]; then
+  pass '8 non-git cache dir: pre-existing content is never deleted'
+else
+  fail '8 non-git cache dir: pre-existing content is never deleted'
+fi
+
+# --- 9. Corrupt cache (.git present but not a readable checkout): diagnosed
+#    as corrupt, never misreported as offline/wrong-pin --------------------
+mkdir -p "$TMP_ROOT/inst-vault-cache-corrupt/test-owner-test-vault/.git"
+printf 'garbage\n' > "$TMP_ROOT/inst-vault-cache-corrupt/test-owner-test-vault/.git/garbage"
+verify9=$(run_fake_install corrupt --verify); code9v=$?
+if [ "$code9v" -eq 0 ]; then fail '9 corrupt cache verify: expected nonzero exit, got 0'; else pass '9 corrupt cache verify: exit code is nonzero'; fi
+contains '9 corrupt cache verify: diagnosed as corrupt' "$verify9" 'is corrupt'
+not_contains '9 corrupt cache verify: never misdiagnosed as offline/wrong-pin' "$verify9" 'offline, or the pin is wrong'
+real9=$(run_fake_install corrupt); code9r=$?
+if [ "$code9r" -eq 0 ]; then fail '9 corrupt cache real run: expected nonzero exit, got 0'; else pass '9 corrupt cache real run: exit code is nonzero'; fi
+contains '9 corrupt cache real run: diagnosed as corrupt' "$real9" 'is corrupt'
+not_contains '9 corrupt cache real run: never misdiagnosed as offline/wrong-pin' "$real9" 'offline, or the pin is wrong'
+
+# --- 10. Clone failure surfaces git's own stderr, never silently swallowed -
+BADORIGIN_HOME="$TMP_ROOT/inst-home-badorigin"
+mkdir -p "$BADORIGIN_HOME" "$TMP_ROOT/inst-dest-badorigin"
+cat > "$BADORIGIN_HOME/.gitconfig" <<EOF
+[user]
+	email = t@example.invalid
+	name = t
+[url "$TMP_ROOT/no-such-origin-at-all"]
+	insteadOf = https://github.com/$VAULT_REPO_ID.git
+EOF
+printf 'fixture\n' > "$TMP_ROOT/inst-dest-badorigin/AGENTS.md"
+out10=$(PATH="$INST_FAKE_BIN:$SYS_BIN" HOME="$BADORIGIN_HOME" FIRSTMATE_ROOT="$TMP_ROOT/inst-dest-badorigin" \
+  FM_HOME="$TMP_ROOT/inst-fm-home-badorigin" FM_CONFIG_ENV="$TMP_ROOT/inst-env-badorigin" \
+  FM_SKILLS_ROOT="$TMP_ROOT/inst-skills-badorigin" FM_SKILL_CACHE="$TMP_ROOT/inst-skill-cache-badorigin" \
+  FM_VAULT_CACHE="$TMP_ROOT/inst-vault-cache-badorigin" FM_BIN_DIR="$TMP_ROOT/inst-bin-dir-badorigin" \
+  PI_CODING_AGENT_DIR="$TMP_ROOT/inst-pi-agent-badorigin" XDG_CONFIG_HOME="$TMP_ROOT/inst-xdg-badorigin" \
+  "$INST_CFG/install.sh" 2>&1); code10=$?
+if [ "$code10" -eq 0 ]; then fail '10 clone failure: expected nonzero exit, got 0'; else pass '10 clone failure: exit code is nonzero'; fi
+contains '10 clone failure: reports could not clone' "$out10" 'could not clone'
+contains "10 clone failure: git's own stderr is visible, never swallowed" "$out10" 'fatal:'
+
 # =============================================================================
 # B. bin/fm-doctor: vault.pin / vault.no_global_leak state coverage
 # =============================================================================
@@ -248,6 +297,8 @@ git -C "$DOC_CACHE_HEALTHY" init -q
 git -C "$DOC_CACHE_HEALTHY" config user.email t@example.invalid
 git -C "$DOC_CACHE_HEALTHY" config user.name t
 printf 'fixture\n' > "$DOC_CACHE_HEALTHY/README.md"
+mkdir -p "$DOC_CACHE_HEALTHY/bin"
+printf '#!/usr/bin/env bun\n' > "$DOC_CACHE_HEALTHY/bin/lookup.ts"
 git -C "$DOC_CACHE_HEALTHY" add -A
 GIT_AUTHOR_DATE='2026-01-01T00:00:00' GIT_COMMITTER_DATE='2026-01-01T00:00:00' \
   git -C "$DOC_CACHE_HEALTHY" commit -q -m fixture
@@ -266,6 +317,25 @@ contains 'B3 healthy: no_global_leak is PASS' "$out" 'PASS          vault.no_glo
 json=$(run_doc "$DOC_LOCK_HEALTHY" "$TMP_ROOT/doc-cache-healthy" "$TMP_ROOT/doc-skills-b3" --json)
 contains 'B3 healthy JSON: state is healthy' "$json" '"state":"healthy"'
 contains 'B3 healthy JSON: pinned_commit is the exact SHA' "$json" "\"pinned_commit\":\"$DOC_HEALTHY_SHA\""
+
+# --- B3b. Healthy commit/clean but missing bin/lookup.ts: FAIL, never PASS -
+DOC_CACHE_NOLOOKUP="$TMP_ROOT/doc-cache-nolookup/test-owner-test-vault"
+mkdir -p "$DOC_CACHE_NOLOOKUP"
+git -C "$DOC_CACHE_NOLOOKUP" init -q
+git -C "$DOC_CACHE_NOLOOKUP" config user.email t@example.invalid
+git -C "$DOC_CACHE_NOLOOKUP" config user.name t
+printf 'fixture\n' > "$DOC_CACHE_NOLOOKUP/README.md"
+git -C "$DOC_CACHE_NOLOOKUP" add -A
+GIT_AUTHOR_DATE='2026-01-01T00:00:00' GIT_COMMITTER_DATE='2026-01-01T00:00:00' \
+  git -C "$DOC_CACHE_NOLOOKUP" commit -q -m fixture
+DOC_NOLOOKUP_SHA=$(git -C "$DOC_CACHE_NOLOOKUP" rev-parse HEAD)
+DOC_LOCK_NOLOOKUP="$TMP_ROOT/doc-vault-nolookup.lock"
+printf 'test-owner/test-vault\t%s\n' "$DOC_NOLOOKUP_SHA" > "$DOC_LOCK_NOLOOKUP"
+out=$(run_doc "$DOC_LOCK_NOLOOKUP" "$TMP_ROOT/doc-cache-nolookup" "$TMP_ROOT/doc-skills-b3b")
+contains 'B3b missing lookup surface: vault.pin is FAIL' "$out" 'FAIL          vault.pin'
+contains 'B3b missing lookup surface: names the lookup surface' "$out" 'lookup.ts'
+json=$(run_doc "$DOC_LOCK_NOLOOKUP" "$TMP_ROOT/doc-cache-nolookup" "$TMP_ROOT/doc-skills-b3b" --json)
+not_contains 'B3b missing lookup surface JSON: never falsely healthy' "$json" '"state":"healthy"'
 
 # --- B4. Lock present, cache present, clean, wrong revision -> FAIL --------
 out=$(run_doc "$DOC_LOCK" "$TMP_ROOT/doc-cache-healthy" "$TMP_ROOT/doc-skills-b4")
@@ -300,6 +370,14 @@ out=$(run_doc "$DOC_LOCK_HEALTHY" "$TMP_ROOT/doc-cache-healthy" "$LEAK_SKILLS")
 contains 'B7 leak: no_global_leak is FAIL' "$out" 'FAIL          vault.no_global_leak'
 contains 'B7 leak: names the leaking entry' "$out" 'some-vault-skill'
 contains 'B7 leak: names it must never be globally registered' "$out" 'must never be globally registered'
+
+# --- B8. no_global_leak: the vault path named in OMP's own skills config ---
+mkdir -p "$DOC_HOME/.omp/agent"
+printf 'skills:\n  customDirectories:\n    - %s\n' "$DOC_CACHE_HEALTHY" > "$DOC_HOME/.omp/agent/config.yml"
+out=$(run_doc "$DOC_LOCK_HEALTHY" "$TMP_ROOT/doc-cache-healthy" "$TMP_ROOT/doc-skills-b8")
+contains 'B8 omp config leak: no_global_leak is FAIL' "$out" 'FAIL          vault.no_global_leak'
+contains 'B8 omp config leak: names the omp config path' "$out" "$DOC_HOME/.omp/agent/config.yml"
+rm -f "$DOC_HOME/.omp/agent/config.yml"
 
 printf '\nVAULT TESTS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]

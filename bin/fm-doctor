@@ -944,6 +944,9 @@ else
       elif [ "$vault_cur" != "$VAULT_SHA" ]; then
         VAULT_STATE=wrong_revision
         add_check vault.pin FAIL "specialist skill vault cache is at ${vault_cur:0:12}, pinned ${VAULT_SHA:0:12}; run ./install.sh to re-pin" "$VAULT_DIR"
+      elif [ ! -f "$VAULT_DIR/bin/lookup.ts" ]; then
+        VAULT_STATE=lookup_missing
+        add_check vault.pin FAIL "specialist skill vault at ${VAULT_SHA:0:12} has no bin/lookup.ts; selection policy requires that lookup surface" "$VAULT_DIR"
       else
         VAULT_STATE=healthy
         add_check vault.pin PASS "specialist skill vault healthy at ${VAULT_SHA:0:12}" "$VAULT_DIR"
@@ -953,9 +956,10 @@ else
 fi
 
 # The vault is never globally registered (README "Specialist skill vault");
-# a stray symlink under $SKILLS_ROOT resolving into the vault cache would
-# silently put every one of its entries into every worker session's
-# context, defeating the whole per-task-explicit-path design.
+# a stray symlink under $SKILLS_ROOT resolving into the vault cache, or a
+# vault path named in OMP's own skills.customDirectories/includeSkills
+# config, would silently put every one of its entries into every worker
+# session's context, defeating the whole per-task-explicit-path design.
 VAULT_LEAK=()
 if [ -z "$VAULT_DIR" ]; then
   add_check vault.no_global_leak NOT_APPLICABLE "specialist skill vault not configured" ""
@@ -970,10 +974,13 @@ else
       esac
     done
   fi
+  if [ -r "$OMP_CONFIG" ] && grep -qF "$VAULT_DIR" "$OMP_CONFIG" 2>/dev/null; then
+    VAULT_LEAK+=("omp:$OMP_CONFIG")
+  fi
   if [ "${#VAULT_LEAK[@]}" -eq 0 ]; then
-    add_check vault.no_global_leak PASS "no global skill resolves into the specialist skill vault cache" "$SKILLS_ROOT"
+    add_check vault.no_global_leak PASS "no global skill or OMP config resolves into the specialist skill vault cache" "$SKILLS_ROOT"
   else
-    add_check vault.no_global_leak FAIL "global skill(s) resolve into the specialist skill vault cache, which must never be globally registered: ${VAULT_LEAK[*]}" "$SKILLS_ROOT"
+    add_check vault.no_global_leak FAIL "global skill(s) or OMP config resolve into the specialist skill vault cache, which must never be globally registered: ${VAULT_LEAK[*]}" "$SKILLS_ROOT"
   fi
 fi
 
