@@ -284,6 +284,50 @@ Official FirstMate internal skills (the official checkout's own
 `.agents/skills`) are never a global skill choice for a delegated task -
 they are Captain/FirstMate-only, per section 2.
 
+### Specialist skill vault (optional)
+
+`FM_VAULT_ROOT` (written to `~/.config/firstmate-config/env` by `install.sh`,
+pinned to one exact commit by `skills/vault.lock`, health reported by
+`fm doctor`'s `vault.pin`/`vault.no_global_leak` checks) is a private,
+curated, provenance-pinned index of specialist skills beyond the shared
+worker skills above. It is never globally registered - never symlinked into
+`~/.agents/skills`, never an OMP `skills.customDirectories`/`includeSkills`
+entry - so consulting it is always this per-task, explicit decision, never
+ambient context.
+
+Consult it only when a task plausibly benefits from a specialist skill past
+what the shared worker skills already cover. Zero is the default and a fully
+valid outcome for an ordinary task. Look up candidates read-only, never by
+parsing a skill body: `bun "$FM_VAULT_ROOT/bin/lookup.ts" --category
+<CATEGORY>` returns the full, never-truncated, deterministic shortlist of
+that category's `firstmate_candidate` rows with `activation: auto-candidate`;
+`--id <vault-id>` resolves one exact row by id, `installed`/
+`firstmate_candidate`/`reference-only` alike. `catalog`/`team-only`/
+`restricted` rows never resolve through either form - naming one explicitly
+is never a way around its status. The vault's own `README.md` is
+authoritative for its vocabulary (`status`, `activation`, `scope`, `cluster`,
+`favorite`); do not duplicate it here, and no category-to-row table exists
+in this policy or in `crew-dispatch.json` - a pick is always this per-task
+judgment call against the returned shortlist, never a lookup keyed only by
+category.
+
+A vault pick counts against, never adds to, this section's first
+paragraph's ≤2-methodology + ≤1-reference cap - it is one more place that
+cap's picks may come from, not a second budget. A project-local skill always
+wins over a vault pick, exactly as it wins over any other global skill
+(section 1). `scope: captain` rows (mostly `reference-only`) are for the
+Captain's own reading when the human explicitly asks for that mode
+(interrogation, planning, retro) - never a worker brief item; `scope: worker`
+rows, whether `firstmate_candidate` or `reference-only`, may be handed to a
+worker.
+
+Handoff format for a selected row mirrors section 2 step 4: the exact
+resolved path under `$FM_VAULT_ROOT` - an absolute path is correct here,
+like the shared worker skill root this is a machine-local cache outside any
+worktree, not the primary-checkout path step 3 forbids - plus the same
+read-and-apply requirement, plus the row's `notes` field as the
+adaptation/usage caveat when one exists.
+
 ## 6. Orchestration boundary
 
 Firstmate is the only **macro** orchestrator: project selection, role,

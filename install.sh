@@ -44,6 +44,16 @@ ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
 SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
 SKILL_CACHE="${FM_SKILL_CACHE:-$HOME/.local/share/firstmate-config/skills-src}"
 BIN_DIR="${FM_BIN_DIR:-$HOME/.local/bin}"
+VAULT_CACHE="${FM_VAULT_CACHE:-$HOME/.local/share/firstmate-config/vault-src}"
+VAULT_LOCK="$CONFIG_ROOT/skills/vault.lock"
+VAULT_REPO=""
+VAULT_SHA=""
+VAULT_DIR=""
+if [ -f "$VAULT_LOCK" ]; then
+  VAULT_REPO=$(awk -F'\t' '/^[^#]/ && NF >= 2 {print $1; exit}' "$VAULT_LOCK")
+  VAULT_SHA=$(awk -F'\t' '/^[^#]/ && NF >= 2 {print $2; exit}' "$VAULT_LOCK")
+  [ -z "$VAULT_REPO" ] || VAULT_DIR="$VAULT_CACHE/$(printf '%s' "$VAULT_REPO" | tr '/' '-')"
+fi
 # Every git probe below inspects a repository it must not silently write to
 # (an existing official checkout it never updates); a clone still needs a
 # real write, which this setting does not affect.
@@ -139,7 +149,8 @@ FIRSTMATE_ROOT="$FIRSTMATE_ROOT"
 FM_CONFIG_ROOT="$CONFIG_ROOT"
 FM_HOME="$FM_HOME"
 FM_BACKEND="$FM_BACKEND"
-export FIRSTMATE_ROOT FM_CONFIG_ROOT FM_HOME FM_BACKEND
+FM_VAULT_ROOT="$VAULT_DIR"
+export FIRSTMATE_ROOT FM_CONFIG_ROOT FM_HOME FM_BACKEND FM_VAULT_ROOT
 EOF
 )
 if [ -f "$ENV_FILE" ] && [ "$(cat "$ENV_FILE")" = "$env_body" ]; then
@@ -402,6 +413,52 @@ PY
           *)         failf "could not reconcile $ponytail_config: $ponytail_config_result" ;;
         esac
       fi
+    fi
+  fi
+fi
+
+# --- 10. specialist skill vault (optional) ----------------------------------
+# A private, curated, provenance-pinned index of specialist skills
+# (agent-skill-vault) a Captain can name by exact path in a task brief. This
+# step only clones/pins the repository itself into a machine-local,
+# install-managed cache at the exact commit in skills/vault.lock - it never
+# symlinks anything from it into $SKILLS_ROOT or any other global skill
+# root (see firstmate/primary-policy.md "Specialist skill vault"). A dirty
+# cache (local modifications) is never auto-reset: this cache is
+# install-managed, so a human must remove it and rerun ./install.sh rather
+# than have this script silently discard unexplained local changes. Absent
+# skills/vault.lock, this step is a no-op: the vault is entirely optional.
+step '10. specialist skill vault'
+if [ ! -f "$VAULT_LOCK" ]; then
+  warn 'no skills/vault.lock; skipping specialist skill vault'
+elif [ -z "$VAULT_REPO" ] || [ -z "$VAULT_SHA" ]; then
+  failf "skills/vault.lock is malformed (expected '<repo><TAB><commit>')"
+else
+  if [ -d "$VAULT_DIR/.git" ]; then
+    vault_cur=$(git -C "$VAULT_DIR" rev-parse HEAD 2>/dev/null)
+    vault_dirty=$(git -C "$VAULT_DIR" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$vault_dirty" != 0 ]; then
+      failf "$VAULT_REPO cache at $VAULT_DIR has $vault_dirty local modification(s); this cache is install-managed and must never be hand-edited - remove it and rerun ./install.sh"
+    elif [ "$vault_cur" = "$VAULT_SHA" ]; then
+      printf '  ok      %s at %s\n' "$VAULT_REPO" "${VAULT_SHA%"${VAULT_SHA#???????}"}"
+    elif [ "$VERIFY" -eq 1 ]; then
+      driftf "$VAULT_REPO is at ${vault_cur:-unknown}, not pinned $VAULT_SHA"
+    else
+      git -C "$VAULT_DIR" fetch -q --all 2>/dev/null
+      if git -C "$VAULT_DIR" checkout -q --detach "$VAULT_SHA" 2>/dev/null; then
+        changedf "$VAULT_REPO re-pinned to ${VAULT_SHA%"${VAULT_SHA#???????}"}"
+      else
+        failf "$VAULT_REPO has no commit $VAULT_SHA (offline, or the pin is wrong)"
+      fi
+    fi
+  elif would "clone $VAULT_REPO into $VAULT_DIR, pinned to $VAULT_SHA"; then
+    mkdir -p "$VAULT_CACHE"
+    if git clone -q "https://github.com/$VAULT_REPO.git" "$VAULT_DIR" 2>/dev/null \
+       && git -C "$VAULT_DIR" checkout -q --detach "$VAULT_SHA" 2>/dev/null; then
+      changedf "cloned $VAULT_REPO into $VAULT_DIR, pinned to ${VAULT_SHA%"${VAULT_SHA#???????}"}"
+    else
+      failf "could not clone $VAULT_REPO and pin it to $VAULT_SHA"
+      rm -rf "$VAULT_DIR"
     fi
   fi
 fi

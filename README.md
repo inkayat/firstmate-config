@@ -94,6 +94,13 @@ project directories such as `.agents/skills`, `.claude/skills`, or
 `.agent/skills`. Shared worker skills are installed under
 `~/.agents/skills` for Pi and OMP discovery.
 
+An optional, private, curated, provenance-pinned specialist skill vault
+(`skills/vault.lock`, `FM_VAULT_ROOT`) supplements shared worker skills on a
+per-task, explicit-pick basis - it is never globally registered and never
+adds to the existing per-task skill budget. See `firstmate/primary-policy.md`
+"Specialist skill vault" for the consumption contract and `fm doctor`'s
+`vault.*` checks for its pin health.
+
 Official FirstMate internal skills remain separate and are not installed as
 shared worker skills. Context and skill selection are policy and handoff
 mechanisms; they are not a formal proof of read order, compliance, or task

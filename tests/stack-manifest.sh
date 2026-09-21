@@ -522,7 +522,7 @@ contains 'D1 install.sh --verify names the tracked manifest'"'"'s validated comm
 
 # --- D2: `fm version --json` surfaces the same tracked manifest identity ---
 version_json=$(FM_CONFIG_ENV="$TMP_ROOT/d2-no-env" "$CONFIG_ROOT/bin/fm-version" --json)
-contains 'D2 fm version: JSON schema_version is 2 (stack_manifest field added)' "$version_json" '"schema_version":2'
+contains 'D2 fm version: JSON schema_version is 3 (specialist_skill_vault field added)' "$version_json" '"schema_version":3'
 contains 'D2 fm version: carries the tracked manifest'"'"'s validated commit' "$version_json" "\"firstmate_validated_commit\":\"$SM_FIRSTMATE_COMMIT\""
 version_human=$(FM_CONFIG_ENV="$TMP_ROOT/d2-no-env" "$CONFIG_ROOT/bin/fm-version")
 contains 'D2 fm version: human output names the validated baseline' "$version_human" "Validated FirstMate baseline: $SM_FIRSTMATE_COMMIT"

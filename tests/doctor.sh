@@ -346,18 +346,22 @@ run_doctor() { # [extra args to fm-doctor]
 }
 
 # =============================================================================
-# 1. Healthy: exit 0. Overall status is UNKNOWN, not PASS - the one honest
-#    gap in an otherwise fully-green fixture is firstmate.commit_compat: this
+# 1. Healthy: exit 0. Overall status is FAIL, not PASS - two honest gaps in
+#    an otherwise fully-green fixture: firstmate.commit_compat (this
 #    fixture's FIRSTMATE_ROOT is not a real clone of the tracked validated
-#    commit (see the manifest-sourcing comment near the top of this file),
-#    so fm-doctor correctly reports UNKNOWN rather than guessing PASS or
-#    FAIL. Every other new stack-compatibility check genuinely PASSes here,
-#    because the fake pi/omp/herdr report exactly the tracked manifest's
-#    tested versions (see run_doctor's FM_TEST_*_VERSION defaults).
+#    commit, see the manifest-sourcing comment near the top of this file)
+#    reports UNKNOWN rather than guessing PASS or FAIL, and vault.pin
+#    reports FAIL "absent" because this offline fixture seeds no vault
+#    cache under its own isolated $HOME (the vault, like every check below
+#    it, is advisory - it never flips the exit code; see "exit code is 0"
+#    just below). Every other new stack-compatibility check genuinely
+#    PASSes here, because the fake pi/omp/herdr report exactly the tracked
+#    manifest's tested versions (see run_doctor's FM_TEST_*_VERSION
+#    defaults).
 # =============================================================================
 out=$(run_doctor); code=$?
 check 'healthy: exit code is 0' 0 "$code"
-contains 'healthy: overall status is UNKNOWN (only commit_compat is unproven offline)' "$out" 'DOCTOR UNKNOWN exit=0'
+contains 'healthy: overall status is FAIL (vault.pin, a non-mandatory check, is the worst-ranked)' "$out" 'DOCTOR FAIL exit=0'
 contains 'healthy: launcher resolves ours first' "$out" "PASS          launcher.resolution"
 contains 'healthy: captain selects the preferred candidate' "$out" 'selected preferred candidate openai-codex/gpt-5.6-sol'
 contains 'healthy: herdr server reported running' "$out" 'PASS          runtime.herdr_server'
@@ -375,6 +379,8 @@ contains 'healthy: herdr version matches the tested baseline' "$out" "PASS      
 contains 'healthy: FirstMate commit compat is honestly UNKNOWN, never a guessed PASS or FAIL' "$out" 'UNKNOWN       firstmate.commit_compat'
 not_contains 'healthy: FirstMate commit compat never falsely reports PASS' "$out" 'PASS          firstmate.commit_compat'
 not_contains 'healthy: FirstMate commit compat never falsely reports FAIL' "$out" 'FAIL          firstmate.commit_compat'
+contains 'healthy: vault pin honestly reports absent (no cache seeded in this offline fixture)' "$out" 'FAIL          vault.pin'
+contains 'healthy: vault absence never leaks into a global skill' "$out" 'PASS          vault.no_global_leak'
 
 # =============================================================================
 # 2. A later, non-shadowing competing `fm` -> WARNING, exit 0
@@ -557,7 +563,7 @@ esac
 for key in schema_version status exit_code timestamp system firstmate launcher captain runtime harnesses routing roles skills projects checks; do
   contains "JSON: top-level key '$key' present" "$json" "\"$key\":"
 done
-contains 'JSON: top-level status is UNKNOWN for the healthy fixture (commit_compat is the one honest gap)' "$json" '"schema_version":1,"status":"UNKNOWN",'
+contains 'JSON: top-level status is FAIL for the healthy fixture (commit_compat UNKNOWN and vault.pin absent are the two honest, non-mandatory gaps)' "$json" '"schema_version":1,"status":"FAIL",'
 contains 'JSON: exit_code is 0 for the healthy fixture' "$json" '"exit_code":0'
 contains 'JSON: a check row carries id/status/summary' "$json" '"id":"launcher.resolution","status":"PASS"'
 contains 'JSON: system carries fm_home' "$json" "\"fm_home\":\"$FAKE_FM_HOME\""
@@ -765,9 +771,15 @@ status_exit_agree() { # <label> <human-out> <json-out> <exit-code>
   fi
 }
 
-# 20a. Healthy: every candidate available, nothing unavailable at all.
-out20a=$(run_doctor); code20a=$?
-json20a=$(run_doctor --json)
+# 20a. Healthy: every candidate available, nothing unavailable at all. Runs
+# with FM_VAULT_LOCK pointed at a nonexistent path: this scenario tests
+# Captain-model status/exit agreement only, and vault.pin's own
+# absent/healthy states (a genuinely separate concern, already covered by
+# scenario 1) must never leak into this otherwise fully-green fixture as
+# an unrelated FAIL.
+NO_VAULT="$TMP_ROOT/no-such-vault-lock"
+out20a=$(FM_VAULT_LOCK="$NO_VAULT" run_doctor); code20a=$?
+json20a=$(FM_VAULT_LOCK="$NO_VAULT" run_doctor --json)
 status_exit_agree '20a healthy' "$out20a" "$json20a" "$code20a"
 
 # 20b. Optional-unavailable (the reported bug): active harness is OMP
@@ -775,8 +787,8 @@ status_exit_agree '20a healthy' "$out20a" "$json20a" "$code20a"
 # catalog, but the Pi-only Sonnet provider is not - exactly the shape
 # README.md documents as expected on OMP. Selection still succeeds via Sol.
 FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5,anthropic/claude-haiku-4-5,anthropic/claude-fable-5-1,openai-codex/gpt-5.6-luna'
-out20b=$(run_doctor); code20b=$?
-json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5,anthropic/claude-haiku-4-5,anthropic/claude-fable-5-1,openai-codex/gpt-5.6-luna' run_doctor --json)
+out20b=$(FM_VAULT_LOCK="$NO_VAULT" run_doctor); code20b=$?
+json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5,anthropic/claude-haiku-4-5,anthropic/claude-fable-5-1,openai-codex/gpt-5.6-luna' FM_VAULT_LOCK="$NO_VAULT" run_doctor --json)
 unset FM_TEST_OMP_AVAILABLE
 check '20b optional-unavailable: exit code stays 0' 0 "$code20b"
 contains '20b optional-unavailable: Sol is selected as preferred' "$out20b" 'selected preferred candidate openai-codex/gpt-5.6-sol'
@@ -785,8 +797,8 @@ status_exit_agree '20b optional-unavailable' "$out20b" "$json20b" "$code20b"
 
 # 20c. Genuine failure: no configured Captain candidate is usable at all.
 FM_TEST_AVAILABLE=''
-out20c=$(run_doctor); code20c=$?
-json20c=$(FM_TEST_AVAILABLE='' run_doctor --json)
+out20c=$(FM_VAULT_LOCK="$NO_VAULT" run_doctor); code20c=$?
+json20c=$(FM_TEST_AVAILABLE='' FM_VAULT_LOCK="$NO_VAULT" run_doctor --json)
 unset FM_TEST_AVAILABLE
 status_exit_agree '20c genuine failure' "$out20c" "$json20c" "$code20c"
 

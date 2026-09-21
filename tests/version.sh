@@ -43,12 +43,13 @@ make_repo(){
 
 CONFIG_FIXTURE="$TMP_ROOT/config"; FIRSTMATE_FIXTURE="$TMP_ROOT/firstmate"; HOME_FIXTURE="$TMP_ROOT/home"
 make_repo "$CONFIG_FIXTURE"; make_repo "$FIRSTMATE_FIXTURE"; mkdir -p "$HOME_FIXTURE"
-mkdir -p "$CONFIG_FIXTURE/bin" "$CONFIG_FIXTURE/firstmate"
+mkdir -p "$CONFIG_FIXTURE/bin" "$CONFIG_FIXTURE/firstmate" "$CONFIG_FIXTURE/skills"
 cp "$CONFIG_ROOT/bin/fm" "$CONFIG_FIXTURE/bin/fm"
 cp "$CONFIG_ROOT/bin/fm-version" "$CONFIG_FIXTURE/bin/fm-version"
 cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$CONFIG_FIXTURE/firstmate/fm-stack-manifest.sh"
 cp "$CONFIG_ROOT/firstmate/stack-manifest.tsv" "$CONFIG_FIXTURE/firstmate/stack-manifest.tsv"
 cp "$CONFIG_ROOT/firstmate/fm-captain-lib.sh" "$CONFIG_FIXTURE/firstmate/fm-captain-lib.sh"
+printf 'test-owner/test-vault\tdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n' > "$CONFIG_FIXTURE/skills/vault.lock"
 
 # shellcheck source=firstmate/fm-stack-manifest.sh
 . "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh"
@@ -63,6 +64,7 @@ contains 'human includes firstmate path' "$out" "official FirstMate: $FIRSTMATE_
 contains 'human includes pi version' "$out" 'Pi: pi 9.9.9'
 contains 'human includes fm home' "$out" "FM_HOME: $TMP_ROOT/fm-home"
 contains 'human includes the validated FirstMate baseline from the shared manifest' "$out" "Validated FirstMate baseline: $MANIFEST_COMMIT"
+contains 'human includes the specialist skill vault pin, read from the tracked lock file' "$out" 'Specialist skill vault pin: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
 
 printf 'dirty\n' >> "$CONFIG_FIXTURE/file.txt"
 out=$(run_version)
@@ -80,9 +82,10 @@ contains 'missing optional version is unknown' "$out" 'OMP: unknown'
 
 json=$(run_version --json)
 if command -v python3 >/dev/null 2>&1; then
-  printf '%s' "$json" | MANIFEST_COMMIT="$MANIFEST_COMMIT" python3 -c 'import json,os,sys; o=json.load(sys.stdin); assert o["schema_version"]==2; assert o["firstmate_config"]["tag"]=="v1.2.3"; assert o["firstmate"]["path"]; assert o["components"]["omp"]=="unknown"; assert o["fm_home"]; assert o["stack_manifest"]["firstmate_validated_commit"]==os.environ["MANIFEST_COMMIT"]' && pass 'json schema is valid' || fail 'json schema is valid'
+  printf '%s' "$json" | MANIFEST_COMMIT="$MANIFEST_COMMIT" python3 -c 'import json,os,sys; o=json.load(sys.stdin); assert o["schema_version"]==3; assert o["firstmate_config"]["tag"]=="v1.2.3"; assert o["firstmate"]["path"]; assert o["components"]["omp"]=="unknown"; assert o["fm_home"]; assert o["stack_manifest"]["firstmate_validated_commit"]==os.environ["MANIFEST_COMMIT"]; assert o["specialist_skill_vault"]["pinned_commit"]=="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"' && pass 'json schema is valid' || fail 'json schema is valid'
 else
-  contains 'json has schema version' "$json" '"schema_version":2'
+  contains 'json has schema version' "$json" '"schema_version":3'
+  contains 'json has the specialist skill vault pin' "$json" '"specialist_skill_vault":{"pinned_commit":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}'
 fi
 contains 'json carries the shared manifest'"'"'s validated commit, not a duplicated literal' "$json" "\"firstmate_validated_commit\":\"$MANIFEST_COMMIT\""
 
