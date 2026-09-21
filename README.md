@@ -99,6 +99,33 @@ shared worker skills. Context and skill selection are policy and handoff
 mechanisms; they are not a formal proof of read order, compliance, or task
 completion.
 
+## Captain startup model
+
+`firstmate/captain-startup-models.tsv` is the ordered list of Captain startup
+candidates, tried in order and skipped on any authoritative `UNAVAILABLE`
+result: `openai-codex/gpt-5.6-sol` high, then a harness-scoped Claude Sonnet
+step, then `openai-codex/gpt-6-astra` xhigh. `bin/fm`, `fm doctor`, and
+`fm version` all resolve this chain through the one shared availability path
+in `firstmate/fm-captain-lib.sh`.
+
+The Sonnet fallback step is harness-scoped because the two harnesses expose
+Claude Sonnet under different, non-interchangeable ids: OMP's own native
+catalog carries `anthropic/claude-sonnet-5`; Pi exposes it only through the
+Claude Code provider extension as `pi-claude-code-provider/sonnet`, which is
+not an OMP model id and is never checked against OMP's catalog. Each TSV row
+carries an optional third `harness` column (`omp`, `pi`, or blank for both);
+a row whose harness column does not match the active Captain harness is
+skipped entirely, never probed and never selected, so an OMP Captain can
+never be launched with a Pi-only provider id and a Pi Captain never loses its
+own Sonnet fallback.
+
+Pi's own `auth check` does not load extension providers and reports
+`invalid_state` for `pi-claude-code-provider` even when the provider is
+perfectly usable, so availability for that one provider is checked through
+the provider's own zero-inference `claude auth status` preflight instead of
+the broker - see `firstmate/fm-captain-lib.sh` for the exact detector. Do not
+add a second detector or a paid probe for it.
+
 ## Install
 
 ```sh

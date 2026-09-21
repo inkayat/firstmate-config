@@ -132,10 +132,11 @@ case ${1:-} in
 esac
 
 resolve_model_chain() {
-  local model effort result state reason reasons=()
+  local model effort chain_harness result state reason reasons=()
   [ -f "$MODEL_CHAIN" ] || die "missing captain startup model chain: $MODEL_CHAIN"
-  while IFS="$(printf '\t')" read -r model effort _rest || [ -n "${model:-}" ]; do
+  while IFS="$(printf '\t')" read -r model effort chain_harness _rest || [ -n "${model:-}" ]; do
     case ${model:-} in ''|\#*) continue ;; esac
+    [ -z "${chain_harness:-}" ] || [ "$chain_harness" = "$CAPTAIN_HARNESS" ] || continue
     [ -n "${PREFERRED_MODEL:-}" ] || { PREFERRED_MODEL=$model; PREFERRED_EFFORT=$effort; }
     result=$(captain_model_availability "$model" "$effort")
     state=${result%%$'\t'*}

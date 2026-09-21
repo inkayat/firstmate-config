@@ -342,8 +342,9 @@ if [ -f "$MODEL_CHAIN" ]; then
   CAND_EFFORTS=()
   CAND_STATES=()
   CAND_REASONS=()
-  while IFS="$(printf '\t')" read -r model effort _rest || [ -n "${model:-}" ]; do
+  while IFS="$(printf '\t')" read -r model effort chain_harness _rest || [ -n "${model:-}" ]; do
     case ${model:-} in ''|\#*) continue ;; esac
+    [ -z "${chain_harness:-}" ] || [ "$chain_harness" = "$CAPTAIN_HARNESS" ] || continue
     result=$(captain_model_availability "$model" "$effort")
     state=${result%%$'\t'*}
     reason=${result#*$'\t'}

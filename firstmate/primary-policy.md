@@ -240,8 +240,10 @@ Pi exposes no Anthropic provider on this machine. Pi therefore carries Astra,
 and OMP carries Fable 5.1 plus Astra where the mutating DEEP form requires
 that harness. `openai-codex/gpt-5.6-sol` remains the Captain-startup
 candidate in `captain-startup-models.tsv`, RESEARCH's Pi-tooling-better
-route, and the named tenth-man-independence override. `openai-codex/gpt-5.5`
-remains retired from worker routing.
+route, and the named tenth-man-independence override; that chain's Claude
+Sonnet fallback step is harness-scoped (OMP's own `anthropic/claude-sonnet-5`
+versus Pi's `pi-claude-code-provider/sonnet`) - see README.md "Captain
+startup model". `openai-codex/gpt-5.5` remains retired from worker routing.
 
 **Deferred to a later release.** The local Qwen/Ollama lane remains absent
 while that machine is offline. It is not configured anywhere in this

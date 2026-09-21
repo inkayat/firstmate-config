@@ -24,8 +24,11 @@ case ${1:-} in
       empty) echo '{"models":[]}'; exit ;;
     esac
     printf '{"models":['
-    if [ "${CATALOG:-normal}" != astra ]; then
+    if [ "${CATALOG:-normal}" != astra ] && [ "${CATALOG:-normal}" != sonnet ]; then
       printf '{"provider":"openai-codex","id":"gpt-5.6-sol","selector":"openai-codex/gpt-5.6-sol","reasoning":true,"thinking":["%s"]},' "${SOL_EFFORT:-high}"
+    fi
+    if [ "${CATALOG:-normal}" = sonnet ]; then
+      printf '{"provider":"anthropic","id":"claude-sonnet-5","selector":"anthropic/claude-sonnet-5","reasoning":true,"thinking":["high","xhigh"]},'
     fi
     printf '{"provider":"openai-codex","id":"gpt-6-astra","selector":"openai-codex/gpt-6-astra","reasoning":true,"thinking":["xhigh"]}]}\n'
     exit ;;
@@ -71,8 +74,11 @@ check 'explicit OMP uses native command' "$FM_OMP_BIN --model openai-codex/gpt-5
 out=$(run --harness pi --print-command 2>&1)
 check 'explicit Pi preserves trust-free extensions' "$FM_PI_BIN --model openai-codex/gpt-5.6-sol --thinking high -e $FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts -e $FIRSTMATE_ROOT/.pi/extensions/fm-primary-pi-watch.ts" "$(field "$out" COMMAND)"
 out=$(CATALOG=astra run --print-command 2>&1)
-check 'OMP skips absent Sol and Pi-only Sonnet without inventing replacement' openai-codex/gpt-6-astra "$(field "$out" SELECTED_MODEL)"
+check 'OMP skips absent Sol and the Pi-only Sonnet candidate without inventing replacement' openai-codex/gpt-6-astra "$(field "$out" SELECTED_MODEL)"
 check 'Astra effort is not downgraded' xhigh "$(field "$out" SELECTED_EFFORT)"
+out=$(CATALOG=sonnet run --print-command 2>&1)
+check 'OMP falls back to its own native Claude Sonnet candidate, never the Pi-only provider id' anthropic/claude-sonnet-5 "$(field "$out" SELECTED_MODEL)"
+check 'OMP native Sonnet fallback keeps high effort' high "$(field "$out" SELECTED_EFFORT)"
 out=$(SOL_EFFORT=low run --print-command 2>&1)
 check 'unsupported exact effort skips candidate' openai-codex/gpt-6-astra "$(field "$out" SELECTED_MODEL)"
 for kind in broken failed invalid_schema; do
