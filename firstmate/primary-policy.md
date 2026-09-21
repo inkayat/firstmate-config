@@ -325,9 +325,10 @@ Handoff format for a selected row mirrors section 2 step 4: the exact
 resolved path under `$FM_VAULT_ROOT` - an absolute path is correct here,
 like the shared worker skill root this is a machine-local cache outside any
 worktree, not the primary-checkout path step 3 forbids - plus the same
-read-and-apply requirement, plus the row's `notes` from
-`$FM_VAULT_ROOT/catalog.yaml` (under that `id`; `bin/lookup.ts` prints no
-notes) as the adaptation/usage caveat when one exists.
+read-and-apply requirement, plus the row's notes - the ninth, tab-separated
+field `bun "$FM_VAULT_ROOT/bin/lookup.ts" --id <vault-id>` prints for that
+row - as the adaptation/usage caveat when one exists. Read notes from that
+field only; never grep or otherwise parse `catalog.yaml` directly for it.
 
 ## 6. Orchestration boundary
 

@@ -379,5 +379,17 @@ contains 'B8 omp config leak: no_global_leak is FAIL' "$out" 'FAIL          vaul
 contains 'B8 omp config leak: names the omp config path' "$out" "$DOC_HOME/.omp/agent/config.yml"
 rm -f "$DOC_HOME/.omp/agent/config.yml"
 
+# --- B8b. no_global_leak: the vault path in OMP config using the ~/-relative
+#    form OMP itself expands at load time, not just the absolute path -----
+DOC_CACHE_TILDE_ROOT="$DOC_HOME/vault-cache-tilde"
+cp -R "$TMP_ROOT/doc-cache-healthy" "$DOC_CACHE_TILDE_ROOT"
+mkdir -p "$DOC_HOME/.omp/agent"
+printf 'skills:\n  customDirectories:\n    - ~/vault-cache-tilde/test-owner-test-vault\n' > "$DOC_HOME/.omp/agent/config.yml"
+out=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_TILDE_ROOT" "$TMP_ROOT/doc-skills-b8b")
+contains 'B8b omp config tilde leak: no_global_leak is FAIL' "$out" 'FAIL          vault.no_global_leak'
+contains 'B8b omp config tilde leak: names the omp config path' "$out" "$DOC_HOME/.omp/agent/config.yml"
+rm -f "$DOC_HOME/.omp/agent/config.yml"
+rm -rf "$DOC_CACHE_TILDE_ROOT"
+
 printf '\nVAULT TESTS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]

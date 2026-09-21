@@ -974,8 +974,18 @@ else
       esac
     done
   fi
-  if [ -r "$OMP_CONFIG" ] && grep -qF "$VAULT_DIR" "$OMP_CONFIG" 2>/dev/null; then
-    VAULT_LEAK+=("omp:$OMP_CONFIG")
+  if [ -r "$OMP_CONFIG" ]; then
+    # OMP config may name the cache path either absolute or in the ~/-
+    # relative form OMP itself expands at load time; both leak the vault
+    # into global discovery, so both must be checked verbatim in the file.
+    vault_dir_tilde=""
+    case $VAULT_DIR in
+      "$HOME"/*) vault_dir_tilde="~${VAULT_DIR#"$HOME"}" ;;
+    esac
+    if grep -qF "$VAULT_DIR" "$OMP_CONFIG" 2>/dev/null ||
+      { [ -n "$vault_dir_tilde" ] && grep -qF "$vault_dir_tilde" "$OMP_CONFIG" 2>/dev/null; }; then
+      VAULT_LEAK+=("omp:$OMP_CONFIG")
+    fi
   fi
   if [ "${#VAULT_LEAK[@]}" -eq 0 ]; then
     add_check vault.no_global_leak PASS "no global skill or OMP config resolves into the specialist skill vault cache" "$SKILLS_ROOT"
