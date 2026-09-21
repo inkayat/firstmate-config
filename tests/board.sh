@@ -641,4 +641,80 @@ while kill -0 "$OPEN_PID" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i +
 if kill -0 "$OPEN_PID" 2>/dev/null; then fail '21 open: exits promptly once the viewer closes'; kill "$OPEN_PID" 2>/dev/null; else pass '21 open: exits promptly once the viewer closes'; fi
 wait "$OPEN_PID" 2>/dev/null
 
+# =============================================================================
+# Scenario 10: a Firstmate-sourced row whose id leaves every surface of a
+# complete, valid home summary is retired (deleted); manual rows, and rows
+# missing only because the ledger is invalid or has truncated a surface, are
+# left exactly as they were. Regression coverage for the captain-reported
+# board bug: a task that finishes and is torn down (backlog prune / landed
+# window aging out) disappears from every Firstmate surface, so an
+# upsert-only reconcile froze it at its last-seen `in_progress`/`done` state
+# forever.
+# =============================================================================
+HOME10="$TMP_ROOT/home10"; FIRSTMATE10="$TMP_ROOT/firstmate10"
+mkdir -p "$HOME10/state" "$FIRSTMATE10/bin"
+printf '#!/usr/bin/env bash\nprintf "state: working . source: stub . harness busy\\n"\n' > "$FIRSTMATE10/bin/fm-crew-state.sh"
+printf '#!/usr/bin/env bash\nprintf "error: not found\\ncode: NOT_FOUND\\n"; exit 1\n' > "$FIRSTMATE10/bin/fm-tasks-axi.sh"
+chmod +x "$FIRSTMATE10/bin/"*
+run10() { FM_HOME="$HOME10" FIRSTMATE_ROOT="$FIRSTMATE10" PATH="/usr/bin:/bin" "$BOARD" "$@"; }
+summary10() {  # <valid> <omitted-json> <active-id-or-empty> <landed-id-or-empty>
+  local active='' landed=''
+  [ -n "$3" ] && active="{\"id\": \"$3\", \"repo\": \"proj-r\", \"kind\": \"ship\", \"name\": \"Active task\"}"
+  [ -n "$4" ] && landed="{\"id\": \"$4\", \"title\": \"Landed task\", \"kind\": \"ship\", \"completion\": {\"verb\": \"merged\", \"date\": \"2026-09-20\"}}"
+  cat > "$HOME10/state/home-summary.json" <<JSON
+{"schema": "fm-secondmate-home-summary.v1", "valid": $1, "omitted": $2,
+ "queued": [{"id": "q-live-1", "repo": "proj-r", "title": "Queued live", "kind": "ship", "since": "2026-09-20"}],
+ "active_children": [$active], "endpoints": [$active], "holds": [], "decisions_open": [], "landed": [$landed]}
+JSON
+}
+state_of10() { run10 list --json | python3 -c 'import json,sys; ts={t["id"]:t for t in json.load(sys.stdin)}; t=ts.get(sys.argv[1]); print(t["state"] if t else "absent")' "$1"; }
+
+# v1: a-1 active, l-1 landed; manual m-1 in progress.
+summary10 true '[]' a-1 l-1
+run10 add --project proj-r --title "Manual row" --id m-1 >/dev/null; run10 move m-1 in_progress >/dev/null
+run10 list >/dev/null
+check '22 retire: v1 projects a-1 in_progress' "$(state_of10 a-1)" in_progress
+check '22 retire: v1 projects l-1 done' "$(state_of10 l-1)" done
+
+# v2: a-1 finished, landed, and was pruned from the backlog before any board
+# command ran; l-1 aged out of the landed window. Both vanish from every
+# surface of a valid, untruncated ledger (the real home shape after tasks-axi
+# prune / landed-window aging).
+summary10 true '[]' '' ''
+run10 list >/dev/null
+check '22 retire: id absent from a complete valid ledger is retired' "$(state_of10 a-1)" absent
+check '22 retire: aged-out landed row is retired' "$(state_of10 l-1)" absent
+check '22 retire: manual row never retired' "$(state_of10 m-1)" in_progress
+check '22 retire: still-present row kept' "$(state_of10 q-live-1)" todo
+if run10 show a-1 >/dev/null 2>&1; then fail '22 retire: show of a retired id fails nonzero'; else pass '22 retire: show of a retired id fails nonzero'; fi
+if grep -q '"event": "retire"' "$HOME10/data/board/events.jsonl"; then pass '22 retire: retirement recorded in events.jsonl'; else fail '22 retire: retirement recorded in events.jsonl'; fi
+
+# v3: partial publication must never retire. Re-seed a-1 via a valid ledger,
+# then publish an invalid ledger, a ledger that truncated a surface, and a
+# ledger from an older producer with no `valid` key at all - none without a-1.
+summary10 true '[]' a-1 ''; run10 list >/dev/null
+summary10 false '[]' '' ''; run10 list >/dev/null
+check '23 guard: invalid ledger retires nothing' "$(state_of10 a-1)" in_progress
+summary10 true '[{"surface": "landed", "count": 3}]' '' ''; run10 list >/dev/null
+check '23 guard: truncated ledger retires nothing' "$(state_of10 a-1)" in_progress
+python3 - "$HOME10/state/home-summary.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d.pop('valid')
+d['omitted'] = []
+json.dump(d, open(p, 'w'))
+PY
+run10 list >/dev/null
+check '23 guard: ledger without a valid flag retires nothing' "$(state_of10 a-1)" in_progress
+
+# narrow reconcile (show) retires only the id it was asked about, leaving
+# other stale ids for the next full reconcile.
+summary10 true '[]' '' ''
+summary10 true '[]' a-2 ''; run10 show a-2 >/dev/null
+summary10 true '[]' '' ''
+if run10 show a-1 >/dev/null 2>&1; then fail '24 narrow: show retires the requested stale id'; else pass '24 narrow: show retires the requested stale id'; fi
+found_a2=$(python3 -c 'import json; print("a-2" in json.load(open("'"$HOME10"'/data/board/state.json"))["tasks"])')
+check '24 narrow: show leaves other stale ids for the full reconcile' "$found_a2" True
+
 [ "$failed" -eq 0 ] || exit 1

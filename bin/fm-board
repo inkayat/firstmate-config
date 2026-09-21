@@ -10,9 +10,13 @@ Firstmate's own backlog and execution records remain authoritative for real
 work; this board is their persistent, machine-readable projection, not a
 competing task database. `reconcile()` upserts board records for every task
 id found in Firstmate's own state (`$FM_HOME/state/home-summary.json`,
-`$FIRSTMATE_ROOT/bin/fm-crew-state.sh`, `$FM_HOME/state/<id>.meta`); it never
-touches an id it does not find there, so manually added tasks (used for
-throwaway verification) and unrelated tasks are always preserved untouched.
+`$FIRSTMATE_ROOT/bin/fm-crew-state.sh`, `$FM_HOME/state/<id>.meta`); when that
+ledger is complete (`valid: true`, no `omitted` surfaces), it also retires
+(deletes) any `source: firstmate` row whose id is absent from every summary
+surface, since Firstmate itself has stopped tracking it. A ledger that is
+invalid or has truncated a surface never retires anything, and manually
+added tasks (`source: manual`, used for throwaway verification) and
+unrelated tasks are always preserved untouched.
 See `AGENTS.md` for the full state-to-board lifecycle mapping table.
 
 No step here calls an LLM. `list`/`show`/`summary`/`render`/`open` perform a
@@ -639,10 +643,25 @@ def reconcile(only_id: str | None = None) -> None:
             fields.pop("project", None)
         updates[tid] = fields
 
-    if not updates:
+    # Retire Firstmate-sourced rows Firstmate no longer tracks on any surface.
+    # Only a complete publication may retire: an invalid or truncated ledger
+    # can omit live ids, so it leaves the board untouched. Manual rows
+    # (source != "firstmate") are never retired.
+    retire: list[str] = []
+    if ledger.get("valid") is True and not ledger.get("omitted"):
+        present = {e.get("id") for surface in (
+            "queued", "active_children", "endpoints", "landed", "holds", "decisions_open",
+        ) for e in ledger.get(surface, [])}
+        retire = [tid for tid, t in existing_tasks.items()
+                  if t.get("source") == "firstmate" and tid not in present
+                  and (not only_id or tid == only_id)]
+
+    if not updates and not retire:
         return
 
     with locked_state() as data:
+        for tid in retire:
+            data["tasks"].pop(tid, None)
         for tid, fields in updates.items():
             task = data["tasks"].get(tid)
             if task is None:
@@ -655,7 +674,10 @@ def reconcile(only_id: str | None = None) -> None:
                 if key in fields:
                     task[key] = fields[key]
             task["updated_at"] = now_iso()
-    append_event({"event": "reconcile", "ids": sorted(updates.keys())})
+    if updates:
+        append_event({"event": "reconcile", "ids": sorted(updates.keys())})
+    if retire:
+        append_event({"event": "retire", "ids": sorted(retire)})
 
 
 # --- CLI wiring --------------------------------------------------------------
