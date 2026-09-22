@@ -57,9 +57,13 @@ omp_version=$(version_cmd "${FM_OMP_BIN:-omp}")
 herdr_version=$(version_cmd herdr)
 manifest_schema=${SM_SCHEMA_VERSION:-unknown}
 manifest_baseline=${SM_FIRSTMATE_COMMIT:-unknown}
+# The one owner of vault pin parsing, shared with install.sh and fm-doctor.
+# fm-version reads only the pinned commit from it - identity, never health.
+# shellcheck source=firstmate/fm-vault-lib.sh
+. "$CONFIG_ROOT/firstmate/fm-vault-lib.sh"
 vault_lock="$CONFIG_ROOT/skills/vault.lock"
 vault_commit=""
-[ ! -f "$vault_lock" ] || vault_commit=$(awk -F'\t' '/^[^#]/ && NF >= 2 {print $2; exit}' "$vault_lock")
+fm_vault_load "$vault_lock" "" && vault_commit=$FM_VAULT_COMMIT
 platform=$(uname -s 2>/dev/null || printf unknown)
 arch=$(uname -m 2>/dev/null || printf unknown)
 

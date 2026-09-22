@@ -21,8 +21,9 @@
 #      collide with step 7's authoritative copies, and defaultMode=off in
 #      ponytail's own config
 #  10. clones/pins the optional specialist skill vault (agent-skill-vault)
-#      into an install-managed cache, detached at the exact commit in
-#      skills/vault.lock; never symlinked into ~/.agents/skills
+#      into an install-managed, commit-qualified cache directory, detached at
+#      the exact commit in skills/vault.lock; never symlinked into
+#      ~/.agents/skills
 #
 # What it never does: store a credential, touch a project repository, or modify
 # anything tracked in the official FirstMate checkout.
@@ -35,6 +36,10 @@ set -u
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=firstmate/fm-stack-manifest.sh
 . "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh"
+# The one owner of vault pin parsing, commit-qualified path construction, and
+# cache verification, shared with bin/fm-doctor and bin/fm-version.
+# shellcheck source=firstmate/fm-vault-lib.sh
+. "$CONFIG_ROOT/firstmate/fm-vault-lib.sh"
 if ! stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv"; then
   printf 'install: %s\n' "$SM_LOAD_ERROR" >&2
   exit 1
@@ -49,14 +54,8 @@ SKILL_CACHE="${FM_SKILL_CACHE:-$HOME/.local/share/firstmate-config/skills-src}"
 BIN_DIR="${FM_BIN_DIR:-$HOME/.local/bin}"
 VAULT_CACHE="${FM_VAULT_CACHE:-$HOME/.local/share/firstmate-config/vault-src}"
 VAULT_LOCK="$CONFIG_ROOT/skills/vault.lock"
-VAULT_REPO=""
-VAULT_SHA=""
-VAULT_DIR=""
-if [ -f "$VAULT_LOCK" ]; then
-  VAULT_REPO=$(awk -F'\t' '/^[^#]/ && NF >= 2 {print $1; exit}' "$VAULT_LOCK")
-  VAULT_SHA=$(awk -F'\t' '/^[^#]/ && NF >= 2 {print $2; exit}' "$VAULT_LOCK")
-  [ -z "$VAULT_REPO" ] || VAULT_DIR="$VAULT_CACHE/$(printf '%s' "$VAULT_REPO" | tr '/' '-')"
-fi
+fm_vault_load "$VAULT_LOCK" "$VAULT_CACHE"
+VAULT_LOCK_STATE=$?
 # Every git probe below inspects a repository it must not silently write to
 # (an existing official checkout it never updates); a clone still needs a
 # real write, which this setting does not affect.
@@ -152,8 +151,8 @@ FIRSTMATE_ROOT="$FIRSTMATE_ROOT"
 FM_CONFIG_ROOT="$CONFIG_ROOT"
 FM_HOME="$FM_HOME"
 FM_BACKEND="$FM_BACKEND"
-FM_VAULT_ROOT="$VAULT_DIR"
-export FIRSTMATE_ROOT FM_CONFIG_ROOT FM_HOME FM_BACKEND FM_VAULT_ROOT
+FM_SKILL_VAULT_ROOT="$FM_VAULT_DIR"
+export FIRSTMATE_ROOT FM_CONFIG_ROOT FM_HOME FM_BACKEND FM_SKILL_VAULT_ROOT
 EOF
 )
 if [ -f "$ENV_FILE" ] && [ "$(cat "$ENV_FILE")" = "$env_body" ]; then
@@ -424,49 +423,58 @@ fi
 # A private, curated, provenance-pinned index of specialist skills
 # (agent-skill-vault) a Captain can name by exact path in a task brief. This
 # step only clones/pins the repository itself into a machine-local,
-# install-managed cache at the exact commit in skills/vault.lock - it never
-# symlinks anything from it into $SKILLS_ROOT or any other global skill
-# root (see firstmate/primary-policy.md "Specialist skill vault"). A dirty
-# cache (local modifications) is never auto-reset: this cache is
-# install-managed, so a human must remove it and rerun ./install.sh rather
-# than have this script silently discard unexplained local changes. Absent
-# skills/vault.lock, this step is a no-op: the vault is entirely optional.
+# install-managed cache directory named for the exact commit in
+# skills/vault.lock - it never symlinks anything from it into $SKILLS_ROOT or
+# any other global skill root (see firstmate/primary-policy.md "Specialist
+# skill vault").
+#
+# A commit directory is immutable: it is created once, verified, and then only
+# ever read. Nothing here re-points, resets, or deletes an existing one - a
+# new pin is a new directory beside it, and a directory that fails
+# verification is reported for a human to remove, never repaired in place. The
+# only path that ever deletes anything is a failed fresh clone removing its
+# own incomplete staging directory. Absent skills/vault.lock, this step is a
+# no-op: the vault is entirely optional.
 step '10. specialist skill vault'
-if [ ! -f "$VAULT_LOCK" ]; then
+if [ "$VAULT_LOCK_STATE" -eq 1 ]; then
   warn 'no skills/vault.lock; skipping specialist skill vault'
-elif [ -z "$VAULT_REPO" ] || [ -z "$VAULT_SHA" ]; then
-  failf "skills/vault.lock is malformed (expected '<repo><TAB><commit>')"
-else
-  if [ -d "$VAULT_DIR/.git" ]; then
-    vault_cur=$(git -C "$VAULT_DIR" rev-parse HEAD 2>/dev/null)
-    vault_dirty=$(git -C "$VAULT_DIR" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-    if [ -z "$vault_cur" ]; then
-      failf "$VAULT_REPO cache at $VAULT_DIR is corrupt (not a readable git checkout); remove it and rerun ./install.sh"
-    elif [ "$vault_dirty" != 0 ]; then
-      failf "$VAULT_REPO cache at $VAULT_DIR has $vault_dirty local modification(s); this cache is install-managed and must never be hand-edited - remove it and rerun ./install.sh"
-    elif [ "$vault_cur" = "$VAULT_SHA" ]; then
-      printf '  ok      %s at %s\n' "$VAULT_REPO" "${VAULT_SHA%"${VAULT_SHA#???????}"}"
-    elif [ "$VERIFY" -eq 1 ]; then
-      driftf "$VAULT_REPO is at ${vault_cur:-unknown}, not pinned $VAULT_SHA"
-    else
-      git -C "$VAULT_DIR" fetch -q --all 2>/dev/null
-      if git -C "$VAULT_DIR" checkout -q --detach "$VAULT_SHA" 2>/dev/null; then
-        changedf "$VAULT_REPO re-pinned to ${VAULT_SHA%"${VAULT_SHA#???????}"}"
-      else
-        failf "$VAULT_REPO has no commit $VAULT_SHA (offline, or the pin is wrong)"
-      fi
-    fi
-  elif [ -e "$VAULT_DIR" ]; then
-    failf "$VAULT_DIR exists but is not a git checkout; this cache is install-managed - remove it and rerun ./install.sh"
-  elif would "clone $VAULT_REPO into $VAULT_DIR, pinned to $VAULT_SHA"; then
-    mkdir -p "$VAULT_CACHE"
-    if git clone -q "https://github.com/$VAULT_REPO.git" "$VAULT_DIR" \
-       && git -C "$VAULT_DIR" checkout -q --detach "$VAULT_SHA" 2>/dev/null; then
-      changedf "cloned $VAULT_REPO into $VAULT_DIR, pinned to ${VAULT_SHA%"${VAULT_SHA#???????}"}"
-    else
-      failf "could not clone $VAULT_REPO and pin it to $VAULT_SHA"
-      rm -rf "$VAULT_DIR"
-    fi
+elif [ "$VAULT_LOCK_STATE" -ne 0 ]; then
+  failf "skills/vault.lock is malformed (expected '<repo><TAB><40-hex-commit>')"
+elif [ -e "$FM_VAULT_DIR" ]; then
+  vault_state=$(fm_vault_verify "$FM_VAULT_DIR" "$FM_VAULT_COMMIT")
+  case $vault_state in
+    healthy) printf '  ok      %s at %s\n' "$FM_VAULT_REPO" "${FM_VAULT_COMMIT:0:12}" ;;
+    unverified_catalog) warn "$(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")" ;;
+    *) failf "$FM_VAULT_REPO cache $(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")" ;;
+  esac
+elif would "clone $FM_VAULT_REPO into $FM_VAULT_DIR, pinned to $FM_VAULT_COMMIT"; then
+  # Clone into a staging directory and move it into place only once it
+  # verifies, so an interrupted or wrong clone can never leave a
+  # half-populated directory that a later run would read as the pinned commit.
+  vault_stage="$FM_VAULT_DIR.incomplete"
+  rm -rf "$vault_stage"
+  mkdir -p "$(dirname "$FM_VAULT_DIR")"
+  if git clone -q "https://github.com/$FM_VAULT_REPO.git" "$vault_stage" \
+     && git -C "$vault_stage" checkout -q --detach "$FM_VAULT_COMMIT" 2>/dev/null; then
+    vault_state=$(fm_vault_verify "$vault_stage" "$FM_VAULT_COMMIT")
+    case $vault_state in
+      healthy|unverified_catalog)
+        if mv "$vault_stage" "$FM_VAULT_DIR"; then
+          changedf "cloned $FM_VAULT_REPO into $FM_VAULT_DIR, pinned to ${FM_VAULT_COMMIT:0:12}"
+          [ "$vault_state" = healthy ] || warn "$(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")"
+        else
+          failf "could not move the verified clone into $FM_VAULT_DIR"
+          rm -rf "$vault_stage"
+        fi
+        ;;
+      *)
+        failf "$FM_VAULT_REPO clone $(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")"
+        rm -rf "$vault_stage"
+        ;;
+    esac
+  else
+    failf "could not clone $FM_VAULT_REPO and pin it to $FM_VAULT_COMMIT"
+    rm -rf "$vault_stage"
   fi
 fi
 

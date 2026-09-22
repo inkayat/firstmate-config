@@ -86,6 +86,7 @@ project-native instructions
   > project-local skills
   > role/task policy
   > shared worker skills
+  > optional specialist vault picks
 ```
 
 Project-native context includes root and nested `AGENTS.override.md`,
@@ -95,9 +96,11 @@ project directories such as `.agents/skills`, `.claude/skills`, or
 `~/.agents/skills` for Pi and OMP discovery.
 
 An optional, private, curated, provenance-pinned specialist skill vault
-(`skills/vault.lock`, `FM_VAULT_ROOT`) supplements shared worker skills on a
-per-task, explicit-pick basis - it is never globally registered and never
-adds to the existing per-task skill budget. See `firstmate/primary-policy.md`
+(`skills/vault.lock`, `FM_SKILL_VAULT_ROOT`) supplements shared worker skills
+on a per-task, explicit-pick basis - it is never globally registered and never
+adds to the existing per-task skill budget. Each pinned commit is cached in
+its own immutable, commit-qualified directory, so an exact path handed to a
+worker never changes underneath it. See `firstmate/primary-policy.md`
 "Specialist skill vault" for the consumption contract and `fm doctor`'s
 `vault.*` checks for its pin health.
 

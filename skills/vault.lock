@@ -1,13 +1,15 @@
 # Specialist skill vault (agent-skill-vault), pinned by commit.
 #
-# install.sh clones this repository once into a machine-local,
-# install-managed cache (separate from skills-src/, see step 10) and checks
-# out the exact commit below, detached. Nothing from this repository is ever
-# symlinked into ~/.agents/skills or any other global skill root: it is an
-# optional, per-task source a Captain reads by exact path
-# (firstmate/primary-policy.md "Specialist skill vault"), never a global
-# registration. The vault's own README.md and catalog.yaml carry its
-# content's provenance and licensing; this file only pins the one commit.
+# install.sh clones this repository once per pinned commit into a
+# machine-local, install-managed cache directory named for that exact commit
+# (separate from skills-src/, see step 10) and checks it out detached.
+# Nothing from this repository is ever symlinked into ~/.agents/skills or any
+# other global skill root: it is an optional, per-task source a Captain reads
+# by exact path (firstmate/primary-policy.md "Specialist skill vault"), never
+# a global registration. A commit directory is immutable once verified, so a
+# path already handed to a worker never changes underneath it. The vault's
+# own README.md and catalog.yaml carry its content's provenance and
+# licensing; this file only pins the one commit.
 #
 # To move a pin: verify the new commit's own test suite passes (`bun test`
 # in a scratch clone of the vault), change the sha below, and commit. Never
@@ -16,4 +18,4 @@
 #
 # Format, tab-separated:
 #   <repo> <commit>
-inkayat/agent-skill-vault	8fe103d8fbdf5611ec49b93571e10810f9b23fc5
+inkayat/agent-skill-vault	5f564d0707bad2511e51beef25abfc15e6f5569c

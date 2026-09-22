@@ -33,7 +33,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 SYS_BIN="$TMP_ROOT/sysbin"
 mkdir -p "$SYS_BIN"
-for _tool in bash git sed awk grep wc date find stat readlink basename dirname tr head cat mkdir env sort ln rm mktemp cp printf; do
+for _tool in bash git sed awk grep wc date find stat readlink basename dirname tr head cat mkdir env sort ln rm mv mktemp cp printf bun; do
   _p=$(command -v "$_tool" 2>/dev/null) || continue
   ln -s "$_p" "$SYS_BIN/$_tool"
 done
@@ -47,6 +47,7 @@ mkdir -p "$INST_CFG/bin" "$INST_CFG/firstmate" "$INST_CFG/skills"
 cp "$CONFIG_ROOT/install.sh" "$INST_CFG/install.sh"
 chmod +x "$INST_CFG/install.sh"
 cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$INST_CFG/firstmate/fm-stack-manifest.sh"
+cp "$CONFIG_ROOT/firstmate/fm-vault-lib.sh" "$INST_CFG/firstmate/fm-vault-lib.sh"
 printf '{}\n' > "$INST_CFG/firstmate/crew-dispatch.json"
 printf '# captain notes\n' > "$INST_CFG/firstmate/captain.md"
 : > "$INST_CFG/bin/fm"; chmod +x "$INST_CFG/bin/fm"
@@ -76,8 +77,10 @@ mkdir -p "$V_ORIGIN"
 git -C "$V_ORIGIN" init -q
 git -C "$V_ORIGIN" config user.email t@example.invalid
 git -C "$V_ORIGIN" config user.name t
+mkdir -p "$V_ORIGIN/bin"
 printf '# fixture vault\n' > "$V_ORIGIN/README.md"
 printf 'entries: {}\n' > "$V_ORIGIN/catalog.yaml"
+printf '#!/usr/bin/env bun\n' > "$V_ORIGIN/bin/lookup.ts"
 git -C "$V_ORIGIN" add -A
 git -C "$V_ORIGIN" commit -q -m c1
 V_SHA1=$(git -C "$V_ORIGIN" rev-parse HEAD)
@@ -118,7 +121,11 @@ run_fake_install() { # <suffix> [install.sh args...]
   "$INST_CFG/install.sh" "$@" 2>&1
 }
 
-VAULT_DEST_fresh="$TMP_ROOT/inst-vault-cache-fresh/test-owner-test-vault"
+# The cache layout is commit-qualified and immutable: one directory per exact
+# pinned commit, never a mutable owner/repo checkout that gets re-pointed.
+VAULT_CACHE_fresh="$TMP_ROOT/inst-vault-cache-fresh/test-owner-test-vault"
+VAULT_DEST_fresh="$VAULT_CACHE_fresh/$V_SHA1"
+VAULT_DEST2_fresh="$VAULT_CACHE_fresh/$V_SHA2"
 
 # --- 1. Fresh run clones and pins to the exact commit -----------------------
 out=$(run_fake_install fresh); code=$?
@@ -127,8 +134,10 @@ contains '1 fresh run: reports the vault step ran' "$out" '10. specialist skill 
 contains '1 fresh run: reports the clone' "$out" "cloned $VAULT_REPO_ID"
 check '1 vault cache: cloned at the pinned commit' "$V_SHA1" "$(git -C "$VAULT_DEST_fresh" rev-parse HEAD 2>/dev/null || printf '')"
 check '1 vault cache: detached HEAD, never a branch' HEAD "$(git -C "$VAULT_DEST_fresh" symbolic-ref -q --short HEAD 2>/dev/null || printf HEAD)"
-contains '1 env file: exports FM_VAULT_ROOT at the cache path' \
-  "$(cat "$TMP_ROOT/inst-env-fresh" 2>/dev/null)" "FM_VAULT_ROOT=\"$VAULT_DEST_fresh\""
+contains '1 env file: exports FM_SKILL_VAULT_ROOT at the commit-qualified cache path' \
+  "$(cat "$TMP_ROOT/inst-env-fresh" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$VAULT_DEST_fresh\""
+not_contains '1 env file: the old ambiguous FM_VAULT_ROOT name is gone' \
+  "$(cat "$TMP_ROOT/inst-env-fresh" 2>/dev/null)" 'FM_VAULT_ROOT='
 not_contains '1 global skills: the vault is never symlinked into the shared skill root' \
   "$(ls "$TMP_ROOT/inst-skills-fresh" 2>/dev/null)" 'vault'
 
@@ -155,17 +164,33 @@ check '3 offline real run: exit code is 0' 0 "$code3b"
 contains '3 offline real run: reports 0 change(s)' "$out3b" 'install: 0 change(s), 0 failure(s)'
 mv "$BROKEN_HOME/.gitconfig.bak" "$BROKEN_HOME/.gitconfig"
 
-# --- 4. Wrong revision: --verify detects it; a real run re-pins -------------
+# --- 4. A new pin creates a separate immutable commit directory -------------
+# Pinning a new commit never re-points an existing directory: it clones the new
+# commit alongside, and the previous commit's directory is left exactly as it
+# was (its own commit, clean tree), so an exact path already handed to a worker
+# can never change its bytes underneath.
+printf '%s\t%s\n' "$VAULT_REPO_ID" "$V_SHA2" > "$INST_CFG/skills/vault.lock"
+out4=$(run_fake_install fresh); code4=$?
+check '4 new pin: exit code is 0' 0 "$code4"
+check '4 new pin: the new commit directory is at that exact commit' "$V_SHA2" "$(git -C "$VAULT_DEST2_fresh" rev-parse HEAD 2>/dev/null || printf '')"
+check '4 new pin: the previous commit directory is still at its own commit' "$V_SHA1" "$(git -C "$VAULT_DEST_fresh" rev-parse HEAD 2>/dev/null || printf '')"
+check '4 new pin: the previous commit directory is byte-stable (clean tree)' '' "$(git -C "$VAULT_DEST_fresh" status --porcelain 2>/dev/null)"
+contains '4 new pin: env repoints to the new commit directory' \
+  "$(cat "$TMP_ROOT/inst-env-fresh" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$VAULT_DEST2_fresh\""
+printf '%s\t%s\n' "$VAULT_REPO_ID" "$V_SHA1" > "$INST_CFG/skills/vault.lock"
+
+# --- 4b. A commit directory not at its own commit is refused, never re-pinned
 git -C "$VAULT_DEST_fresh" checkout -q --detach "$V_SHA2"
-verify4=$(run_fake_install fresh --verify); code4=$?
-check '4 wrong revision verify: exit code is 0 (drift reported, never a failure)' 0 "$code4"
-contains '4 wrong revision verify: reports DRIFT' "$verify4" 'DRIFT'
-contains '4 wrong revision verify: names it is not pinned' "$verify4" "not pinned $V_SHA1"
-check '4 wrong revision verify: never repoints during --verify' "$V_SHA2" "$(git -C "$VAULT_DEST_fresh" rev-parse HEAD)"
-fix4=$(run_fake_install fresh); code4b=$?
-check '4 wrong revision real run: exit code is 0' 0 "$code4b"
-contains '4 wrong revision real run: reports re-pinned' "$fix4" 're-pinned'
-check '4 wrong revision real run: cache is back at the pinned commit' "$V_SHA1" "$(git -C "$VAULT_DEST_fresh" rev-parse HEAD)"
+verify4b=$(run_fake_install fresh --verify); code4bv=$?
+if [ "$code4bv" -eq 0 ]; then fail '4b wrong revision verify: expected nonzero exit, got 0'; else pass '4b wrong revision verify: exit code is nonzero'; fi
+contains '4b wrong revision verify: reported as a failure, never drift' "$verify4b" 'FAIL'
+contains '4b wrong revision verify: names the immutable contract' "$verify4b" 'never re-pinned in place'
+check '4b wrong revision verify: never repoints during --verify' "$V_SHA2" "$(git -C "$VAULT_DEST_fresh" rev-parse HEAD)"
+real4b=$(run_fake_install fresh); code4br=$?
+if [ "$code4br" -eq 0 ]; then fail '4b wrong revision real run: expected nonzero exit, got 0'; else pass '4b wrong revision real run: exit code is nonzero'; fi
+not_contains '4b wrong revision real run: never reports a repair as a change' "$real4b" '  changed test-owner/test-vault'
+check '4b wrong revision real run: never repoints in place' "$V_SHA2" "$(git -C "$VAULT_DEST_fresh" rev-parse HEAD)"
+git -C "$VAULT_DEST_fresh" checkout -q --detach "$V_SHA1"
 
 # --- 5. Dirty cache: refused, never silently discarded ----------------------
 printf 'hand-edited\n' >> "$VAULT_DEST_fresh/README.md"
@@ -212,13 +237,13 @@ contains '7 malformed lock: names it malformed' "$out7" 'malformed'
 # --- 8. Pre-existing non-git directory at the cache path: refused, never
 #    deleted (an unverified directory must never be rm -rf'd on the way to
 #    a fresh clone) -----------------------------------------------------
-mkdir -p "$TMP_ROOT/inst-vault-cache-nongit/test-owner-test-vault"
-printf 'precious\n' > "$TMP_ROOT/inst-vault-cache-nongit/test-owner-test-vault/precious.txt"
+mkdir -p "$TMP_ROOT/inst-vault-cache-nongit/test-owner-test-vault/$V_SHA1"
+printf 'precious\n' > "$TMP_ROOT/inst-vault-cache-nongit/test-owner-test-vault/$V_SHA1/precious.txt"
 out8=$(run_fake_install nongit); code8=$?
 if [ "$code8" -eq 0 ]; then fail '8 non-git cache dir: expected nonzero exit, got 0'; else pass '8 non-git cache dir: exit code is nonzero'; fi
 contains '8 non-git cache dir: refuses without attempting a clone' "$out8" 'is not a git checkout'
 contains '8 non-git cache dir: names it install-managed' "$out8" 'install-managed'
-if [ -f "$TMP_ROOT/inst-vault-cache-nongit/test-owner-test-vault/precious.txt" ]; then
+if [ -f "$TMP_ROOT/inst-vault-cache-nongit/test-owner-test-vault/$V_SHA1/precious.txt" ]; then
   pass '8 non-git cache dir: pre-existing content is never deleted'
 else
   fail '8 non-git cache dir: pre-existing content is never deleted'
@@ -226,8 +251,8 @@ fi
 
 # --- 9. Corrupt cache (.git present but not a readable checkout): diagnosed
 #    as corrupt, never misreported as offline/wrong-pin --------------------
-mkdir -p "$TMP_ROOT/inst-vault-cache-corrupt/test-owner-test-vault/.git"
-printf 'garbage\n' > "$TMP_ROOT/inst-vault-cache-corrupt/test-owner-test-vault/.git/garbage"
+mkdir -p "$TMP_ROOT/inst-vault-cache-corrupt/test-owner-test-vault/$V_SHA1/.git"
+printf 'garbage\n' > "$TMP_ROOT/inst-vault-cache-corrupt/test-owner-test-vault/$V_SHA1/.git/garbage"
 verify9=$(run_fake_install corrupt --verify); code9v=$?
 if [ "$code9v" -eq 0 ]; then fail '9 corrupt cache verify: expected nonzero exit, got 0'; else pass '9 corrupt cache verify: exit code is nonzero'; fi
 contains '9 corrupt cache verify: diagnosed as corrupt' "$verify9" 'is corrupt'
@@ -257,6 +282,76 @@ out10=$(PATH="$INST_FAKE_BIN:$SYS_BIN" HOME="$BADORIGIN_HOME" FIRSTMATE_ROOT="$T
 if [ "$code10" -eq 0 ]; then fail '10 clone failure: expected nonzero exit, got 0'; else pass '10 clone failure: exit code is nonzero'; fi
 contains '10 clone failure: reports could not clone' "$out10" 'could not clone'
 contains "10 clone failure: git's own stderr is visible, never swallowed" "$out10" 'fatal:'
+if [ -e "$TMP_ROOT/inst-vault-cache-badorigin/test-owner-test-vault/$V_SHA1" ]; then
+  fail '10 clone failure: no incomplete commit directory is ever left behind'
+else
+  pass '10 clone failure: no incomplete commit directory is ever left behind'
+fi
+not_contains '10 clone failure: leaves no staging directory behind either' \
+  "$(find "$TMP_ROOT/inst-vault-cache-badorigin" -maxdepth 3 2>/dev/null | tr '\n' ' ')" '.incomplete'
+
+# --- 11. A commit directory missing the expected catalog surface is refused -
+# Verification is not just "some clean git checkout at that sha": it must be
+# the vault, i.e. carry the catalog and the lookup surface the selection
+# policy reads. A same-sha checkout of something else must never be issued.
+NOCAT_ORIGIN="$TMP_ROOT/vault-origin-nocat"
+mkdir -p "$NOCAT_ORIGIN"
+git -C "$NOCAT_ORIGIN" init -q
+git -C "$NOCAT_ORIGIN" config user.email t@example.invalid
+git -C "$NOCAT_ORIGIN" config user.name t
+printf 'not the vault\n' > "$NOCAT_ORIGIN/README.md"
+git -C "$NOCAT_ORIGIN" add -A
+git -C "$NOCAT_ORIGIN" commit -q -m nocat
+NOCAT_SHA=$(git -C "$NOCAT_ORIGIN" rev-parse HEAD)
+INST_CFG_NOCAT="$TMP_ROOT/inst-cfg-nocat"
+cp -R "$INST_CFG" "$INST_CFG_NOCAT"
+printf '%s\t%s\n' "$VAULT_REPO_ID" "$NOCAT_SHA" > "$INST_CFG_NOCAT/skills/vault.lock"
+mkdir -p "$TMP_ROOT/inst-vault-cache-nocat/test-owner-test-vault"
+git clone -q "$NOCAT_ORIGIN" "$TMP_ROOT/inst-vault-cache-nocat/test-owner-test-vault/$NOCAT_SHA"
+git -C "$TMP_ROOT/inst-vault-cache-nocat/test-owner-test-vault/$NOCAT_SHA" checkout -q --detach "$NOCAT_SHA"
+out11=$(HOME="$TMP_ROOT/inst-home-nocat" FIRSTMATE_ROOT="$TMP_ROOT/inst-dest-nocat" \
+  FM_HOME="$TMP_ROOT/inst-fm-home-nocat" FM_CONFIG_ENV="$TMP_ROOT/inst-env-nocat" \
+  FM_SKILLS_ROOT="$TMP_ROOT/inst-skills-nocat" FM_SKILL_CACHE="$TMP_ROOT/inst-skill-cache-nocat" \
+  FM_VAULT_CACHE="$TMP_ROOT/inst-vault-cache-nocat" FM_BIN_DIR="$TMP_ROOT/inst-bin-dir-nocat" \
+  PI_CODING_AGENT_DIR="$TMP_ROOT/inst-pi-agent-nocat" XDG_CONFIG_HOME="$TMP_ROOT/inst-xdg-nocat" \
+  PATH="$INST_FAKE_BIN:$SYS_BIN" \
+  bash -c 'mkdir -p "$FIRSTMATE_ROOT" "$HOME"; printf fixture > "$FIRSTMATE_ROOT/AGENTS.md"; "$1/install.sh"' _ "$INST_CFG_NOCAT" 2>&1); code11=$?
+if [ "$code11" -eq 0 ]; then fail '11 missing catalog surface: expected nonzero exit, got 0'; else pass '11 missing catalog surface: exit code is nonzero'; fi
+contains '11 missing catalog surface: names catalog.yaml' "$out11" 'catalog.yaml'
+
+# --- 12. A commit directory whose catalog does not parse is refused ---------
+# The vault's own lookup surface is the parser; a cache whose catalog it
+# rejects is never reported as usable (skipped where bun is unavailable,
+# exactly as install.sh treats bun as an optional tool).
+if command -v bun >/dev/null 2>&1; then
+  BADCAT_ORIGIN="$TMP_ROOT/vault-origin-badcat"
+  mkdir -p "$BADCAT_ORIGIN/bin"
+  git -C "$BADCAT_ORIGIN" init -q
+  git -C "$BADCAT_ORIGIN" config user.email t@example.invalid
+  git -C "$BADCAT_ORIGIN" config user.name t
+  printf 'entries: [\n' > "$BADCAT_ORIGIN/catalog.yaml"
+  printf 'throw new Error("catalog.yaml failed validation");\n' > "$BADCAT_ORIGIN/bin/lookup.ts"
+  git -C "$BADCAT_ORIGIN" add -A
+  git -C "$BADCAT_ORIGIN" commit -q -m badcat
+  BADCAT_SHA=$(git -C "$BADCAT_ORIGIN" rev-parse HEAD)
+  INST_CFG_BADCAT="$TMP_ROOT/inst-cfg-badcat"
+  cp -R "$INST_CFG" "$INST_CFG_BADCAT"
+  printf '%s\t%s\n' "$VAULT_REPO_ID" "$BADCAT_SHA" > "$INST_CFG_BADCAT/skills/vault.lock"
+  mkdir -p "$TMP_ROOT/inst-vault-cache-badcat/test-owner-test-vault"
+  git clone -q "$BADCAT_ORIGIN" "$TMP_ROOT/inst-vault-cache-badcat/test-owner-test-vault/$BADCAT_SHA"
+  git -C "$TMP_ROOT/inst-vault-cache-badcat/test-owner-test-vault/$BADCAT_SHA" checkout -q --detach "$BADCAT_SHA"
+  out12=$(HOME="$TMP_ROOT/inst-home-badcat" FIRSTMATE_ROOT="$TMP_ROOT/inst-dest-badcat" \
+    FM_HOME="$TMP_ROOT/inst-fm-home-badcat" FM_CONFIG_ENV="$TMP_ROOT/inst-env-badcat" \
+    FM_SKILLS_ROOT="$TMP_ROOT/inst-skills-badcat" FM_SKILL_CACHE="$TMP_ROOT/inst-skill-cache-badcat" \
+    FM_VAULT_CACHE="$TMP_ROOT/inst-vault-cache-badcat" FM_BIN_DIR="$TMP_ROOT/inst-bin-dir-badcat" \
+    PI_CODING_AGENT_DIR="$TMP_ROOT/inst-pi-agent-badcat" XDG_CONFIG_HOME="$TMP_ROOT/inst-xdg-badcat" \
+    PATH="$INST_FAKE_BIN:$SYS_BIN" \
+    bash -c 'mkdir -p "$FIRSTMATE_ROOT" "$HOME"; printf fixture > "$FIRSTMATE_ROOT/AGENTS.md"; "$1/install.sh"' _ "$INST_CFG_BADCAT" 2>&1); code12=$?
+  if [ "$code12" -eq 0 ]; then fail '12 unparseable catalog: expected nonzero exit, got 0'; else pass '12 unparseable catalog: exit code is nonzero'; fi
+  contains '12 unparseable catalog: names the unparseable catalog' "$out12" 'catalog'
+else
+  pass '12 unparseable catalog: skipped (bun not on PATH)'
+fi
 
 # =============================================================================
 # B. bin/fm-doctor: vault.pin / vault.no_global_leak state coverage
@@ -291,22 +386,30 @@ contains 'B2 absent cache: vault.pin is FAIL' "$out" 'FAIL          vault.pin'
 contains 'B2 absent cache: names it absent' "$out" 'cache absent'
 
 # --- a real local checkout at the exact pinned SHA, for the healthy case ----
-DOC_CACHE_HEALTHY="$TMP_ROOT/doc-cache-healthy/test-owner-test-vault"
-mkdir -p "$DOC_CACHE_HEALTHY"
-git -C "$DOC_CACHE_HEALTHY" init -q
-git -C "$DOC_CACHE_HEALTHY" config user.email t@example.invalid
-git -C "$DOC_CACHE_HEALTHY" config user.name t
-printf 'fixture\n' > "$DOC_CACHE_HEALTHY/README.md"
-mkdir -p "$DOC_CACHE_HEALTHY/bin"
-printf '#!/usr/bin/env bun\n' > "$DOC_CACHE_HEALTHY/bin/lookup.ts"
-git -C "$DOC_CACHE_HEALTHY" add -A
-GIT_AUTHOR_DATE='2026-01-01T00:00:00' GIT_COMMITTER_DATE='2026-01-01T00:00:00' \
-  git -C "$DOC_CACHE_HEALTHY" commit -q -m fixture
-# Doctor derives the cache directory name from the lock's repo id
-# (owner/repo -> owner-repo), exactly as install.sh does; this fixture's
-# commit is whatever content produced above, and the lock below is written
-# to match it exactly, not the other way around, so no hash needs faking.
-DOC_HEALTHY_SHA=$(git -C "$DOC_CACHE_HEALTHY" rev-parse HEAD)
+# Built in a scratch directory first: the cache path is commit-qualified
+# (<cache>/<owner-repo>/<exact-commit>), so the directory can only be named
+# once the fixture's own commit exists. The lock below is written to match
+# that commit exactly, not the other way around, so no hash needs faking.
+doc_build_vault() { # <scratch-dir>
+  mkdir -p "$1/bin"
+  git -C "$1" init -q
+  git -C "$1" config user.email t@example.invalid
+  git -C "$1" config user.name t
+  printf 'fixture\n' > "$1/README.md"
+  printf 'entries: {}\n' > "$1/catalog.yaml"
+  printf '#!/usr/bin/env bun\n' > "$1/bin/lookup.ts"
+  git -C "$1" add -A
+  GIT_AUTHOR_DATE='2026-01-01T00:00:00' GIT_COMMITTER_DATE='2026-01-01T00:00:00' \
+    git -C "$1" commit -q -m fixture
+  git -C "$1" rev-parse HEAD
+}
+
+DOC_BUILD_HEALTHY="$TMP_ROOT/doc-build-healthy"
+DOC_HEALTHY_SHA=$(doc_build_vault "$DOC_BUILD_HEALTHY")
+DOC_CACHE_HEALTHY_ROOT="$TMP_ROOT/doc-cache-healthy"
+DOC_CACHE_HEALTHY="$DOC_CACHE_HEALTHY_ROOT/test-owner-test-vault/$DOC_HEALTHY_SHA"
+mkdir -p "$(dirname "$DOC_CACHE_HEALTHY")"
+mv "$DOC_BUILD_HEALTHY" "$DOC_CACHE_HEALTHY"
 DOC_LOCK_HEALTHY="$TMP_ROOT/doc-vault-healthy.lock"
 printf 'test-owner/test-vault\t%s\n' "$DOC_HEALTHY_SHA" > "$DOC_LOCK_HEALTHY"
 
@@ -318,17 +421,20 @@ json=$(run_doc "$DOC_LOCK_HEALTHY" "$TMP_ROOT/doc-cache-healthy" "$TMP_ROOT/doc-
 contains 'B3 healthy JSON: state is healthy' "$json" '"state":"healthy"'
 contains 'B3 healthy JSON: pinned_commit is the exact SHA' "$json" "\"pinned_commit\":\"$DOC_HEALTHY_SHA\""
 
-# --- B3b. Healthy commit/clean but missing bin/lookup.ts: FAIL, never PASS -
-DOC_CACHE_NOLOOKUP="$TMP_ROOT/doc-cache-nolookup/test-owner-test-vault"
-mkdir -p "$DOC_CACHE_NOLOOKUP"
-git -C "$DOC_CACHE_NOLOOKUP" init -q
-git -C "$DOC_CACHE_NOLOOKUP" config user.email t@example.invalid
-git -C "$DOC_CACHE_NOLOOKUP" config user.name t
-printf 'fixture\n' > "$DOC_CACHE_NOLOOKUP/README.md"
-git -C "$DOC_CACHE_NOLOOKUP" add -A
+# --- B3b. Healthy commit/clean but missing the catalog surface: FAIL -------
+DOC_BUILD_NOLOOKUP="$TMP_ROOT/doc-build-nolookup"
+mkdir -p "$DOC_BUILD_NOLOOKUP"
+git -C "$DOC_BUILD_NOLOOKUP" init -q
+git -C "$DOC_BUILD_NOLOOKUP" config user.email t@example.invalid
+git -C "$DOC_BUILD_NOLOOKUP" config user.name t
+printf 'fixture\n' > "$DOC_BUILD_NOLOOKUP/README.md"
+git -C "$DOC_BUILD_NOLOOKUP" add -A
 GIT_AUTHOR_DATE='2026-01-01T00:00:00' GIT_COMMITTER_DATE='2026-01-01T00:00:00' \
-  git -C "$DOC_CACHE_NOLOOKUP" commit -q -m fixture
-DOC_NOLOOKUP_SHA=$(git -C "$DOC_CACHE_NOLOOKUP" rev-parse HEAD)
+  git -C "$DOC_BUILD_NOLOOKUP" commit -q -m fixture
+DOC_NOLOOKUP_SHA=$(git -C "$DOC_BUILD_NOLOOKUP" rev-parse HEAD)
+DOC_CACHE_NOLOOKUP="$TMP_ROOT/doc-cache-nolookup/test-owner-test-vault/$DOC_NOLOOKUP_SHA"
+mkdir -p "$(dirname "$DOC_CACHE_NOLOOKUP")"
+mv "$DOC_BUILD_NOLOOKUP" "$DOC_CACHE_NOLOOKUP"
 DOC_LOCK_NOLOOKUP="$TMP_ROOT/doc-vault-nolookup.lock"
 printf 'test-owner/test-vault\t%s\n' "$DOC_NOLOOKUP_SHA" > "$DOC_LOCK_NOLOOKUP"
 out=$(run_doc "$DOC_LOCK_NOLOOKUP" "$TMP_ROOT/doc-cache-nolookup" "$TMP_ROOT/doc-skills-b3b")
@@ -337,24 +443,29 @@ contains 'B3b missing lookup surface: names the lookup surface' "$out" 'lookup.t
 json=$(run_doc "$DOC_LOCK_NOLOOKUP" "$TMP_ROOT/doc-cache-nolookup" "$TMP_ROOT/doc-skills-b3b" --json)
 not_contains 'B3b missing lookup surface JSON: never falsely healthy' "$json" '"state":"healthy"'
 
-# --- B4. Lock present, cache present, clean, wrong revision -> FAIL --------
-out=$(run_doc "$DOC_LOCK" "$TMP_ROOT/doc-cache-healthy" "$TMP_ROOT/doc-skills-b4")
+# --- B4. A commit directory whose checkout is not that commit -> FAIL ------
+# The directory name is the expected commit, so a checkout at any other
+# commit is corruption of an immutable directory, never ordinary drift.
+DOC_CACHE_WRONGREV="$TMP_ROOT/doc-cache-wrongrev/test-owner-test-vault/$DOC_SHA"
+mkdir -p "$(dirname "$DOC_CACHE_WRONGREV")"
+cp -R "$DOC_CACHE_HEALTHY" "$DOC_CACHE_WRONGREV"
+out=$(run_doc "$DOC_LOCK" "$TMP_ROOT/doc-cache-wrongrev" "$TMP_ROOT/doc-skills-b4")
 contains 'B4 wrong revision: vault.pin is FAIL' "$out" 'FAIL          vault.pin'
 contains 'B4 wrong revision: names the pinned commit it expected' "$out" "${DOC_SHA:0:12}"
-json=$(run_doc "$DOC_LOCK" "$TMP_ROOT/doc-cache-healthy" "$TMP_ROOT/doc-skills-b4" --json)
+json=$(run_doc "$DOC_LOCK" "$TMP_ROOT/doc-cache-wrongrev" "$TMP_ROOT/doc-skills-b4" --json)
 contains 'B4 wrong revision JSON: state is wrong_revision' "$json" '"state":"wrong_revision"'
 
 # --- B5. Lock present, cache present, dirty -> FAIL, never PASS ------------
 printf 'dirty\n' >> "$DOC_CACHE_HEALTHY/README.md"
-out=$(run_doc "$DOC_LOCK_HEALTHY" "$TMP_ROOT/doc-cache-healthy" "$TMP_ROOT/doc-skills-b5")
+out=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_HEALTHY_ROOT" "$TMP_ROOT/doc-skills-b5")
 contains 'B5 dirty: vault.pin is FAIL' "$out" 'FAIL          vault.pin'
 contains 'B5 dirty: names it must never be hand-edited' "$out" 'must never be hand-edited'
-json=$(run_doc "$DOC_LOCK_HEALTHY" "$TMP_ROOT/doc-cache-healthy" "$TMP_ROOT/doc-skills-b5" --json)
+json=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_HEALTHY_ROOT" "$TMP_ROOT/doc-skills-b5" --json)
 contains 'B5 dirty JSON: state is dirty' "$json" '"state":"dirty"'
 git -C "$DOC_CACHE_HEALTHY" checkout -q -- README.md
 
 # --- B6. Lock present, cache present, corrupt (not a git checkout) --------
-DOC_CACHE_CORRUPT="$TMP_ROOT/doc-cache-corrupt/test-owner-test-vault"
+DOC_CACHE_CORRUPT="$TMP_ROOT/doc-cache-corrupt/test-owner-test-vault/$DOC_SHA"
 mkdir -p "$DOC_CACHE_CORRUPT/.git"
 out=$(run_doc "$DOC_LOCK" "$TMP_ROOT/doc-cache-corrupt" "$TMP_ROOT/doc-skills-b6")
 contains 'B6 corrupt: vault.pin is FAIL' "$out" 'FAIL          vault.pin'
@@ -366,7 +477,7 @@ contains 'B6 corrupt JSON: state is corrupt' "$json" '"state":"corrupt"'
 LEAK_SKILLS="$TMP_ROOT/doc-skills-b7"
 mkdir -p "$LEAK_SKILLS"
 ln -s "$DOC_CACHE_HEALTHY" "$LEAK_SKILLS/some-vault-skill"
-out=$(run_doc "$DOC_LOCK_HEALTHY" "$TMP_ROOT/doc-cache-healthy" "$LEAK_SKILLS")
+out=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_HEALTHY_ROOT" "$LEAK_SKILLS")
 contains 'B7 leak: no_global_leak is FAIL' "$out" 'FAIL          vault.no_global_leak'
 contains 'B7 leak: names the leaking entry' "$out" 'some-vault-skill'
 contains 'B7 leak: names it must never be globally registered' "$out" 'must never be globally registered'
@@ -374,7 +485,7 @@ contains 'B7 leak: names it must never be globally registered' "$out" 'must neve
 # --- B8. no_global_leak: the vault path named in OMP's own skills config ---
 mkdir -p "$DOC_HOME/.omp/agent"
 printf 'skills:\n  customDirectories:\n    - %s\n' "$DOC_CACHE_HEALTHY" > "$DOC_HOME/.omp/agent/config.yml"
-out=$(run_doc "$DOC_LOCK_HEALTHY" "$TMP_ROOT/doc-cache-healthy" "$TMP_ROOT/doc-skills-b8")
+out=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_HEALTHY_ROOT" "$TMP_ROOT/doc-skills-b8")
 contains 'B8 omp config leak: no_global_leak is FAIL' "$out" 'FAIL          vault.no_global_leak'
 contains 'B8 omp config leak: names the omp config path' "$out" "$DOC_HOME/.omp/agent/config.yml"
 rm -f "$DOC_HOME/.omp/agent/config.yml"
@@ -382,14 +493,41 @@ rm -f "$DOC_HOME/.omp/agent/config.yml"
 # --- B8b. no_global_leak: the vault path in OMP config using the ~/-relative
 #    form OMP itself expands at load time, not just the absolute path -----
 DOC_CACHE_TILDE_ROOT="$DOC_HOME/vault-cache-tilde"
-cp -R "$TMP_ROOT/doc-cache-healthy" "$DOC_CACHE_TILDE_ROOT"
+cp -R "$DOC_CACHE_HEALTHY_ROOT" "$DOC_CACHE_TILDE_ROOT"
 mkdir -p "$DOC_HOME/.omp/agent"
-printf 'skills:\n  customDirectories:\n    - ~/vault-cache-tilde/test-owner-test-vault\n' > "$DOC_HOME/.omp/agent/config.yml"
+printf 'skills:\n  customDirectories:\n    - ~/vault-cache-tilde/test-owner-test-vault/%s\n' "$DOC_HEALTHY_SHA" > "$DOC_HOME/.omp/agent/config.yml"
 out=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_TILDE_ROOT" "$TMP_ROOT/doc-skills-b8b")
 contains 'B8b omp config tilde leak: no_global_leak is FAIL' "$out" 'FAIL          vault.no_global_leak'
 contains 'B8b omp config tilde leak: names the omp config path' "$out" "$DOC_HOME/.omp/agent/config.yml"
 rm -f "$DOC_HOME/.omp/agent/config.yml"
 rm -rf "$DOC_CACHE_TILDE_ROOT"
+
+# --- B8c. no_global_leak: an OMP custom directory that is a SYMLINK ALIAS
+#    resolving into the vault cache. The config file never contains the
+#    vault path in any textual form, so only canonical resolution of the
+#    configured path can see it; a verbatim text match reports PASS and
+#    silently ships every vault entry into global discovery. -------------
+OMP_ALIAS="$DOC_HOME/omp-skills-alias"
+ln -sfn "$DOC_CACHE_HEALTHY" "$OMP_ALIAS"
+mkdir -p "$DOC_HOME/.omp/agent"
+printf 'skills:\n  customDirectories:\n    - %s\n' "$OMP_ALIAS" > "$DOC_HOME/.omp/agent/config.yml"
+out=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_HEALTHY_ROOT" "$TMP_ROOT/doc-skills-b8c")
+contains 'B8c omp symlink alias: no_global_leak is FAIL' "$out" 'FAIL          vault.no_global_leak'
+contains 'B8c omp symlink alias: names the omp config path' "$out" "$DOC_HOME/.omp/agent/config.yml"
+rm -f "$DOC_HOME/.omp/agent/config.yml"
+rm -f "$OMP_ALIAS"
+
+# --- B8d. no_global_leak: a configured path that cannot be resolved at all
+#    is UNKNOWN, never PASS - and never disturbs the rest of the report --
+mkdir -p "$DOC_HOME/.omp/agent"
+printf 'skills:\n  customDirectories:\n    - %s\n' "$DOC_HOME/no-such-omp-skills" > "$DOC_HOME/.omp/agent/config.yml"
+out=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_HEALTHY_ROOT" "$TMP_ROOT/doc-skills-b8d")
+contains 'B8d unresolvable omp path: no_global_leak is UNKNOWN' "$out" 'UNKNOWN       vault.no_global_leak'
+not_contains 'B8d unresolvable omp path: never reported as PASS' "$out" 'PASS          vault.no_global_leak'
+contains 'B8d unresolvable omp path: the pin check is unaffected' "$out" 'PASS          vault.pin'
+json=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_HEALTHY_ROOT" "$TMP_ROOT/doc-skills-b8d" --json)
+contains 'B8d unresolvable omp path JSON: names the unresolved path' "$json" "$DOC_HOME/no-such-omp-skills"
+rm -f "$DOC_HOME/.omp/agent/config.yml"
 
 printf '\nVAULT TESTS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]
