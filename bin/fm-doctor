@@ -979,24 +979,39 @@ else
     done
   fi
   if [ -r "$OMP_CONFIG" ]; then
-    # Every filesystem-path scalar in OMP's own config (list items and
-    # key: value alike), tilde-expanded exactly as OMP expands it at load
-    # time, then canonicalized. A path that resolves is judged by canonical
-    # ancestry; one that cannot be resolved at all is reported UNKNOWN rather
-    # than quietly passing.
+    # Every filesystem-path scalar in OMP's own config, tilde-expanded exactly
+    # as OMP expands it at load time, then canonicalized. Both YAML shapes OMP
+    # accepts for the same key are read: block lists (`- /path`) and flow
+    # sequences (`customDirectories: ["/a", "/b"]`). A path that resolves is
+    # judged by canonical ancestry; one that cannot be resolved at all is
+    # reported UNKNOWN rather than quietly passing.
+    omp_leaks=0
     while IFS= read -r omp_path; do
       [ -n "$omp_path" ] || continue
       case $omp_path in "~/"*) omp_path="$HOME/${omp_path#\~/}" ;; "~") omp_path=$HOME ;; esac
       resolved=$(real_dir "$omp_path")
       if [ -n "$resolved" ]; then
-        ! inside_vault "$resolved" || VAULT_LEAK+=("omp:$OMP_CONFIG")
+        ! inside_vault "$resolved" || omp_leaks=1
       elif inside_vault "$omp_path"; then
-        VAULT_LEAK+=("omp:$OMP_CONFIG")
+        omp_leaks=1
       else
         VAULT_UNRESOLVED+=("$omp_path")
       fi
-    done < <(sed -n -E 's/^[[:space:]]*(-|[A-Za-z_][A-Za-z0-9_]*:)[[:space:]]*"?'"'"'?([~/][^"'"'"'#]*).*$/\2/p' "$OMP_CONFIG" |
+    done < <(sed -e 's/#.*$//' "$OMP_CONFIG" |
+      sed -e 's/^\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*:[[:space:]]*\)\[\(.*\)\]/\1\2/' |
+      tr ',' '\n' |
+      sed -n -E 's/^[[:space:]]*(-[[:space:]]*|[A-Za-z_][A-Za-z0-9_]*:[[:space:]]*)?["'"'"']?([~/][^"'"'"']*).*$/\2/p' |
       sed -e 's/[[:space:]]*$//')
+    # Lower-bound safety net: whatever shape the extractor above did or did not
+    # recognise, the cache path appearing verbatim in the config - absolute or
+    # in the ~/-relative form OMP expands itself - is a leak.
+    vault_cache_tilde=''
+    case $vault_cache_real in "$HOME"/*) vault_cache_tilde="~${vault_cache_real#"$HOME"}" ;; esac
+    if grep -qF "$vault_cache_real" "$OMP_CONFIG" 2>/dev/null ||
+      { [ -n "$vault_cache_tilde" ] && grep -qF "$vault_cache_tilde" "$OMP_CONFIG" 2>/dev/null; }; then
+      omp_leaks=1
+    fi
+    [ "$omp_leaks" -eq 0 ] || VAULT_LEAK+=("omp:$OMP_CONFIG")
   fi
   if [ "${#VAULT_LEAK[@]}" -ne 0 ]; then
     add_check vault.no_global_leak FAIL "global skill(s) or OMP config resolve into the specialist skill vault cache, which must never be globally registered: ${VAULT_LEAK[*]}" "$SKILLS_ROOT"

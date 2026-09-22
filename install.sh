@@ -144,26 +144,67 @@ else
 fi
 
 # --- 4. machine-local resolution -------------------------------------------
-step '4. machine-local environment'
-env_body=$(cat <<EOF
+# FM_SKILL_VAULT_ROOT is a handoff surface: a worker is given a skill path
+# resolved beneath it. Only a commit directory that verifies right now is ever
+# published there. When the pinned directory does not verify (not cloned yet,
+# corrupt, wrong revision, invalid catalog), the previously published root is
+# kept if it still verifies, and otherwise the value is left empty - never a
+# path to unverified vault content. Step 10 publishes the new root itself once
+# it has cloned and verified the directory.
+write_env_file() { # <vault-root> -> prints ok|drift|changed|fail
+  local env_body
+  env_body=$(cat <<EOF
 # Written by firstmate-config/install.sh. Machine-local: never commit this.
 FIRSTMATE_ROOT="$FIRSTMATE_ROOT"
 FM_CONFIG_ROOT="$CONFIG_ROOT"
 FM_HOME="$FM_HOME"
 FM_BACKEND="$FM_BACKEND"
-FM_SKILL_VAULT_ROOT="$FM_VAULT_DIR"
+FM_SKILL_VAULT_ROOT="$1"
 export FIRSTMATE_ROOT FM_CONFIG_ROOT FM_HOME FM_BACKEND FM_SKILL_VAULT_ROOT
 EOF
-)
-if [ -f "$ENV_FILE" ] && [ "$(cat "$ENV_FILE")" = "$env_body" ]; then
-  ok "$ENV_FILE"
-elif would "write $ENV_FILE"; then
+  )
+  if [ -f "$ENV_FILE" ] && [ "$(cat "$ENV_FILE")" = "$env_body" ]; then printf ok; return; fi
+  if [ "$VERIFY" -eq 1 ]; then printf drift; return; fi
   if mkdir -p "$(dirname "$ENV_FILE")" && printf '%s\n' "$env_body" > "$ENV_FILE"; then
-    changedf "wrote $ENV_FILE"
+    printf changed
   else
-    failf "cannot write $ENV_FILE"
+    printf fail
   fi
-fi
+}
+
+vault_publishable_root() { # -> the only vault root safe to publish right now
+  local previous state
+  if [ "$VAULT_LOCK_STATE" -eq 0 ]; then
+    state=$(fm_vault_verify "$FM_VAULT_DIR" "$FM_VAULT_COMMIT")
+    case $state in healthy|unverified_catalog) printf '%s' "$FM_VAULT_DIR"; return ;; esac
+  fi
+  # A commit directory is named for its own commit, so the previously
+  # published value carries everything needed to re-verify it.
+  previous=$([ ! -f "$ENV_FILE" ] || sed -n 's/^FM_SKILL_VAULT_ROOT="\(.*\)"$/\1/p' "$ENV_FILE" | head -1)
+  [ -n "$previous" ] || return 0
+  state=$(fm_vault_verify "$previous" "$(basename "$previous")")
+  case $state in healthy|unverified_catalog) printf '%s' "$previous" ;; esac
+}
+
+publish_vault_root() { # <verified-dir>, called only after verification
+  [ "$1" != "$VAULT_PUBLISHED_ROOT" ] || return 0
+  case $(write_env_file "$1") in
+    ok) : ;;
+    changed) changedf "published FM_SKILL_VAULT_ROOT=$1" ;;
+    drift) driftf "publish FM_SKILL_VAULT_ROOT=$1 in $ENV_FILE" ;;
+    *) failf "cannot publish FM_SKILL_VAULT_ROOT in $ENV_FILE" ;;
+  esac
+  VAULT_PUBLISHED_ROOT=$1
+}
+
+step '4. machine-local environment'
+VAULT_PUBLISHED_ROOT=$(vault_publishable_root)
+case $(write_env_file "$VAULT_PUBLISHED_ROOT") in
+  ok) ok "$ENV_FILE" ;;
+  drift) driftf "write $ENV_FILE" ;;
+  changed) changedf "wrote $ENV_FILE" ;;
+  *) failf "cannot write $ENV_FILE" ;;
+esac
 
 # --- 5. runtime backend -----------------------------------------------------
 step '5. runtime backend'
@@ -443,8 +484,12 @@ elif [ "$VAULT_LOCK_STATE" -ne 0 ]; then
 elif [ -e "$FM_VAULT_DIR" ]; then
   vault_state=$(fm_vault_verify "$FM_VAULT_DIR" "$FM_VAULT_COMMIT")
   case $vault_state in
-    healthy) printf '  ok      %s at %s\n' "$FM_VAULT_REPO" "${FM_VAULT_COMMIT:0:12}" ;;
-    unverified_catalog) warn "$(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")" ;;
+    healthy)
+      printf '  ok      %s at %s\n' "$FM_VAULT_REPO" "${FM_VAULT_COMMIT:0:12}"
+      publish_vault_root "$FM_VAULT_DIR" ;;
+    unverified_catalog)
+      warn "$(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")"
+      publish_vault_root "$FM_VAULT_DIR" ;;
     *) failf "$FM_VAULT_REPO cache $(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")" ;;
   esac
 elif would "clone $FM_VAULT_REPO into $FM_VAULT_DIR, pinned to $FM_VAULT_COMMIT"; then
@@ -462,6 +507,7 @@ elif would "clone $FM_VAULT_REPO into $FM_VAULT_DIR, pinned to $FM_VAULT_COMMIT"
         if mv "$vault_stage" "$FM_VAULT_DIR"; then
           changedf "cloned $FM_VAULT_REPO into $FM_VAULT_DIR, pinned to ${FM_VAULT_COMMIT:0:12}"
           [ "$vault_state" = healthy ] || warn "$(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")"
+          publish_vault_root "$FM_VAULT_DIR"
         else
           failf "could not move the verified clone into $FM_VAULT_DIR"
           rm -rf "$vault_stage"

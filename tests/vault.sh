@@ -101,8 +101,8 @@ write_gitconfig() { # <home>
 EOF
 }
 
-run_fake_install() { # <suffix> [install.sh args...]
-  local suffix=$1; shift
+run_fake_install_cfg() { # <suffix> <config-root> [install.sh args...]
+  local suffix=$1 cfg=$2; shift 2
   local home="$TMP_ROOT/inst-home-$suffix"
   mkdir -p "$home" "$TMP_ROOT/inst-dest-$suffix"
   write_gitconfig "$home"
@@ -118,7 +118,12 @@ run_fake_install() { # <suffix> [install.sh args...]
   FM_BIN_DIR="$TMP_ROOT/inst-bin-dir-$suffix" \
   PI_CODING_AGENT_DIR="$TMP_ROOT/inst-pi-agent-$suffix" \
   XDG_CONFIG_HOME="$TMP_ROOT/inst-xdg-$suffix" \
-  "$INST_CFG/install.sh" "$@" 2>&1
+  "$cfg/install.sh" "$@" 2>&1
+}
+
+run_fake_install() { # <suffix> [install.sh args...]
+  local suffix=$1; shift
+  run_fake_install_cfg "$suffix" "$INST_CFG" "$@"
 }
 
 # The cache layout is commit-qualified and immutable: one directory per exact
@@ -353,6 +358,44 @@ else
   pass '12 unparseable catalog: skipped (bun not on PATH)'
 fi
 
+# --- 13. A failed vault step never publishes the vault root ----------------
+# The env file is the handoff surface: a worker resolves its skill path under
+# FM_SKILL_VAULT_ROOT. A commit directory that does not verify must therefore
+# never be published there, even though its path is perfectly derivable from
+# the lock.
+INVALID_CACHE="$TMP_ROOT/inst-vault-cache-invalid/test-owner-test-vault/$V_SHA1"
+mkdir -p "$INVALID_CACHE/.git"
+printf 'garbage\n' > "$INVALID_CACHE/.git/garbage"
+out13=$(run_fake_install invalid); code13=$?
+if [ "$code13" -eq 0 ]; then fail '13 invalid cache: expected nonzero exit, got 0'; else pass '13 invalid cache: exit code is nonzero'; fi
+contains '13 invalid cache: the env file exists' "$(cat "$TMP_ROOT/inst-env-invalid" 2>/dev/null)" 'FM_SKILL_VAULT_ROOT='
+not_contains '13 invalid cache: the unverified commit directory is never published' \
+  "$(cat "$TMP_ROOT/inst-env-invalid" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$INVALID_CACHE\""
+contains '13 invalid cache: the vault root is left unset instead' \
+  "$(cat "$TMP_ROOT/inst-env-invalid" 2>/dev/null)" 'FM_SKILL_VAULT_ROOT=""'
+
+# --- 14. A failed NEW pin preserves the last known-good vault root ---------
+# Pin A is installed and published; pin B's directory is then planted corrupt.
+# The failing run must keep pointing workers at the still-valid pin A rather
+# than at B or at nothing.
+GOOD_A="$TMP_ROOT/inst-vault-cache-lastgood/test-owner-test-vault/$V_SHA1"
+INST_CFG_LASTGOOD="$TMP_ROOT/inst-cfg-lastgood"
+cp -R "$INST_CFG" "$INST_CFG_LASTGOOD"
+out14a=$(run_fake_install_cfg lastgood "$INST_CFG_LASTGOOD"); code14a=$?
+check '14 last known-good: first install exit code is 0' 0 "$code14a"
+contains '14 last known-good: pin A is published' \
+  "$(cat "$TMP_ROOT/inst-env-lastgood" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$GOOD_A\""
+printf '%s\t%s\n' "$VAULT_REPO_ID" "$V_SHA2" > "$INST_CFG_LASTGOOD/skills/vault.lock"
+BAD_B="$TMP_ROOT/inst-vault-cache-lastgood/test-owner-test-vault/$V_SHA2"
+mkdir -p "$BAD_B/.git"
+printf 'garbage\n' > "$BAD_B/.git/garbage"
+out14b=$(run_fake_install_cfg lastgood "$INST_CFG_LASTGOOD"); code14b=$?
+if [ "$code14b" -eq 0 ]; then fail '14 last known-good: failing run expected nonzero exit, got 0'; else pass '14 last known-good: failing run exit code is nonzero'; fi
+not_contains '14 last known-good: the invalid new pin is never published' \
+  "$(cat "$TMP_ROOT/inst-env-lastgood" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$BAD_B\""
+contains '14 last known-good: the previously verified root is preserved' \
+  "$(cat "$TMP_ROOT/inst-env-lastgood" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$GOOD_A\""
+
 # =============================================================================
 # B. bin/fm-doctor: vault.pin / vault.no_global_leak state coverage
 # =============================================================================
@@ -527,6 +570,37 @@ not_contains 'B8d unresolvable omp path: never reported as PASS' "$out" 'PASS   
 contains 'B8d unresolvable omp path: the pin check is unaffected' "$out" 'PASS          vault.pin'
 json=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_HEALTHY_ROOT" "$TMP_ROOT/doc-skills-b8d" --json)
 contains 'B8d unresolvable omp path JSON: names the unresolved path' "$json" "$DOC_HOME/no-such-omp-skills"
+rm -f "$DOC_HOME/.omp/agent/config.yml"
+
+# --- B8e. no_global_leak: the vault path in FLOW-SEQUENCE YAML, the other
+#    shape OMP accepts for the same key (customDirectories: ["…"]). A
+#    block-list-only extractor reports PASS and ships the whole vault into
+#    global discovery. -----------------------------------------------------
+mkdir -p "$DOC_HOME/.omp/agent"
+printf 'skills:\n  customDirectories: ["%s"]\n' "$DOC_CACHE_HEALTHY" > "$DOC_HOME/.omp/agent/config.yml"
+out=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_HEALTHY_ROOT" "$TMP_ROOT/doc-skills-b8e")
+contains 'B8e omp flow-sequence leak: no_global_leak is FAIL' "$out" 'FAIL          vault.no_global_leak'
+contains 'B8e omp flow-sequence leak: names the omp config path' "$out" "$DOC_HOME/.omp/agent/config.yml"
+rm -f "$DOC_HOME/.omp/agent/config.yml"
+
+# --- B8f. no_global_leak: a SYMLINK ALIAS inside flow-sequence YAML, where
+#    neither the shape nor the text gives the vault away ------------------
+OMP_ALIAS="$DOC_HOME/omp-flow-alias"
+ln -sfn "$DOC_CACHE_HEALTHY" "$OMP_ALIAS"
+mkdir -p "$DOC_HOME/.omp/agent" "$DOC_HOME/outside-skills"
+printf 'skills:\n  customDirectories: ["%s", "%s"]\n' "$DOC_HOME/outside-skills" "$OMP_ALIAS" > "$DOC_HOME/.omp/agent/config.yml"
+out=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_HEALTHY_ROOT" "$TMP_ROOT/doc-skills-b8f")
+contains 'B8f omp flow-sequence alias leak: no_global_leak is FAIL' "$out" 'FAIL          vault.no_global_leak'
+rm -f "$DOC_HOME/.omp/agent/config.yml"
+rm -f "$OMP_ALIAS"
+
+# --- B8g. no_global_leak: healthy external paths, in both YAML shapes, stay
+#    PASS - the fix must not turn ordinary configuration into a finding ----
+mkdir -p "$DOC_HOME/.omp/agent" "$DOC_HOME/outside-skills"
+printf 'skills:\n  customDirectories: ["%s"]\n  includeSkills:\n    - %s\n' \
+  "$DOC_HOME/outside-skills" "$DOC_HOME/outside-skills" > "$DOC_HOME/.omp/agent/config.yml"
+out=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_HEALTHY_ROOT" "$TMP_ROOT/doc-skills-b8g")
+contains 'B8g healthy external path: no_global_leak is PASS' "$out" 'PASS          vault.no_global_leak'
 rm -f "$DOC_HOME/.omp/agent/config.yml"
 
 printf '\nVAULT TESTS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
