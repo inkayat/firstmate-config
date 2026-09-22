@@ -178,6 +178,11 @@ vault_publishable_root() { # -> the only vault root safe to publish right now
     state=$(fm_vault_verify "$FM_VAULT_DIR" "$FM_VAULT_COMMIT")
     case $state in healthy|unverified_catalog) printf '%s' "$FM_VAULT_DIR"; return ;; esac
   fi
+  # No lock at all means the vault is deliberately unconfigured: publish
+  # nothing, so removing skills/vault.lock actually disables it instead of
+  # leaving it reachable through a stale environment value. Last-known-good
+  # below is only for a still-configured vault whose candidate does not verify.
+  [ "$VAULT_LOCK_STATE" -ne 1 ] || return 0
   # A commit directory is named for its own commit, so the previously
   # published value carries everything needed to re-verify it.
   previous=$([ ! -f "$ENV_FILE" ] || sed -n 's/^FM_SKILL_VAULT_ROOT="\(.*\)"$/\1/p' "$ENV_FILE" | head -1)

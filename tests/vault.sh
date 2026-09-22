@@ -396,6 +396,33 @@ not_contains '14 last known-good: the invalid new pin is never published' \
 contains '14 last known-good: the previously verified root is preserved' \
   "$(cat "$TMP_ROOT/inst-env-lastgood" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$GOOD_A\""
 
+# --- 15. Removing skills/vault.lock disables the vault for real ------------
+# Last-known-good exists to survive a broken candidate for a vault that is
+# still configured. A deliberately disabled vault is the opposite case: with
+# no lock there is nothing to publish, so a stale root must not keep the vault
+# reachable through the environment.
+GOOD_15="$TMP_ROOT/inst-vault-cache-nolock15/test-owner-test-vault/$V_SHA1"
+INST_CFG_NOLOCK15="$TMP_ROOT/inst-cfg-nolock15"
+cp -R "$INST_CFG" "$INST_CFG_NOLOCK15"
+out15a=$(run_fake_install_cfg nolock15 "$INST_CFG_NOLOCK15"); code15a=$?
+check '15 lock removed: first install exit code is 0' 0 "$code15a"
+contains '15 lock removed: the configured vault root is published first' \
+  "$(cat "$TMP_ROOT/inst-env-nolock15" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$GOOD_15\""
+rm -f "$INST_CFG_NOLOCK15/skills/vault.lock"
+out15b=$(run_fake_install_cfg nolock15 "$INST_CFG_NOLOCK15"); code15b=$?
+check '15 lock removed: reconcile exit code is 0' 0 "$code15b"
+contains '15 lock removed: the vault step reports it is unconfigured' "$out15b" 'no skills/vault.lock; skipping'
+contains '15 lock removed: the vault root is cleared' \
+  "$(cat "$TMP_ROOT/inst-env-nolock15" 2>/dev/null)" 'FM_SKILL_VAULT_ROOT=""'
+not_contains '15 lock removed: the stale root is never preserved' \
+  "$(cat "$TMP_ROOT/inst-env-nolock15" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$GOOD_15\""
+check '15 lock removed: the cached commit directory itself is left alone' \
+  "$V_SHA1" "$(git -C "$GOOD_15" rev-parse HEAD 2>/dev/null || printf '')"
+doc15=$(FM_VAULT_LOCK="$INST_CFG_NOLOCK15/skills/vault.lock" FM_VAULT_CACHE="$TMP_ROOT/inst-vault-cache-nolock15" \
+  FM_SKILLS_ROOT="$TMP_ROOT/doc-skills-15" HOME="$TMP_ROOT/doc-home-15" \
+  FIRSTMATE_ROOT="$TMP_ROOT/doc-no-firstmate" FM_HOME="$TMP_ROOT/doc-fm-home" "$CONFIG_ROOT/bin/fm-doctor" 2>&1)
+contains '15 lock removed: doctor reports the vault as not configured' "$doc15" 'NOT_APPLICABLE vault.pin'
+
 # =============================================================================
 # B. bin/fm-doctor: vault.pin / vault.no_global_leak state coverage
 # =============================================================================
