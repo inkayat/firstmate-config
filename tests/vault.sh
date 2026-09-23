@@ -358,6 +358,167 @@ else
   pass '12 unparseable catalog: skipped (bun not on PATH)'
 fi
 
+# --- 12b. Security regression (F1): the catalog probe must never execute,
+#    or be spoofed by, code from the *caller's* cwd. `fm doctor`,
+#    `./install.sh --verify` and `fm update` are documented/designed to run
+#    "from any directory", including a cloned third-party repository. A
+#    hostile `bunfig.toml` (`preload = [...]`) sitting in that directory
+#    must neither run nor be able to flip an invalid catalog's `--verify`
+#    result to healthy. Reuses the case 12 invalid-catalog fixture (its own
+#    bin/lookup.ts rejects every probe), verified clean at its own commit. -
+if command -v bun >/dev/null 2>&1; then
+  HOSTILE_CWD="$TMP_ROOT/hostile-cwd"
+  mkdir -p "$HOSTILE_CWD"
+  cat > "$HOSTILE_CWD/bunfig.toml" <<'EOF'
+preload = ["./pwn.ts"]
+EOF
+  cat > "$HOSTILE_CWD/pwn.ts" <<'EOF'
+import { writeFileSync } from "fs";
+writeFileSync("PWNED", "preload ran from cwd bunfig");
+process.exit(0);
+EOF
+  rm -f "$HOSTILE_CWD/PWNED"
+  out12b=$(cd "$HOSTILE_CWD" && HOME="$TMP_ROOT/inst-home-badcat" FIRSTMATE_ROOT="$TMP_ROOT/inst-dest-badcat" \
+    FM_HOME="$TMP_ROOT/inst-fm-home-badcat" FM_CONFIG_ENV="$TMP_ROOT/inst-env-badcat" \
+    FM_SKILLS_ROOT="$TMP_ROOT/inst-skills-badcat" FM_SKILL_CACHE="$TMP_ROOT/inst-skill-cache-badcat" \
+    FM_VAULT_CACHE="$TMP_ROOT/inst-vault-cache-badcat" FM_BIN_DIR="$TMP_ROOT/inst-bin-dir-badcat" \
+    PI_CODING_AGENT_DIR="$TMP_ROOT/inst-pi-agent-badcat" XDG_CONFIG_HOME="$TMP_ROOT/inst-xdg-badcat" \
+    PATH="$INST_FAKE_BIN:$SYS_BIN" "$INST_CFG_BADCAT/install.sh" --verify 2>&1); code12b=$?
+  if [ "$code12b" -eq 0 ]; then fail '12b hostile cwd verify: expected nonzero exit (invalid catalog), got 0'; else pass '12b hostile cwd verify: exit code is nonzero'; fi
+  contains '12b hostile cwd verify: still names the unparseable catalog, never spoofed healthy' "$out12b" 'catalog'
+  if [ -e "$HOSTILE_CWD/PWNED" ]; then
+    fail '12b hostile cwd verify: the caller cwd bunfig.toml preload must never execute'
+  else
+    pass '12b hostile cwd verify: the caller cwd bunfig.toml preload never executes'
+  fi
+
+  # --- 12c. Same hostile cwd, but a genuinely healthy pin: the fix must not
+  #    break the legitimate probe, only stop it from reading the caller's
+  #    cwd. Uses its own dedicated cache/env, primed with one normal-cwd
+  #    install first: reusing the "fresh" suffix here would pick up drift
+  #    left over from cases 4/4b/5 mutating that shared cache/env. ---------
+  run_fake_install hostilecwd-prime >/dev/null 2>&1
+  rm -f "$HOSTILE_CWD/PWNED"
+  out12c=$(cd "$HOSTILE_CWD" && PATH="$INST_FAKE_BIN:$SYS_BIN" HOME="$TMP_ROOT/inst-home-hostilecwd-prime" \
+    FIRSTMATE_ROOT="$TMP_ROOT/inst-dest-hostilecwd-prime" FM_HOME="$TMP_ROOT/inst-fm-home-hostilecwd-prime" \
+    FM_CONFIG_ENV="$TMP_ROOT/inst-env-hostilecwd-prime" FM_SKILLS_ROOT="$TMP_ROOT/inst-skills-hostilecwd-prime" \
+    FM_SKILL_CACHE="$TMP_ROOT/inst-skill-cache-hostilecwd-prime" FM_VAULT_CACHE="$TMP_ROOT/inst-vault-cache-hostilecwd-prime" \
+    FM_BIN_DIR="$TMP_ROOT/inst-bin-dir-hostilecwd-prime" PI_CODING_AGENT_DIR="$TMP_ROOT/inst-pi-agent-hostilecwd-prime" \
+    XDG_CONFIG_HOME="$TMP_ROOT/inst-xdg-hostilecwd-prime" "$INST_CFG/install.sh" --verify 2>&1); code12c=$?
+  check '12c hostile cwd verify, healthy pin: exit code is still 0' 0 "$code12c"
+  contains '12c hostile cwd verify, healthy pin: reports 0 drift item(s)' "$out12c" '0 drift item(s), 0 failure(s)'
+  if [ -e "$HOSTILE_CWD/PWNED" ]; then
+    fail '12c hostile cwd verify, healthy pin: the caller cwd bunfig.toml preload must never execute'
+  else
+    pass '12c hostile cwd verify, healthy pin: the caller cwd bunfig.toml preload never executes'
+  fi
+else
+  pass '12b hostile cwd verify: skipped (bun not on PATH)'
+  pass '12c hostile cwd verify, healthy pin: skipped (bun not on PATH)'
+fi
+
+# --- 12d. Security regression: path-identity divergence via a RELATIVE
+#    cache directory plus an exported CDPATH. The git checks above resolve
+#    $dir directly and never consult CDPATH, but a plain `cd "$dir"` does,
+#    and bash prefers a CDPATH match over an identical relative-to-cwd
+#    path when both exist - so `cd` alone could land the probe in a
+#    *different* directory than the one already verified clean and at the
+#    expected commit. Exercises fm_vault_verify directly (the one function
+#    every real entry point shares) with a real, git-verified checkout at
+#    a relative path, and a same-relative-path decoy under a hostile
+#    CDPATH entry whose own bin/lookup.ts fakes healthy and writes a
+#    marker. --------------------------------------------------------------
+if command -v bun >/dev/null 2>&1; then
+  CDPATH_NEUTRAL="$TMP_ROOT/cdpath-neutral"
+  CDPATH_HOSTILE="$TMP_ROOT/cdpath-hostile"
+  mkdir -p "$CDPATH_NEUTRAL/relcache/test-owner-test-vault/bin"
+  git -C "$CDPATH_NEUTRAL/relcache/test-owner-test-vault" init -q
+  git -C "$CDPATH_NEUTRAL/relcache/test-owner-test-vault" config user.email t@example.invalid
+  git -C "$CDPATH_NEUTRAL/relcache/test-owner-test-vault" config user.name t
+  printf 'entries: [\n' > "$CDPATH_NEUTRAL/relcache/test-owner-test-vault/catalog.yaml"
+  printf 'process.exit(3);\n' > "$CDPATH_NEUTRAL/relcache/test-owner-test-vault/bin/lookup.ts"
+  git -C "$CDPATH_NEUTRAL/relcache/test-owner-test-vault" add -A
+  git -C "$CDPATH_NEUTRAL/relcache/test-owner-test-vault" commit -q -m badcat
+  CDPATH_SHA=$(git -C "$CDPATH_NEUTRAL/relcache/test-owner-test-vault" rev-parse HEAD)
+  mv "$CDPATH_NEUTRAL/relcache/test-owner-test-vault" "$CDPATH_NEUTRAL/relcache/tmp-real"
+  mkdir -p "$CDPATH_NEUTRAL/relcache/test-owner-test-vault"
+  mv "$CDPATH_NEUTRAL/relcache/tmp-real" "$CDPATH_NEUTRAL/relcache/test-owner-test-vault/$CDPATH_SHA"
+
+  mkdir -p "$CDPATH_HOSTILE/relcache/test-owner-test-vault/$CDPATH_SHA/bin"
+  printf 'entries: {}\n' > "$CDPATH_HOSTILE/relcache/test-owner-test-vault/$CDPATH_SHA/catalog.yaml"
+  cat > "$CDPATH_HOSTILE/relcache/test-owner-test-vault/$CDPATH_SHA/bin/lookup.ts" <<'EOF'
+import { writeFileSync } from "fs";
+writeFileSync("PWNED", "hostile lookup.ts ran via CDPATH-diverted cd");
+process.exit(0);
+EOF
+
+  REL_DIR="relcache/test-owner-test-vault/$CDPATH_SHA"
+  CDPATH_MARKER="$CDPATH_HOSTILE/relcache/test-owner-test-vault/$CDPATH_SHA/PWNED"
+  rm -f "$CDPATH_MARKER"
+  out12d=$(cd "$CDPATH_NEUTRAL" && CDPATH="$CDPATH_HOSTILE" bash -c ". \"$CONFIG_ROOT/firstmate/fm-vault-lib.sh\" && fm_vault_verify \"$REL_DIR\" \"$CDPATH_SHA\""); code12d=$?
+  check '12d CDPATH divergence: relative dir with exported CDPATH still reports catalog_invalid' 'catalog_invalid' "$out12d"
+  check '12d CDPATH divergence: return code is 1, never spoofed healthy (0)' 1 "$code12d"
+  if [ -e "$CDPATH_MARKER" ]; then
+    fail '12d CDPATH divergence: the CDPATH-matched decoy directory bin/lookup.ts must never execute'
+  else
+    pass '12d CDPATH divergence: the CDPATH-matched decoy directory bin/lookup.ts never executes'
+  fi
+else
+  pass '12d CDPATH divergence: skipped (bun not on PATH)'
+fi
+
+# --- 12e. Security regression: symlink + ".." logical-resolution
+#    divergence. fm_vault_verify's own checks all resolve $dir physically
+#    through the kernel ([ -d "$dir/.git" ], git -C "$dir", [ -f "$dir/…" ]);
+#    a plain `cd` (default logical -L) instead canonicalizes ".." textually
+#    against the logical path. When $dir contains <symlink>/.., the two
+#    disagree: physical resolution reaches the real, git-verified checkout;
+#    logical resolution reaches a different, uncontrolled directory. -----
+if command -v bun >/dev/null 2>&1; then
+  E3_ROOT="$TMP_ROOT/12e-symlink-dotdot"
+  mkdir -p "$E3_ROOT/phys/sub"
+  ln -s "$E3_ROOT/phys/sub" "$E3_ROOT/link"
+
+  # Physical target of "$E3_ROOT/link/../cache/o-r/<sha>": the real,
+  # git-clean, damaged vault (its own lookup.ts exits 3).
+  mkdir -p "$E3_ROOT/phys/cache/o-r/bin"
+  git -C "$E3_ROOT/phys/cache/o-r" init -q
+  git -C "$E3_ROOT/phys/cache/o-r" config user.email t@example.invalid
+  git -C "$E3_ROOT/phys/cache/o-r" config user.name t
+  printf 'entries: [\n' > "$E3_ROOT/phys/cache/o-r/catalog.yaml"
+  printf 'process.exit(3);\n' > "$E3_ROOT/phys/cache/o-r/bin/lookup.ts"
+  git -C "$E3_ROOT/phys/cache/o-r" add -A
+  git -C "$E3_ROOT/phys/cache/o-r" commit -q -m damaged
+  E3_SHA=$(git -C "$E3_ROOT/phys/cache/o-r" rev-parse HEAD)
+  mv "$E3_ROOT/phys/cache/o-r" "$E3_ROOT/phys/cache/o-r-tmp"
+  mkdir -p "$E3_ROOT/phys/cache/o-r"
+  mv "$E3_ROOT/phys/cache/o-r-tmp" "$E3_ROOT/phys/cache/o-r/$E3_SHA"
+
+  # Logical target of the same string: a decoy that fakes healthy and
+  # writes a marker.
+  mkdir -p "$E3_ROOT/cache/o-r/$E3_SHA/bin"
+  printf 'entries: {}\n' > "$E3_ROOT/cache/o-r/$E3_SHA/catalog.yaml"
+  cat > "$E3_ROOT/cache/o-r/$E3_SHA/bin/lookup.ts" <<'EOF'
+import { writeFileSync } from "fs";
+writeFileSync("PWNED", "decoy lookup.ts ran via symlink/.. logical-cd divergence");
+process.exit(0);
+EOF
+
+  E3_DIR="$E3_ROOT/link/../cache/o-r/$E3_SHA"
+  E3_MARKER="$E3_ROOT/cache/o-r/$E3_SHA/PWNED"
+  rm -f "$E3_MARKER"
+  out12e=$(. "$CONFIG_ROOT/firstmate/fm-vault-lib.sh" && fm_vault_verify "$E3_DIR" "$E3_SHA"); code12e=$?
+  check '12e symlink/.. divergence: the physically-verified damaged catalog still reports catalog_invalid' 'catalog_invalid' "$out12e"
+  check '12e symlink/.. divergence: return code is 1, never spoofed healthy (0)' 1 "$code12e"
+  if [ -e "$E3_MARKER" ]; then
+    fail '12e symlink/.. divergence: the logical-path decoy bin/lookup.ts must never execute'
+  else
+    pass '12e symlink/.. divergence: the logical-path decoy bin/lookup.ts never executes'
+  fi
+else
+  pass '12e symlink/.. divergence: skipped (bun not on PATH)'
+fi
+
 # --- 13. A failed vault step never publishes the vault root ----------------
 # The env file is the handoff surface: a worker resolves its skill path under
 # FM_SKILL_VAULT_ROOT. A commit directory that does not verify must therefore
@@ -629,6 +790,39 @@ printf 'skills:\n  customDirectories: ["%s"]\n  includeSkills:\n    - %s\n' \
 out=$(run_doc "$DOC_LOCK_HEALTHY" "$DOC_CACHE_HEALTHY_ROOT" "$TMP_ROOT/doc-skills-b8g")
 contains 'B8g healthy external path: no_global_leak is PASS' "$out" 'PASS          vault.no_global_leak'
 rm -f "$DOC_HOME/.omp/agent/config.yml"
+
+# --- B9. Security regression (F1), doctor side: same hostile cwd trust
+#    boundary as case 12b/12c, exercised through `fm doctor` itself (the
+#    other real entry point that reaches fm_vault_verify). Reuses the
+#    invalid-catalog cache from case 12b and the healthy fixture from B3. -
+if command -v bun >/dev/null 2>&1; then
+  rm -f "$HOSTILE_CWD/PWNED"
+  outB9a=$(cd "$HOSTILE_CWD" && FM_VAULT_LOCK="$INST_CFG_BADCAT/skills/vault.lock" \
+    FM_VAULT_CACHE="$TMP_ROOT/inst-vault-cache-badcat" FM_SKILLS_ROOT="$TMP_ROOT/doc-skills-b9a" \
+    HOME="$DOC_HOME" FIRSTMATE_ROOT="$TMP_ROOT/doc-no-firstmate" FM_HOME="$TMP_ROOT/doc-fm-home" \
+    "$DOC" 2>&1)
+  contains 'B9a hostile cwd, invalid catalog: vault.pin is still FAIL' "$outB9a" 'FAIL          vault.pin'
+  not_contains 'B9a hostile cwd, invalid catalog: never spoofed to PASS' "$outB9a" 'PASS          vault.pin'
+  if [ -e "$HOSTILE_CWD/PWNED" ]; then
+    fail 'B9a hostile cwd, invalid catalog: the caller cwd bunfig.toml preload must never execute'
+  else
+    pass 'B9a hostile cwd, invalid catalog: the caller cwd bunfig.toml preload never executes'
+  fi
+
+  rm -f "$HOSTILE_CWD/PWNED"
+  outB9b=$(cd "$HOSTILE_CWD" && FM_VAULT_LOCK="$DOC_LOCK_HEALTHY" FM_VAULT_CACHE="$DOC_CACHE_HEALTHY_ROOT" \
+    FM_SKILLS_ROOT="$TMP_ROOT/doc-skills-b9b" HOME="$DOC_HOME" \
+    FIRSTMATE_ROOT="$TMP_ROOT/doc-no-firstmate" FM_HOME="$TMP_ROOT/doc-fm-home" "$DOC" 2>&1)
+  contains 'B9b hostile cwd, healthy pin: vault.pin is still PASS' "$outB9b" 'PASS          vault.pin'
+  if [ -e "$HOSTILE_CWD/PWNED" ]; then
+    fail 'B9b hostile cwd, healthy pin: the caller cwd bunfig.toml preload must never execute'
+  else
+    pass 'B9b hostile cwd, healthy pin: the caller cwd bunfig.toml preload never executes'
+  fi
+else
+  pass 'B9a hostile cwd, invalid catalog: skipped (bun not on PATH)'
+  pass 'B9b hostile cwd, healthy pin: skipped (bun not on PATH)'
+fi
 
 printf '\nVAULT TESTS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]

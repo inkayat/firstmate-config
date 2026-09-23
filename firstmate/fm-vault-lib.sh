@@ -64,7 +64,28 @@ fm_vault_verify() {
   [ "$cur" = "$want" ] || { printf wrong_revision; return 1; }
   { [ -f "$dir/catalog.yaml" ] && [ -f "$dir/bin/lookup.ts" ]; } || { printf catalog_missing; return 1; }
   command -v bun >/dev/null 2>&1 || { printf unverified_catalog; return 2; }
-  bun "$dir/bin/lookup.ts" --category __fm_vault_verify_probe__ >/dev/null 2>&1 ||
+  # bun resolves bunfig.toml/.env from its own process cwd, not from the
+  # script path given to it, so running it unqualified would let the
+  # caller's own cwd (e.g. `fm doctor` invoked inside a cloned third-party
+  # repo) supply those files, including a `preload = [...]` that runs
+  # arbitrary code and can even fake this very check by calling
+  # process.exit(0) before the probe runs. A plain `cd "$dir"` is not
+  # enough by itself:
+  #   - with a relative $dir and an exported CDPATH, bash's cd builtin can
+  #     land in a directory CDPATH matches instead of the one relative to
+  #     cwd, even though the git checks above (which resolve $dir directly
+  #     and never consult CDPATH) already verified the real one;
+  #   - cd's default logical (-L) mode canonicalizes ".." textually rather
+  #     than physically, so a $dir containing a symlink component followed
+  #     by ".." can land somewhere other than what the physical git/test
+  #     checks above just verified.
+  # Disable CDPATH search, resolve physically (-P) exactly as the git
+  # checks above do, and end option parsing so a leading "-" in $dir is
+  # never taken as a cd option (not reachable today: callers only pass a
+  # validated .../<40-hex> path, and install.sh's last-known-good read
+  # requires basename == HEAD, so a bare "-" would already have failed as
+  # wrong_revision before this line).
+  ( CDPATH='' cd -P -- "$dir" && bun ./bin/lookup.ts --category __fm_vault_verify_probe__ ) >/dev/null 2>&1 ||
     { printf catalog_invalid; return 1; }
   printf healthy
 }
