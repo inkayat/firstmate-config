@@ -150,8 +150,8 @@ wins over the table.
 
 | Category | Primary route | Role |
 | --- | --- | --- |
-| QUICK | omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-5.6-luna` low - genuinely interchangeable) | senior-fullstack |
-| EXPLORE | omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-5.6-luna` low - genuinely interchangeable) | senior-fullstack |
+| QUICK | omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-6-luna` low - genuinely interchangeable) | senior-fullstack |
+| EXPLORE | omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-6-luna` low - genuinely interchangeable) | senior-fullstack |
 | RESEARCH | omp `anthropic/claude-sonnet-5` medium (or pi `openai-codex/gpt-6-sol` medium when Pi's own tooling fits the research target better) | senior-fullstack |
 | REVIEW | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
 | ARCHITECTURE | omp `anthropic/claude-opus-5-5` high | architecture |
@@ -261,9 +261,11 @@ ship. Neither mapping is fixed: a QUICK question can be a scout, a QUICK
 rename a ship; a DEEP diagnosis is naturally a scout, a DEEP fix naturally a
 ship. Judge the actual task, not the category label.
 
-**Model catalog adoption.** `openai-codex/gpt-5.6-luna` is adopted as
-QUICK's genuinely-interchangeable OMP array peer: OMP's native catalog
-reports its explicit supported effort list (low through max, including low).
+**Model catalog adoption.** `openai-codex/gpt-6-luna` is adopted as
+QUICK's and EXPLORE's genuinely-interchangeable OMP array peer,
+directly replacing the superseded `openai-codex/gpt-5.6-luna` in both
+lanes: OMP's native catalog reports its explicit supported effort list
+(low through max, including low).
 `anthropic/claude-opus-5-5` is an active OMP candidate for REVIEW's
 high-risk escalation, ARCHITECTURE, TENTH-MAN's Astra/OpenAI-authored rule,
 IMPLEMENT-LARGE's sustained-execution escalation (directly replacing Opus

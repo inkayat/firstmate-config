@@ -54,8 +54,8 @@ Captain choices can override the table.
 
 | Category | Active candidates | Intent |
 | --- | --- | --- |
-| `QUICK` | OMP · Claude Haiku 4.5 low, or GPT-5.6 Luna low | Tiny edits, mechanical cleanup, quick factual work |
-| `EXPLORE` | OMP · Claude Haiku 4.5 low, or GPT-5.6 Luna low | Read-only reconnaissance inside a repository |
+| `QUICK` | OMP · Claude Haiku 4.5 low, or GPT-6 Luna low | Tiny edits, mechanical cleanup, quick factual work |
+| `EXPLORE` | OMP · Claude Haiku 4.5 low, or GPT-6 Luna low | Read-only reconnaissance inside a repository |
 | `RESEARCH` | OMP · Claude Sonnet 5 medium | External docs, APIs, standards, and upstream source |
 | `REVIEW` | OMP · Claude Sonnet 5 medium | Ordinary correctness and maintainability review |
 | `ARCHITECTURE` | OMP · Claude Opus 5.5 high, escalating to Opus 5.5 + GPT-6 Sol xhigh peers, then GPT-6 Astra xhigh only when exceptional | Boundaries, data models, migrations, structural decisions |

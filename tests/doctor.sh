@@ -294,7 +294,7 @@ chmod +x "$LAUNCHER_OTHER/fm"
 
 # Every model this repository's crew-dispatch.json and captain-startup-models
 # reference, so the fully-healthy scenario has nothing left UNAVAILABLE.
-HEALTHY_AVAILABLE="openai-codex/gpt-6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-5.6-luna"
+HEALTHY_AVAILABLE="openai-codex/gpt-6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-6-luna"
 
 # A fully hermetic system PATH: symlink only the exact utilities fm-doctor
 # needs, never a whole real bin directory. On macOS, /usr/bin itself ships a
@@ -781,9 +781,9 @@ status_exit_agree '20a healthy' "$out20a" "$json20a" "$code20a"
 # (fm-doctor's default), Sol and Astra are available in OMP's native
 # catalog, but the Pi-only Sonnet provider is not - exactly the shape
 # README.md documents as expected on OMP. Selection still succeeds via Sol.
-FM_TEST_OMP_AVAILABLE='openai-codex/gpt-6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-5.6-luna'
+FM_TEST_OMP_AVAILABLE='openai-codex/gpt-6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-6-luna'
 out20b=$(run_doctor); code20b=$?
-json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-5.6-luna' run_doctor --json)
+json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-6-luna' run_doctor --json)
 unset FM_TEST_OMP_AVAILABLE
 check '20b optional-unavailable: exit code stays 0' 0 "$code20b"
 contains '20b optional-unavailable: Sol is selected as preferred' "$out20b" 'selected preferred candidate openai-codex/gpt-6-sol'

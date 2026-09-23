@@ -222,7 +222,7 @@ check_array_length() { # <category> <rule-occurrence> <expected-length>
 # QUICK: one rule, two genuinely interchangeable candidates.
 check_array_length QUICK 1 2
 check_rule_use QUICK 1 1 omp anthropic/claude-haiku-4-5 low
-check_rule_use QUICK 1 2 omp openai-codex/gpt-5.6-luna low
+check_rule_use QUICK 1 2 omp openai-codex/gpt-6-luna low
 
 # EXPLORE: two separate rules (ordinary, with Haiku/Luna as interchangeable
 # peers - the same capacity-aware pairing QUICK uses - then a
@@ -230,7 +230,7 @@ check_rule_use QUICK 1 2 omp openai-codex/gpt-5.6-luna low
 check_array_length EXPLORE 1 2
 check_array_length EXPLORE 2 1
 check_rule_use EXPLORE 1 1 omp anthropic/claude-haiku-4-5 low
-check_rule_use EXPLORE 1 2 omp openai-codex/gpt-5.6-luna low
+check_rule_use EXPLORE 1 2 omp openai-codex/gpt-6-luna low
 check_rule_use EXPLORE 2 3 omp anthropic/claude-sonnet-5 medium
 
 # RESEARCH: two separate rules (default OMP, then Pi-tooling-better).
