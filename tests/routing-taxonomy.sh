@@ -113,6 +113,24 @@ PY
   fi
 }
 
+# category_rule_field <category> <rule-occurrence 1-based> <field> - the
+# "when" or "why" text of one specific rule occurrence (never aggregated),
+# used to verify a split rule's own routing condition names an explicit,
+# inspectable trigger rather than leaving it as prose that cannot route.
+category_rule_field() {
+  local cat=$1 occ=$2 field=$3
+  if [ "$PARSE_METHOD" = jq ]; then
+    jq -r --arg c "$cat" --arg f "$field" --argjson i "$((occ - 1))" '[.rules[] | select(.category==$c)][$i][$f]' "$CREW_DISPATCH"
+  else
+    python3 - "$CREW_DISPATCH" "$cat" "$occ" "$field" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+matches = [r for r in doc["rules"] if r.get("category") == sys.argv[2]]
+print(matches[int(sys.argv[3]) - 1][sys.argv[4]])
+PY
+  fi
+}
+
 all_categories() {
   if [ "$PARSE_METHOD" = jq ]; then
     jq -r '.rules[].category' "$CREW_DISPATCH"
@@ -140,11 +158,14 @@ PY
 }
 
 # =============================================================================
-# 1. Structural shape: exactly the ten named category values (fourteen
-#    `rules` entries total - EXPLORE, RESEARCH, IMPLEMENT-LARGE, and DEEP
-#    each span two more-specific rules sharing one category value; every
-#    other category is a single rule), plus the untagged `default`
-#    catch-all for DEFAULT. No stray category names.
+# 1. Structural shape: exactly the ten named category values (twenty-two
+#    `rules` entries total - EXPLORE, RESEARCH, IMPLEMENT-LARGE, REVIEW,
+#    ARCHITECTURE, TENTH-MAN, IMPLEMENT, and UI/BROWSER each span two or
+#    three more-specific rules; DEEP spans four single-candidate
+#    conditional rules (scout primary, scout Astra escalation, ship
+#    primary, ship Astra escalation); every other category is a single
+#    rule), plus the untagged `default` catch-all for DEFAULT. No stray
+#    category names.
 # =============================================================================
 EXPECTED_CATEGORIES='ARCHITECTURE
 DEEP
@@ -161,9 +182,9 @@ actual_categories=$(all_categories | sort -u)
 check 'exactly the ten named categories are present, no more, no fewer' "$EXPECTED_CATEGORIES" "$actual_categories"
 
 total_rules=$(all_categories | wc -l | tr -d ' ')
-check 'fourteen total rules entries (ten categories, four of them split)' 14 "$total_rules"
+check 'twenty-two total rules entries (ten categories, several split)' 22 "$total_rules"
 
-for pair in QUICK:1 EXPLORE:2 RESEARCH:2 REVIEW:1 ARCHITECTURE:1 TENTH-MAN:1 IMPLEMENT:1 IMPLEMENT-LARGE:2 DEEP:2 UI/BROWSER:1; do
+for pair in QUICK:1 EXPLORE:2 RESEARCH:2 REVIEW:3 ARCHITECTURE:2 TENTH-MAN:2 IMPLEMENT:2 IMPLEMENT-LARGE:2 DEEP:4 UI/BROWSER:2; do
   cat=${pair%%:*}
   expected=${pair##*:}
   actual=$(category_rule_count "$cat")
@@ -174,8 +195,10 @@ done
 # 2. Pinned active route per category rule (regression protection):
 #    harness/model/effort exactly as documented in primary-policy.md and
 #    README.md. Multi-candidate arrays are limited to the deliberate peer sets
-#    for QUICK, ARCHITECTURE, and DEEP; semantic escalations and documented
-#    overrides remain separate.
+#    for QUICK and ARCHITECTURE's exceptional rule; DEEP and UI/BROWSER
+#    escalate through separate single-candidate conditional rules instead
+#    of quota-resolved arrays, so Astra/Opus 5.5 in DEEP can never be
+#    selected ahead of the primary by quota resolution.
 # =============================================================================
 check_rule_use() { # <category> <rule-occurrence, for the message only> <aggregated-line-number> <harness> <model> <effort>
   # <aggregated-line-number> indexes category_field's own output, which is
@@ -189,16 +212,6 @@ check_array_length() { # <category> <rule-occurrence> <expected-length>
   local cat=$1 occ=$2 expected=$3 actual
   actual=$(category_rule_use_length "$cat" "$occ")
   check "$cat rule #$occ: use array has exactly $expected candidate(s)" "$expected" "$actual"
-}
-no_opus_in_array() { # <category> - checks every use array across all of
-  # this category's rules at once (category_field aggregates them), since
-  # the function cannot discriminate by rule occurrence.
-  local cat=$1 models
-  models=$(category_field "$cat" use | cut -f2)
-  case $models in
-    *opus*) fail "$cat: an opus model wrongly appears in a use array" ;;
-    *) pass "$cat: no opus model appears in any use array" ;;
-  esac
 }
 
 # QUICK: one rule, two genuinely interchangeable candidates.
@@ -218,51 +231,77 @@ check_array_length RESEARCH 2 1
 check_rule_use RESEARCH 1 1 omp anthropic/claude-sonnet-5 medium
 check_rule_use RESEARCH 2 2 pi openai-codex/gpt-5.6-sol medium
 
-# REVIEW: one rule, one candidate.
+# REVIEW: three separate rules (ordinary, then complex, then high-risk).
 check_array_length REVIEW 1 1
+check_array_length REVIEW 2 1
+check_array_length REVIEW 3 1
 check_rule_use REVIEW 1 1 omp anthropic/claude-sonnet-5 medium
+check_rule_use REVIEW 2 2 omp anthropic/claude-sonnet-5 high
+check_rule_use REVIEW 3 3 omp anthropic/claude-opus-5-5 high
+review_why=$(category_field REVIEW why)
+contains 'REVIEW: why-text names Thermos as independently selectable' "$review_why" 'Thermos'
 
-# ARCHITECTURE: Astra and Fable 5.1 are active xhigh peers.
-check_array_length ARCHITECTURE 1 2
-check_rule_use ARCHITECTURE 1 1 pi openai-codex/gpt-6-astra xhigh
-check_rule_use ARCHITECTURE 1 2 omp anthropic/claude-fable-5-1 xhigh
-no_opus_in_array ARCHITECTURE
+# ARCHITECTURE: ordinary rule (Opus 5.5 high), then an exceptional rule
+# pairing Opus 5.5 xhigh with Astra xhigh as active peers.
+check_array_length ARCHITECTURE 1 1
+check_array_length ARCHITECTURE 2 2
+check_rule_use ARCHITECTURE 1 1 omp anthropic/claude-opus-5-5 high
+check_rule_use ARCHITECTURE 2 2 omp anthropic/claude-opus-5-5 xhigh
+check_rule_use ARCHITECTURE 2 3 pi openai-codex/gpt-6-astra xhigh
 arch_why=$(category_field ARCHITECTURE why)
-contains 'ARCHITECTURE: why-text names Fable 5.1' "$arch_why" 'anthropic/claude-fable-5-1'
+contains 'ARCHITECTURE: why-text names Opus 5.5' "$arch_why" 'anthropic/claude-opus-5-5'
 
-# TENTH-MAN: one rule, Astra only, with Opus as a prose-only override.
+# TENTH-MAN: two rules enforcing model-family diversity via explicit,
+# inspectable conditions on the primary author's model family - never
+# prose that cannot route.
 check_array_length TENTH-MAN 1 1
+check_array_length TENTH-MAN 2 1
 check_rule_use TENTH-MAN 1 1 pi openai-codex/gpt-6-astra xhigh
-no_opus_in_array TENTH-MAN
-tenthman_why=$(category_field TENTH-MAN why)
-contains 'TENTH-MAN: Opus is documented as an override in why-text' "$(printf '%s' "$tenthman_why" | tr '[:upper:]' '[:lower:]')" 'opus'
+check_rule_use TENTH-MAN 2 2 omp anthropic/claude-opus-5-5 xhigh
+tenthman_when1=$(category_rule_field TENTH-MAN 1 when)
+tenthman_when2=$(category_rule_field TENTH-MAN 2 when)
+contains 'TENTH-MAN rule 1: routes to Astra when the primary author is Claude' "$tenthman_when1" 'Claude'
+contains 'TENTH-MAN rule 2: routes to Opus 5.5 when the primary author is Astra/OpenAI-codex' "$tenthman_when2" 'Astra'
 
-# IMPLEMENT: one rule, one candidate.
+# IMPLEMENT: two separate rules (ordinary, then delicate-implementation
+# escalation).
 check_array_length IMPLEMENT 1 1
+check_array_length IMPLEMENT 2 1
 check_rule_use IMPLEMENT 1 1 omp anthropic/claude-sonnet-5 medium
+check_rule_use IMPLEMENT 2 2 omp anthropic/claude-sonnet-5 high
 
 # IMPLEMENT-LARGE: two separate rules (ordinary broad, then the
-# sustained-execution escalation to Opus - a real rule, unlike TENTH-MAN's
-# prose-only Opus override).
+# sustained-execution escalation to Opus 5.5, directly replacing Opus 5).
 check_array_length IMPLEMENT-LARGE 1 1
 check_array_length IMPLEMENT-LARGE 2 1
 check_rule_use IMPLEMENT-LARGE 1 1 omp anthropic/claude-sonnet-5 high
-check_rule_use IMPLEMENT-LARGE 2 2 omp anthropic/claude-opus-5 high
+check_rule_use IMPLEMENT-LARGE 2 2 omp anthropic/claude-opus-5-5 high
 
-# DEEP: diagnosis and implementation each pair Fable 5.1 with Astra at xhigh.
-check_array_length DEEP 1 2
-check_array_length DEEP 2 2
-check_rule_use DEEP 1 1 omp anthropic/claude-fable-5-1 xhigh
-check_rule_use DEEP 1 2 pi openai-codex/gpt-6-astra xhigh
-check_rule_use DEEP 2 3 omp anthropic/claude-fable-5-1 xhigh
-check_rule_use DEEP 2 4 omp openai-codex/gpt-6-astra xhigh
-no_opus_in_array DEEP
+# DEEP: four single-candidate conditional rules, never quota-resolved
+# arrays, so Astra can never be selected ahead of Opus 5.5 by quota
+# resolution - scout primary, scout Astra escalation, ship primary, ship
+# Astra second-hypothesis.
+check_array_length DEEP 1 1
+check_array_length DEEP 2 1
+check_array_length DEEP 3 1
+check_array_length DEEP 4 1
+check_rule_use DEEP 1 1 omp anthropic/claude-opus-5-5 xhigh
+check_rule_use DEEP 2 2 pi openai-codex/gpt-6-astra xhigh
+check_rule_use DEEP 3 3 omp anthropic/claude-opus-5-5 xhigh
+check_rule_use DEEP 4 4 omp openai-codex/gpt-6-astra xhigh
 deep_why=$(category_field DEEP why)
-contains 'DEEP: why-text names Fable 5.1' "$deep_why" 'anthropic/claude-fable-5-1'
+contains 'DEEP: why-text names Opus 5.5' "$deep_why" 'Opus 5.5'
+deep_when2=$(category_rule_field DEEP 2 when)
+deep_when4=$(category_rule_field DEEP 4 when)
+contains 'DEEP rule 2: Astra diagnosis is an explicit escalation, not a default' "$deep_when2" 'escalation'
+contains 'DEEP rule 4: Astra ship is an explicit second hypothesis, not a default' "$deep_when4" 'unresolved'
 
-# UI/BROWSER: one rule, one candidate.
+# UI/BROWSER: ordinary rule, then an explicit deep-code-plus-browser
+# escalation to Opus 5.5 high - a real routing rule, not a prose override.
 check_array_length UI/BROWSER 1 1
+check_array_length UI/BROWSER 2 1
 check_rule_use UI/BROWSER 1 1 omp anthropic/claude-sonnet-5 high
+check_rule_use UI/BROWSER 2 2 omp anthropic/claude-opus-5-5 high
 
 default_line=$(default_tuple)
 check 'DEFAULT: catch-all route is omp/anthropic/claude-sonnet-5/medium' "omp	anthropic/claude-sonnet-5	medium" "$default_line"

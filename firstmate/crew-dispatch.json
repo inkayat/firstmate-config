@@ -67,7 +67,7 @@
     },
     {
       "category": "REVIEW",
-      "when": "ordinary review of code, a diff, a proposal, or a completion claim for correctness, maintainability, or regression risk - not adversarial challenge, not a structural/architecture decision, and not a deep root-cause investigation. If the deliverable is external information-gathering rather than judgment on our own change, that is RESEARCH instead; if independence from the author is the point, that is TENTH-MAN instead; if the question is about system boundaries or long-term structure, that is ARCHITECTURE instead.",
+      "when": "ordinary review of code, a diff, a proposal, or a completion claim for correctness, maintainability, or regression risk - not adversarial challenge, not a structural/architecture decision, and not a deep root-cause investigation. If the deliverable is external information-gathering rather than judgment on our own change, that is RESEARCH instead; if independence from the author is the point, that is TENTH-MAN instead; if the question is about system boundaries or long-term structure, that is ARCHITECTURE instead. If the diff itself is complex enough to risk subtle regressions, concurrency bugs, or spans a broad cross-layer diff, that is the complex-REVIEW rule below instead; if the change is release-critical or touches auth/security, payments, migrations, or otherwise carries a high blast radius, that is the high-risk-REVIEW rule below instead.",
       "use": [
         {
           "harness": "omp",
@@ -75,28 +75,64 @@
           "effort": "medium"
         }
       ],
-      "why": "Medium effort covers an ordinary review; raise to high (the same Sonnet lane IMPLEMENT-LARGE already validates), by explicit captain choice, only for genuinely broader scope, never because the request sounds urgent. REVIEW stays on the same OMP session/harness family as implementation because it is not seeking independence - that is what separates it from TENTH-MAN, which deliberately runs on Pi, away from the implementation session. REVIEW also never owns a structural verdict about boundaries or migrations; that judgment belongs to ARCHITECTURE."
+      "why": "Medium effort covers an ordinary review. REVIEW stays on the same OMP session/harness family as implementation because it is not seeking independence - that is what separates it from TENTH-MAN, which deliberately runs on Pi, away from the implementation session. REVIEW also never owns a structural verdict about boundaries or migrations; that judgment belongs to ARCHITECTURE. Genuinely harder or riskier review scope is a separate, more specific rule below (complex or high-risk REVIEW), never a quota-resolved peer of this ordinary case."
+    },
+    {
+      "category": "REVIEW",
+      "when": "the same ordinary REVIEW work above, specifically when the diff itself is complex enough to risk subtle regressions, concurrency or race-condition bugs, or spans a broad cross-layer diff touching many coordinated pieces at once. This is a separate, more specific rule within REVIEW, not a quota-resolved peer of the ordinary case: pick it only when the complexity condition genuinely applies, not by default.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-sonnet-5",
+          "effort": "high"
+        }
+      ],
+      "why": "High effort is the deliberate escalation once the diff's own complexity - subtle regressions, concurrency, or broad cross-layer scope - genuinely exceeds what medium effort comfortably covers, the same Sonnet-high lane IMPLEMENT-LARGE already validates."
+    },
+    {
+      "category": "REVIEW",
+      "when": "the same REVIEW work above, specifically for release-critical changes or work touching authentication/security, payments, migrations, or otherwise carrying a high blast radius if the review misses something. This is a separate, more specific rule within REVIEW, not a quota-resolved peer of the ordinary or complex case: pick it only when the stakes genuinely warrant it, not by default.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-opus-5-5",
+          "effort": "high"
+        }
+      ],
+      "why": "Opus 5.5 at high effort is reserved for review where the cost of a missed defect is highest - release-critical, auth/security, payment, migration, or otherwise high-blast-radius changes. Specialist skills such as Thermos remain independently selectable on top of this lane through the normal skill-selection path (primary-policy.md section 2); picking one never starts a second orchestration framework or supervisor identity."
     },
     {
       "category": "ARCHITECTURE",
-      "when": "structural decisions with real blast radius: a system or module boundary, an API or domain boundary, a data model, a migration shape, or any ambiguous design with long-term consequences. Use role architecture. If the deliverable is approval or risk-flagging of someone else's proposal rather than an independent structural recommendation, that is REVIEW instead; if the trigger is a hard-to-diagnose bug or subtle reasoning problem rather than a forward design decision, that is DEEP instead.",
+      "when": "structural decisions with real blast radius: a system or module boundary, an API or domain boundary, a data model, a migration shape, or any ambiguous design with long-term consequences. Use role architecture. If the deliverable is approval or risk-flagging of someone else's proposal rather than an independent structural recommendation, that is REVIEW instead; if the trigger is a hard-to-diagnose bug or subtle reasoning problem rather than a forward design decision, that is DEEP instead. If the decision is exceptional enough to warrant the strongest available reasoning and an independent second opinion, that is the exceptional-architecture rule below instead.",
       "use": [
         {
-          "harness": "pi",
-          "model": "openai-codex/gpt-6-astra",
+          "harness": "omp",
+          "model": "anthropic/claude-opus-5-5",
+          "effort": "high"
+        }
+      ],
+      "why": "OMP + Opus 5.5 at high effort is the default for structural decisions with real blast radius. Consultation here never automatically owns the implementation that follows. Escalate to the exceptional-architecture rule below, not this one, once the decision itself is exceptional rather than merely structural."
+    },
+    {
+      "category": "ARCHITECTURE",
+      "when": "the same structural-decision ARCHITECTURE work above, specifically when the decision is exceptional: unusually high stakes, unusually deep ambiguity, or a genuine need for an independent second opinion beyond the ordinary structural case. This is a separate, more specific rule within ARCHITECTURE, not a quota-resolved peer of the ordinary case: pick it only when the exceptional condition genuinely applies, not by default.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-opus-5-5",
           "effort": "xhigh"
         },
         {
-          "harness": "omp",
-          "model": "anthropic/claude-fable-5-1",
+          "harness": "pi",
+          "model": "openai-codex/gpt-6-astra",
           "effort": "xhigh"
         }
       ],
-      "why": "openai-codex/gpt-6-astra on Pi and anthropic/claude-fable-5-1 on OMP are active xhigh architecture peers. Both are reserved for structural decisions with real blast radius; FirstMate resolves between them through the quota-array procedure after this rule matches. Consultation here never automatically owns the implementation that follows."
+      "why": "anthropic/claude-opus-5-5 on OMP at xhigh and openai-codex/gpt-6-astra on Pi at xhigh are active xhigh peers for exceptional architecture; FirstMate resolves between them through the quota-array procedure after this rule matches. Astra especially serves as an independent second opinion, on a different harness and model family from the primary OMP session."
     },
     {
       "category": "TENTH-MAN",
-      "when": "deliberate adversarial challenge: an independent second opinion, a stress test of a plan's assumptions and failure modes, or scrutiny of a completion claim before an expensive or hard-to-reverse commitment. Use role tenth-man. Never routine; risk-triggered or explicitly requested. If the goal is ordinary correctness/maintainability feedback rather than adversarial challenge, that is REVIEW instead; if the goal is a forward structural recommendation rather than challenging an existing one, that is ARCHITECTURE instead.",
+      "when": "deliberate adversarial challenge: an independent second opinion, a stress test of a plan's assumptions and failure modes, or scrutiny of a completion claim before an expensive or hard-to-reverse commitment - specifically when the work under review was primarily produced by a Claude/Anthropic model. Use role tenth-man. Never routine; risk-triggered or explicitly requested. If the goal is ordinary correctness/maintainability feedback rather than adversarial challenge, that is REVIEW instead; if the goal is a forward structural recommendation rather than challenging an existing one, that is ARCHITECTURE instead.",
       "use": [
         {
           "harness": "pi",
@@ -104,11 +140,23 @@
           "effort": "xhigh"
         }
       ],
-      "why": "Independence is the entire point: this lane runs on Pi, deliberately away from the OMP session that likely produced the work under review, and Astra stays the active primary at non-negotiable xhigh. anthropic/claude-opus-5 on OMP at high or xhigh is an explicit availability/semantic override, never a quota-selected peer in this rule's array - reach for it deliberately, not by automatic resolution. If the work under review was itself produced on gpt-6-astra, override to a different strong model (for example openai-codex/gpt-5.6-sol) so the reviewer is never the author. TENTH-MAN versus DEEP: DEEP investigates why something is broken; TENTH-MAN challenges whether a plan or a completion claim actually holds, broken or not."
+      "why": "Model-family diversity is the whole point: when the primary author is a Claude/Anthropic model, the challenger runs on Pi with Astra, a different provider and a different harness from the OMP session that likely produced the work. TENTH-MAN versus DEEP: DEEP investigates why something is broken; TENTH-MAN challenges whether a plan or a completion claim actually holds, broken or not."
+    },
+    {
+      "category": "TENTH-MAN",
+      "when": "the same deliberate adversarial-challenge TENTH-MAN work above, specifically when the work under review was primarily produced by an Astra or other OpenAI-codex model. This is a separate, more specific rule within TENTH-MAN, chosen by which model produced the work under review, not by quota: never let the same provider both author and adversarially review a piece of work.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-opus-5-5",
+          "effort": "xhigh"
+        }
+      ],
+      "why": "When the primary author is Astra or another OpenAI-codex model, the challenger switches to OMP with Opus 5.5 at xhigh so the reviewer's model family never matches the author's. This enforces the same independence TENTH-MAN's Claude-primary rule enforces, just from the other direction."
     },
     {
       "category": "IMPLEMENT",
-      "when": "ordinary bounded engineering: a feature, a bug fix, normal debugging, a normal refactor, or writing/repairing tests, with a blast radius you can hold in your head. This is the main coding lane and the unmarked default for real code changes. If the change is a one-file mechanical edit or a factual question, that is QUICK instead; if it spans many files or the design is not settled yet, that is IMPLEMENT-LARGE instead; if the change is primarily frontend/browser-visible behavior, that is UI/BROWSER instead.",
+      "when": "ordinary bounded engineering: a feature, a bug fix, normal debugging, a normal refactor, or writing/repairing tests, with a blast radius you can hold in your head. This is the main coding lane and the unmarked default for real code changes. If the change is a one-file mechanical edit or a factual question, that is QUICK instead; if it spans many files or the design is not settled yet, that is IMPLEMENT-LARGE instead; if the change is primarily frontend/browser-visible behavior, that is UI/BROWSER instead. If the implementation itself is delicate - races, state machines, security-sensitive logic, or coordinated multi-file changes that must stay consistent - that is the complex-IMPLEMENT rule below instead.",
       "use": [
         {
           "harness": "omp",
@@ -116,7 +164,19 @@
           "effort": "medium"
         }
       ],
-      "why": "The everyday coding lane: OMP + Sonnet at medium effort. This is the default assumption for 'write code' work; only move to a neighboring category when one of its specific triggers actually applies, not because the request feels bigger or smaller than usual."
+      "why": "The everyday coding lane: OMP + Sonnet at medium effort. This is the default assumption for 'write code' work; only move to a neighboring category when one of its specific triggers actually applies, not because the request feels bigger or smaller than usual. Genuinely delicate implementation is a separate, more specific rule below (complex IMPLEMENT), never a quota-resolved peer of this ordinary case."
+    },
+    {
+      "category": "IMPLEMENT",
+      "when": "the same ordinary bounded-engineering IMPLEMENT work above, specifically when the implementation itself is delicate: races and concurrency, state machines, security-sensitive logic, or coordinated multi-file changes that must stay consistent with each other. This is a separate, more specific rule within IMPLEMENT, not a quota-resolved peer of the ordinary case: pick it only when the delicacy condition genuinely applies, not by default.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-sonnet-5",
+          "effort": "high"
+        }
+      ],
+      "why": "High effort is the deliberate escalation once the implementation itself - not just its size - is delicate enough that medium effort risks a subtle mistake: races, state machines, security-sensitive logic, or coordinated multi-file consistency."
     },
     {
       "category": "IMPLEMENT-LARGE",
@@ -136,49 +196,63 @@
       "use": [
         {
           "harness": "omp",
-          "model": "anthropic/claude-opus-5",
+          "model": "anthropic/claude-opus-5-5",
           "effort": "high"
         }
       ],
-      "why": "Opus here is difficult execution, not difficult reasoning - that is what separates this escalation from DEEP's Fable/Astra lanes. Escalate to xhigh, by explicit captain choice, only when even high effort is not enough."
+      "why": "Opus 5.5 here is difficult execution, not difficult reasoning - that is what separates this escalation from DEEP's Opus/Astra lanes. Opus 5.5 directly replaces Opus 5 in this lane. Escalate to xhigh, by explicit captain choice, only when even high effort is not enough."
     },
     {
       "category": "DEEP",
-      "when": "subtle root-cause work that calls for read-only diagnosis first: an intermittent bug, a concurrency or race condition, an algorithmic problem, a security or data-integrity issue, highly coupled reasoning across a system, or a problem that has already survived repeated attempts, where the immediate deliverable is finding the root cause rather than fixing it yet (the scout form). This is a difficulty-of-reasoning test, not a size test - many files touched does not imply DEEP, and a single concurrency bug can. If the work is mostly settled, broad execution rather than an unsettled reasoning problem, that is IMPLEMENT-LARGE instead; if the deliverable is a forward structural recommendation rather than a diagnosis, that is ARCHITECTURE instead; if the deliverable is adversarial challenge of someone else's plan or claim rather than your own diagnosis, that is TENTH-MAN instead.",
+      "when": "subtle root-cause work that calls for read-only diagnosis first: an intermittent bug, a concurrency or race condition, an algorithmic problem, a security or data-integrity issue, highly coupled reasoning across a system, or a problem that has already survived repeated attempts, where the immediate deliverable is finding the root cause rather than fixing it yet (the scout form). This is a difficulty-of-reasoning test, not a size test - many files touched does not imply DEEP, and a single concurrency bug can. If the work is mostly settled, broad execution rather than an unsettled reasoning problem, that is IMPLEMENT-LARGE instead; if the deliverable is a forward structural recommendation rather than a diagnosis, that is ARCHITECTURE instead; if the deliverable is adversarial challenge of someone else's plan or claim rather than your own diagnosis, that is TENTH-MAN instead. If Opus 5.5's own diagnosis pass needs an independent alternative or escalation, that is the Astra-diagnosis rule below instead.",
       "use": [
         {
           "harness": "omp",
-          "model": "anthropic/claude-fable-5-1",
+          "model": "anthropic/claude-opus-5-5",
           "effort": "xhigh"
-        },
+        }
+      ],
+      "why": "OMP + Opus 5.5 at xhigh is the active, single-candidate primary for the read-only diagnosis form: find the root cause, do not fix it yet. This is not a quota-resolved peer of the Astra-escalation rule below - Opus 5.5 is the default diagnosis route, Astra is reached for only when that rule's escalation condition genuinely applies."
+    },
+    {
+      "category": "DEEP",
+      "when": "the same read-only DEEP diagnosis work above, specifically when the Opus 5.5 diagnosis rule above is not enough and an independent alternative or escalation, on a different model family and harness, is genuinely needed. This is a separate, more specific rule within DEEP, not a routine default: pick it only when that escalation condition genuinely applies, never as a first choice.",
+      "use": [
         {
           "harness": "pi",
           "model": "openai-codex/gpt-6-astra",
           "effort": "xhigh"
         }
       ],
-      "why": "anthropic/claude-fable-5-1 on OMP and openai-codex/gpt-6-astra on Pi are active xhigh peers for the read-only diagnosis form: find the root cause, do not fix it yet. FirstMate resolves between them through the quota-array procedure after this rule matches."
+      "why": "openai-codex/gpt-6-astra on Pi is the independent alternative/escalation for DEEP diagnosis, deliberately kept on a different harness and model family from the OMP Opus 5.5 primary above, preserving the existing Pi placement for Astra in the diagnosis form."
     },
     {
       "category": "DEEP",
-      "when": "the same reasoning-difficulty DEEP work above, once the difficult implementation and its supporting tools are clean enough to diagnose and fix in one session (the ship form), rather than requiring a separate read-only diagnosis pass first.",
+      "when": "the same reasoning-difficulty DEEP work above, once the difficult implementation and its supporting tools are clean enough to diagnose and fix in one session (the ship form), rather than requiring a separate read-only diagnosis pass first. If the Opus 5.5 ship pass leaves the problem unresolved, that is the Astra-ship rule below instead.",
       "use": [
         {
           "harness": "omp",
-          "model": "anthropic/claude-fable-5-1",
+          "model": "anthropic/claude-opus-5-5",
           "effort": "xhigh"
-        },
+        }
+      ],
+      "why": "OMP + Opus 5.5 at xhigh is the active, single-candidate primary once diagnosis and the difficult implementation belong in the same mutating session. This is not a quota-resolved peer of the Astra second-hypothesis rule below - Opus 5.5 runs first, Astra is reached for only after that rule's condition genuinely applies."
+    },
+    {
+      "category": "DEEP",
+      "when": "the same mutating DEEP ship work above, specifically as a second hypothesis once the Opus 5.5 ship pass above has run and the problem remains unresolved. This is a separate, more specific rule within DEEP, not a routine default: pick it only after the Opus 5.5 pass has genuinely failed to resolve the problem, never as a first choice.",
+      "use": [
         {
           "harness": "omp",
           "model": "openai-codex/gpt-6-astra",
           "effort": "xhigh"
         }
       ],
-      "why": "anthropic/claude-fable-5-1 and openai-codex/gpt-6-astra on OMP are active xhigh peers once diagnosis and the difficult implementation belong in the same mutating session. FirstMate resolves between them through the quota-array procedure after this rule matches."
+      "why": "openai-codex/gpt-6-astra on OMP is reached for only as a second hypothesis once the Opus 5.5 ship pass above leaves the problem unresolved, preserving the existing OMP placement for Astra in the ship form."
     },
     {
       "category": "UI/BROWSER",
-      "when": "frontend or browser-visible behavior: forms, validation, navigation, interactive components, browser-side state, or end-to-end user flows where automated tests can pass while real user behavior is wrong. If there is no browser-visible behavior at stake, that is IMPLEMENT instead.",
+      "when": "frontend or browser-visible behavior: forms, validation, navigation, interactive components, browser-side state, or end-to-end user flows where automated tests can pass while real user behavior is wrong. If there is no browser-visible behavior at stake, that is IMPLEMENT instead. If the underlying change is deep code-plus-browser work whose implementation is itself delicate, that is the Opus-escalation rule below instead.",
       "use": [
         {
           "harness": "omp",
@@ -186,7 +260,19 @@
           "effort": "high"
         }
       ],
-      "why": "OMP + Sonnet at high effort, paired with this configuration's existing browser/manual verification policy (primary-policy.md section 7). Browser-visible surface alone is never a reason to reach for Opus, Fable, or Astra; if the underlying bug is a genuinely hard reasoning problem rather than an ordinary UI change, route it to DEEP instead and still apply browser verification to confirm the fix."
+      "why": "OMP + Sonnet at high effort, paired with this configuration's existing browser/manual verification policy (primary-policy.md section 7). Browser-visible surface alone is never a reason to reach for Opus or Astra as a default. If the underlying bug is a genuinely hard reasoning problem rather than an ordinary UI change, route it to DEEP instead and still apply browser verification to confirm the fix. Deep code-plus-browser work is a separate, more specific rule below, not a quota-resolved peer of this ordinary case."
+    },
+    {
+      "category": "UI/BROWSER",
+      "when": "the same browser-visible UI/BROWSER work above, specifically when the underlying change is deep code-plus-browser work: delicate implementation (races, state machines, security-sensitive logic, or coordinated multi-file consistency) that must also be verified through the browser. This is a separate, more specific rule within UI/BROWSER, not a quota-resolved peer of the ordinary case: pick it only when the implementation itself is genuinely delicate, not merely because a UI is involved.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-opus-5-5",
+          "effort": "high"
+        }
+      ],
+      "why": "Opus 5.5 at high effort is reserved for UI/BROWSER work whose implementation is itself delicate enough to warrant it, still paired with this configuration's browser/manual verification policy (primary-policy.md section 7). Never a default for ordinary browser-visible changes."
     }
   ],
   "default": [

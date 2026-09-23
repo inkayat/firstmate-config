@@ -141,7 +141,7 @@ Five decisions, kept separate on purpose: **role** (how to work), **harness**
 the others along - a hard task does not automatically mean the strongest
 model, and a strong model does not automatically mean maximum effort.
 
-**Category first.** Every delegated task maps to exactly one of eleven
+**Category first.** Every delegated task maps to exactly one of ten
 dispatch categories before harness/model/effort are chosen. Categories are a
 semantic-fit classification, not a size ladder and not a keyword match - read
 the full "when"/"why" text for each in `config/crew-dispatch.json`, the
@@ -154,12 +154,12 @@ wins over the table.
 | EXPLORE | omp `anthropic/claude-haiku-4-5` low | senior-fullstack |
 | RESEARCH | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
 | REVIEW | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
-| ARCHITECTURE | pi `openai-codex/gpt-6-astra` xhigh or omp `anthropic/claude-fable-5-1` xhigh | architecture |
-| TENTH-MAN | pi `openai-codex/gpt-6-astra` xhigh | tenth-man |
+| ARCHITECTURE | omp `anthropic/claude-opus-5-5` high | architecture |
+| TENTH-MAN | pi `openai-codex/gpt-6-astra` xhigh (Claude-authored work) or omp `anthropic/claude-opus-5-5` xhigh (Astra/OpenAI-authored work) | tenth-man |
 | IMPLEMENT | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
 | IMPLEMENT-LARGE | omp `anthropic/claude-sonnet-5` high | senior-fullstack |
-| DEEP | omp `anthropic/claude-fable-5-1` xhigh or Astra xhigh (Pi for diagnosis, omp for implementation) | senior-fullstack |
-| UI/BROWSER | omp `anthropic/claude-sonnet-5` high | senior-fullstack |
+| DEEP | omp `anthropic/claude-opus-5-5` xhigh, with Astra xhigh reached only through an explicit single-candidate escalation rule, never a quota peer (Pi for diagnosis, omp for implementation) | senior-fullstack |
+| UI/BROWSER | omp `anthropic/claude-sonnet-5` high, escalating to omp `anthropic/claude-opus-5-5` high for deep code-plus-browser work | senior-fullstack |
 | DEFAULT | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
 
 This table summarizes each category's active candidate set. Separate
@@ -167,11 +167,14 @@ more-specific rules and documented overrides (below) are not fallback pairs;
 they remain explicit so semantic escalation cannot be mistaken for quota
 selection.
 
-`config/crew-dispatch.json` carries fourteen `rules` entries (ten distinct
-`category` values; EXPLORE, RESEARCH, IMPLEMENT-LARGE, and DEEP each span
-two more-specific rules sharing the same category value) plus `default` for
-the DEFAULT catch-all, in the form Firstmate reads at intake, each with the
-full natural-language `when`/`why` text this table compresses. An explicit
+`config/crew-dispatch.json` carries twenty-two `rules` entries (ten distinct
+`category` values; EXPLORE, RESEARCH, IMPLEMENT-LARGE, REVIEW,
+ARCHITECTURE, TENTH-MAN, IMPLEMENT, and UI/BROWSER each span two or three
+more-specific rules; DEEP spans four single-candidate conditional rules -
+scout primary, scout Astra escalation, ship primary, ship Astra
+escalation - never a quota-resolved array) plus `default` for the DEFAULT
+catch-all, in the form Firstmate reads at intake, each with the full
+natural-language `when`/`why` text this table compresses. An explicit
 captain choice always wins over it.
 
 **Effort is not negotiable downward.** Where the table says xhigh, a lane
@@ -182,11 +185,14 @@ blocked and the work waits for a decision.
 capacity on this fleet is roughly Claude 20 against GPT 5 - a ratio of about
 4:1, not 20:1 - so ordinary, comparable work defaults to a Claude lane
 (Haiku for QUICK/EXPLORE, Sonnet for RESEARCH/REVIEW/IMPLEMENT/
-IMPLEMENT-LARGE/UI-BROWSER). Architecture and DEEP instead pair Claude Fable
-5.1 with GPT-6 Astra at xhigh because those categories are defined by
-structural or root-cause reasoning. TENTH-MAN stays on Astra so adversarial
-review remains independent from the OMP implementation session. Semantic fit
-is decided first; provider availability and capacity only break ties within a
+IMPLEMENT-LARGE/UI-BROWSER). ARCHITECTURE's exceptional rule reaches for
+Claude Opus 5.5 paired with GPT-6 Astra as active xhigh peers; DEEP instead
+reaches for Opus 5.5 as its single-candidate primary in both the scout and
+ship forms, with Astra configured only as a separate, more specific
+escalation rule so it can never be selected ahead of Opus 5.5 by quota
+resolution. TENTH-MAN enforces model-family diversity directly: it never
+shares a model family with the work it is challenging. Semantic fit is
+decided first; provider availability and capacity only break ties within a
 rule's own listed candidates, never override the category or rule itself.
 
 **`use` arrays versus separate rules versus documented overrides.**
@@ -194,27 +200,33 @@ FirstMate resolves a matched rule's `use` array through its quota-array
 procedure, so an array contains only candidates intended as semantic peers:
 
 - QUICK pairs Haiku and Luna at low effort.
-- ARCHITECTURE pairs Pi + Astra and OMP + Fable 5.1 at xhigh.
-- DEEP diagnosis pairs OMP + Fable 5.1 with Pi + Astra at xhigh; DEEP
-  implementation pairs both models on OMP at xhigh.
+- ARCHITECTURE's exceptional rule pairs OMP + Opus 5.5 and Pi + Astra at
+  xhigh as active quota-resolved peers.
+
+DEEP and UI/BROWSER's escalations are deliberately NOT `use` arrays: DEEP's
+Astra rules and UI/BROWSER's Opus 5.5 rule are each separate,
+single-candidate conditional rules, so an escalation model can never be
+selected ahead of the primary by quota resolution.
 
 Separate, more-specific rules carry the same `category` value when the
 difference is a semantic trigger rather than a quota choice: EXPLORE's
-harder-reasoning rule, RESEARCH's Pi-tooling-better rule,
-IMPLEMENT-LARGE's sustained-execution rule, and DEEP diagnosis versus
-implementation. TENTH-MAN keeps Astra as its sole active candidate; Opus
-remains a deliberate documented override there when independence requires a
-different strong model.
+harder-reasoning rule, RESEARCH's Pi-tooling-better rule, REVIEW's complex
+and high-risk escalations, ARCHITECTURE's exceptional-decision escalation,
+IMPLEMENT's delicate-implementation escalation, IMPLEMENT-LARGE's
+sustained-execution rule, TENTH-MAN's two author-family conditions,
+UI/BROWSER's deep-code-plus-browser escalation, and DEEP's four
+conditional rules (scout primary, scout Astra escalation, ship primary,
+ship Astra second-hypothesis).
 
-**Opus, Astra, and Fable** stay semantically scoped. Opus is difficult
-*execution* for IMPLEMENT-LARGE's sustained-work escalation. Astra and Fable
-5.1 are difficult *reasoning* peers for ARCHITECTURE and DEEP. Astra remains
-TENTH-MAN's independent adversarial lane. Many files touched does not itself
-select any of them; a single hard concurrency bug can.
-
-**Tenth-man independence.** Review on a model that did not produce the work.
-If the change came from Astra, override to a different strong model (for
-example `openai-codex/gpt-5.6-sol`) rather than the same one.
+**Opus 5.5 and Astra** stay semantically scoped. Opus 5.5 is difficult
+*execution* for IMPLEMENT-LARGE's sustained-work escalation, and difficult
+*reasoning* for ARCHITECTURE and DEEP; it is also REVIEW's highest-stakes
+escalation, UI/BROWSER's deep-code-plus-browser escalation, and one of
+TENTH-MAN's two family-diversity routes. Astra is ARCHITECTURE's active
+xhigh peer, DEEP's explicit single-candidate escalation (never a quota
+peer there), and TENTH-MAN's route whenever the work under review was
+authored by Claude. Many files touched does not itself select either of
+them; a single hard concurrency bug or a release-critical diff can.
 
 **Role stays separate from category.** The category table selects
 harness/model/effort; it never selects a role. Only three roles exist
@@ -235,16 +247,21 @@ ship. Judge the actual task, not the category label.
 **Model catalog adoption.** `openai-codex/gpt-5.6-luna` is adopted as
 QUICK's genuinely-interchangeable OMP array peer: OMP's native catalog
 reports its explicit supported effort list (low through max, including low).
-`anthropic/claude-fable-5-1` is likewise an active OMP candidate for
-ARCHITECTURE and both DEEP forms; OMP's catalog reports xhigh support, while
-Pi exposes no Anthropic provider on this machine. Pi therefore carries Astra,
-and OMP carries Fable 5.1 plus Astra where the mutating DEEP form requires
-that harness. `openai-codex/gpt-5.6-sol` remains the Captain-startup
-candidate in `captain-startup-models.tsv`, RESEARCH's Pi-tooling-better
-route, and the named tenth-man-independence override; that chain's Claude
-Sonnet fallback step is harness-scoped (OMP's own `anthropic/claude-sonnet-5`
-versus Pi's `pi-claude-code-provider/sonnet`) - see README.md "Captain
-startup model". `openai-codex/gpt-5.5` remains retired from worker routing.
+`anthropic/claude-opus-5-5` is an active OMP candidate for REVIEW's
+high-risk escalation, ARCHITECTURE, TENTH-MAN's Astra/OpenAI-authored rule,
+IMPLEMENT-LARGE's sustained-execution escalation (directly replacing Opus
+5), UI/BROWSER's deep-code-plus-browser escalation, and both DEEP forms;
+OMP's catalog reports xhigh support, while Pi exposes no Anthropic provider
+on this machine. Pi therefore carries Astra for DEEP's scout-escalation
+rule and ARCHITECTURE's exceptional rule; DEEP's ship-escalation rule
+keeps Astra on OMP instead, matching the harness its primary rule already
+uses.
+`openai-codex/gpt-5.6-sol` remains the Captain-startup candidate in
+`captain-startup-models.tsv` and RESEARCH's Pi-tooling-better route; that
+chain's Claude Sonnet fallback step is harness-scoped (OMP's own
+`anthropic/claude-sonnet-5` versus Pi's `pi-claude-code-provider/sonnet`)
+- see README.md "Captain startup model". `openai-codex/gpt-5.5` and
+`anthropic/claude-fable-5-1` remain retired from worker routing.
 
 **Deferred to a later release.** The local Qwen/Ollama lane remains absent
 while that machine is offline. It is not configured anywhere in this

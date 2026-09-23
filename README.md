@@ -34,9 +34,10 @@ policy chooses worker harness, model, effort, and role by task semantics.
 ## Highlights
 
 - OMP-first Captain with an explicit Pi fallback
-- Eleven-category semantic task routing
+- Nineteen-rule semantic task routing across ten dispatch categories
 - Claude-heavy, capacity-aware everyday routing
-- Fable 5.1 and Astra reserved for architecture and deep reasoning
+- Opus 5.5 and Astra reserved for architecture, deep reasoning, and
+  highest-stakes review
 - Multi-project operation with per-task project resolution
 - Scoped `AGENTS.md` / `CLAUDE.md` context and project-local skills
 - Reproducibly installed shared worker skills and external pins
@@ -56,25 +57,35 @@ Captain choices can override the table.
 | `EXPLORE` | OMP · Claude Haiku 4.5 low | Read-only reconnaissance inside a repository |
 | `RESEARCH` | OMP · Claude Sonnet 5 medium | External docs, APIs, standards, and upstream source |
 | `REVIEW` | OMP · Claude Sonnet 5 medium | Ordinary correctness and maintainability review |
-| `ARCHITECTURE` | Pi · GPT-6 Astra xhigh, or OMP · Claude Fable 5.1 xhigh | Boundaries, data models, migrations, structural decisions |
-| `TENTH-MAN` | Pi · GPT-6 Astra xhigh | Independent adversarial challenge |
+| `ARCHITECTURE` | OMP · Claude Opus 5.5 high | Boundaries, data models, migrations, structural decisions |
+| `TENTH-MAN` | Pi · GPT-6 Astra xhigh, or OMP · Claude Opus 5.5 xhigh | Independent adversarial challenge |
 | `IMPLEMENT` | OMP · Claude Sonnet 5 medium | Normal features, fixes, refactors, and tests |
 | `IMPLEMENT-LARGE` | OMP · Claude Sonnet 5 high | Broad, mostly settled implementation |
-| `DEEP` | OMP · Claude Fable 5.1 xhigh, or GPT-6 Astra xhigh (Pi diagnosis / OMP implementation) | Hard root-cause and reasoning-heavy work |
-| `UI/BROWSER` | OMP · Claude Sonnet 5 high | Browser-visible behavior and end-to-end flows |
+| `DEEP` | OMP · Claude Opus 5.5 xhigh, with GPT-6 Astra xhigh reached only as an explicit escalation/second hypothesis (Pi diagnosis / OMP implementation) | Hard root-cause and reasoning-heavy work |
+| `UI/BROWSER` | OMP · Claude Sonnet 5 high, or Opus 5.5 high for deep code-plus-browser work | Browser-visible behavior and end-to-end flows |
 | `DEFAULT` | OMP · Claude Sonnet 5 medium | Work with no more specific category |
 
 Routing philosophy:
 
 - Claude handles most everyday work because practical capacity is larger.
-- Fable 5.1 and Astra share architecture and deep-reasoning work at xhigh.
-- Astra remains the independent Tenth-Man lane.
-- Opus is a deliberate escalation for sustained, large execution—not a default.
+- ARCHITECTURE's exceptional escalation pairs Opus 5.5 with Astra at xhigh
+  as active quota-resolved peers; DEEP instead routes to Astra only through
+  explicit single-candidate escalation rules, so it can never be picked
+  ahead of Opus 5.5 by quota.
+- TENTH-MAN enforces model-family diversity: a Claude-authored change is
+  challenged by Pi + Astra; an Astra/OpenAI-authored change is challenged by
+  OMP + Opus 5.5.
+- REVIEW escalates from Sonnet medium to Sonnet high for complex diffs, and
+  to Opus 5.5 high for release-critical or high-blast-radius work.
+- Opus 5.5 is a deliberate escalation for sustained execution, exceptional
+  architecture, deep reasoning, and highest-stakes review - not a default.
 - Haiku and Luna cover cheap, fast work where their lane is appropriate.
 
-More-specific rules handle harder exploration, Pi-oriented research, sustained
-large execution, and the diagnosis/implementation split for deep work. The
-complete conditions and overrides live in the tracked routing file and
+More-specific rules handle harder exploration, Pi-oriented research,
+complex/high-risk review, exceptional architecture, sustained large
+execution, delicate implementation, and the diagnosis/implementation split
+for deep work. The complete conditions and overrides live in the tracked
+routing file and
 [`firstmate/primary-policy.md`](firstmate/primary-policy.md).
 
 ## Context and skills
