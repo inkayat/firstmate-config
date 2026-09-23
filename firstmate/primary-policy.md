@@ -342,18 +342,31 @@ this per-task, explicit decision, never ambient context.
 Consult it only when a task plausibly benefits from a specialist skill past
 what the shared worker skills already cover. Zero is the default and a fully
 valid outcome for an ordinary task. Look up candidates read-only, never by
-parsing a skill body: `bun "$FM_SKILL_VAULT_ROOT/bin/lookup.ts" --category
-<CATEGORY>` returns the full, never-truncated, deterministic shortlist of
-that category's `firstmate_candidate` rows with `activation: auto-candidate`;
-`--id <vault-id>` resolves one exact row by id, `installed`/
-`firstmate_candidate`/`reference-only` alike. `catalog`/`team-only`/
-`restricted` rows never resolve through either form - naming one explicitly
-is never a way around its status. The vault's own `README.md` is
-authoritative for its vocabulary (`status`, `activation`, `scope`, `cluster`,
-`favorite`); do not duplicate it here, and no category-to-row table exists
-in this policy or in `crew-dispatch.json` - a pick is always this per-task
-judgment call against the returned shortlist, never a lookup keyed only by
-category.
+parsing a skill body, and always from within the pinned vault root: a
+non-absolute `$FM_SKILL_VAULT_ROOT` is refused outright rather than
+resolved against the caller's own directory. This isolates the caller's
+working-directory Bun config discovery - `bunfig.toml`, `BUN_OPTIONS`,
+`NODE_OPTIONS`, and a hostile `CDPATH` - by running from inside the pinned
+checkout instead; it does not authenticate `$FM_SKILL_VAULT_ROOT` itself or
+the caller's wider environment. It assumes `$FM_SKILL_VAULT_ROOT` is the
+installer-verified pin (`fm doctor`'s `vault.pin` check, never a
+caller-substituted or symlink-retargeted value this command detects) and
+that `env`/`bun` resolve, through a trusted `PATH`, to the real installed
+executables - a compromised `PATH` or a re-pointed root is a separate
+compromise of the Captain's own environment, out of this command's scope:
+`( case $FM_SKILL_VAULT_ROOT in /*) :;; *) exit 1;; esac; CDPATH='' cd -P
+-- "$FM_SKILL_VAULT_ROOT" && env -u BUN_OPTIONS -u NODE_OPTIONS bun
+./bin/lookup.ts --category <CATEGORY> )` returns the full, never-truncated,
+deterministic shortlist of that category's `firstmate_candidate` rows with
+`activation: auto-candidate`; `--id <vault-id>` resolves one exact row by
+id, `installed`/`firstmate_candidate`/`reference-only` alike. `catalog`/
+`team-only`/`restricted` rows never resolve through either form - naming
+one explicitly is never a way around its status. The vault's own
+`README.md` is authoritative for its vocabulary (`status`, `activation`,
+`scope`, `cluster`, `favorite`); do not duplicate it here, and no
+category-to-row table exists in this policy or in `crew-dispatch.json` - a
+pick is always this per-task judgment call against the returned shortlist,
+never a lookup keyed only by category.
 
 A vault pick counts against, never adds to, this section's first
 paragraph's ≤2-methodology + ≤1-reference cap - it is one more place that
@@ -387,7 +400,9 @@ resolved path under `$FM_SKILL_VAULT_ROOT` - an absolute path is correct here,
 like the shared worker skill root this is a machine-local cache outside any
 worktree, not the primary-checkout path step 3 forbids - plus the same
 read-and-apply requirement, plus the row's notes - the ninth, tab-separated
-field `bun "$FM_SKILL_VAULT_ROOT/bin/lookup.ts" --id <vault-id>` prints for that
+field `( case $FM_SKILL_VAULT_ROOT in /*) :;; *) exit 1;; esac; CDPATH=''
+cd -P -- "$FM_SKILL_VAULT_ROOT" && env -u BUN_OPTIONS -u NODE_OPTIONS bun
+./bin/lookup.ts --id <vault-id> )` prints for that
 row - as the adaptation/usage caveat when one exists. Read notes from that
 field only; never grep or otherwise parse `catalog.yaml` directly for it.
 

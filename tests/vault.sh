@@ -27,6 +27,13 @@ fail() { printf 'FAIL - %s\n' "$1" >&2; failed=1; }
 check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected '$2', got '$3')"; fi; }
 contains() { case $2 in *"$3"*) pass "$1" ;; *) fail "$1 (missing '$3' in '$2')" ;; esac; }
 not_contains() { case $2 in *"$3"*) fail "$1 (unexpectedly found '$3' in '$2')" ;; *) pass "$1" ;; esac; }
+# physical <dir> -> its CDPATH-empty `cd -P`-resolved absolute path, exactly
+# the semantics install.sh's own canonical_dir() now applies at publish
+# time: an expected-root assertion must compare against this, never the raw
+# $TMP_ROOT spelling, once a symlinked tmpdir (e.g. macOS /var -> /private/var)
+# is in play. The published value is the physically resolved one; the input
+# spelling is intentionally never restored.
+physical() { ( CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P ); }
 
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-vault-test.XXXXXX") || exit 1
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -140,7 +147,7 @@ contains '1 fresh run: reports the clone' "$out" "cloned $VAULT_REPO_ID"
 check '1 vault cache: cloned at the pinned commit' "$V_SHA1" "$(git -C "$VAULT_DEST_fresh" rev-parse HEAD 2>/dev/null || printf '')"
 check '1 vault cache: detached HEAD, never a branch' HEAD "$(git -C "$VAULT_DEST_fresh" symbolic-ref -q --short HEAD 2>/dev/null || printf HEAD)"
 contains '1 env file: exports FM_SKILL_VAULT_ROOT at the commit-qualified cache path' \
-  "$(cat "$TMP_ROOT/inst-env-fresh" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$VAULT_DEST_fresh\""
+  "$(cat "$TMP_ROOT/inst-env-fresh" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$(physical "$VAULT_DEST_fresh")\""
 not_contains '1 env file: the old ambiguous FM_VAULT_ROOT name is gone' \
   "$(cat "$TMP_ROOT/inst-env-fresh" 2>/dev/null)" 'FM_VAULT_ROOT='
 not_contains '1 global skills: the vault is never symlinked into the shared skill root' \
@@ -181,7 +188,7 @@ check '4 new pin: the new commit directory is at that exact commit' "$V_SHA2" "$
 check '4 new pin: the previous commit directory is still at its own commit' "$V_SHA1" "$(git -C "$VAULT_DEST_fresh" rev-parse HEAD 2>/dev/null || printf '')"
 check '4 new pin: the previous commit directory is byte-stable (clean tree)' '' "$(git -C "$VAULT_DEST_fresh" status --porcelain 2>/dev/null)"
 contains '4 new pin: env repoints to the new commit directory' \
-  "$(cat "$TMP_ROOT/inst-env-fresh" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$VAULT_DEST2_fresh\""
+  "$(cat "$TMP_ROOT/inst-env-fresh" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$(physical "$VAULT_DEST2_fresh")\""
 printf '%s\t%s\n' "$VAULT_REPO_ID" "$V_SHA1" > "$INST_CFG/skills/vault.lock"
 
 # --- 4b. A commit directory not at its own commit is refused, never re-pinned
@@ -545,7 +552,7 @@ cp -R "$INST_CFG" "$INST_CFG_LASTGOOD"
 out14a=$(run_fake_install_cfg lastgood "$INST_CFG_LASTGOOD"); code14a=$?
 check '14 last known-good: first install exit code is 0' 0 "$code14a"
 contains '14 last known-good: pin A is published' \
-  "$(cat "$TMP_ROOT/inst-env-lastgood" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$GOOD_A\""
+  "$(cat "$TMP_ROOT/inst-env-lastgood" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$(physical "$GOOD_A")\""
 printf '%s\t%s\n' "$VAULT_REPO_ID" "$V_SHA2" > "$INST_CFG_LASTGOOD/skills/vault.lock"
 BAD_B="$TMP_ROOT/inst-vault-cache-lastgood/test-owner-test-vault/$V_SHA2"
 mkdir -p "$BAD_B/.git"
@@ -555,7 +562,7 @@ if [ "$code14b" -eq 0 ]; then fail '14 last known-good: failing run expected non
 not_contains '14 last known-good: the invalid new pin is never published' \
   "$(cat "$TMP_ROOT/inst-env-lastgood" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$BAD_B\""
 contains '14 last known-good: the previously verified root is preserved' \
-  "$(cat "$TMP_ROOT/inst-env-lastgood" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$GOOD_A\""
+  "$(cat "$TMP_ROOT/inst-env-lastgood" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$(physical "$GOOD_A")\""
 
 # --- 15. Removing skills/vault.lock disables the vault for real ------------
 # Last-known-good exists to survive a broken candidate for a vault that is
@@ -568,7 +575,7 @@ cp -R "$INST_CFG" "$INST_CFG_NOLOCK15"
 out15a=$(run_fake_install_cfg nolock15 "$INST_CFG_NOLOCK15"); code15a=$?
 check '15 lock removed: first install exit code is 0' 0 "$code15a"
 contains '15 lock removed: the configured vault root is published first' \
-  "$(cat "$TMP_ROOT/inst-env-nolock15" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$GOOD_15\""
+  "$(cat "$TMP_ROOT/inst-env-nolock15" 2>/dev/null)" "FM_SKILL_VAULT_ROOT=\"$(physical "$GOOD_15")\""
 rm -f "$INST_CFG_NOLOCK15/skills/vault.lock"
 out15b=$(run_fake_install_cfg nolock15 "$INST_CFG_NOLOCK15"); code15b=$?
 check '15 lock removed: reconcile exit code is 0' 0 "$code15b"
@@ -583,6 +590,50 @@ doc15=$(FM_VAULT_LOCK="$INST_CFG_NOLOCK15/skills/vault.lock" FM_VAULT_CACHE="$TM
   FM_SKILLS_ROOT="$TMP_ROOT/doc-skills-15" HOME="$TMP_ROOT/doc-home-15" \
   FIRSTMATE_ROOT="$TMP_ROOT/doc-no-firstmate" FM_HOME="$TMP_ROOT/doc-fm-home" "$CONFIG_ROOT/bin/fm-doctor" 2>&1)
 contains '15 lock removed: doctor reports the vault as not configured' "$doc15" 'NOT_APPLICABLE vault.pin'
+
+# --- 16. A relative FM_VAULT_CACHE (a supported override) publishes an
+#     absolute, physically-resolved FM_SKILL_VAULT_ROOT - never a value
+#     whose meaning silently depends on which cwd a later caller happens to
+#     be in (the guarded lookup command in primary-policy.md refuses a
+#     non-absolute root outright, so a legitimate relative-cache install
+#     must not regress into that refusal). ----------------------------------
+INST_CFG_RELCACHE="$TMP_ROOT/inst-cfg-relcache16"
+cp -R "$INST_CFG" "$INST_CFG_RELCACHE"
+printf '%s\t%s\n' "$VAULT_REPO_ID" "$V_SHA1" > "$INST_CFG_RELCACHE/skills/vault.lock"
+RELCACHE_CWD="$TMP_ROOT/inst-relcache16-cwd"
+mkdir -p "$RELCACHE_CWD" "$TMP_ROOT/inst-dest-relcache16" "$TMP_ROOT/inst-home-relcache16"
+write_gitconfig "$TMP_ROOT/inst-home-relcache16"
+printf 'fixture\n' > "$TMP_ROOT/inst-dest-relcache16/AGENTS.md"
+out16=$( cd "$RELCACHE_CWD" && \
+  PATH="$INST_FAKE_BIN:$SYS_BIN" \
+  HOME="$TMP_ROOT/inst-home-relcache16" \
+  FIRSTMATE_ROOT="$TMP_ROOT/inst-dest-relcache16" \
+  FM_HOME="$TMP_ROOT/inst-fm-home-relcache16" \
+  FM_CONFIG_ENV="$TMP_ROOT/inst-env-relcache16" \
+  FM_SKILLS_ROOT="$TMP_ROOT/inst-skills-relcache16" \
+  FM_SKILL_CACHE="$TMP_ROOT/inst-skill-cache-relcache16" \
+  FM_VAULT_CACHE="relvault-cache-16" \
+  FM_BIN_DIR="$TMP_ROOT/inst-bin-dir-relcache16" \
+  PI_CODING_AGENT_DIR="$TMP_ROOT/inst-pi-agent-relcache16" \
+  XDG_CONFIG_HOME="$TMP_ROOT/inst-xdg-relcache16" \
+  "$INST_CFG_RELCACHE/install.sh" 2>&1 ); code16=$?
+check '16 relative FM_VAULT_CACHE: exit code is 0' 0 "$code16"
+PUBLISHED16=$(sed -n 's/^FM_SKILL_VAULT_ROOT="\(.*\)"$/\1/p' "$TMP_ROOT/inst-env-relcache16" 2>/dev/null | head -1)
+case $PUBLISHED16 in
+  /*) pass '16 relative FM_VAULT_CACHE: published FM_SKILL_VAULT_ROOT is nonetheless an absolute path' ;;
+  *) fail "16 relative FM_VAULT_CACHE: published FM_SKILL_VAULT_ROOT is not absolute: '$PUBLISHED16'" ;;
+esac
+check '16 relative FM_VAULT_CACHE: the absolute root physically resolves to inside the relative cache dir' \
+  "$(physical "$RELCACHE_CWD")/relvault-cache-16/test-owner-test-vault/$V_SHA1" "$PUBLISHED16"
+
+# --- 16b. The published root resolves correctly from a THIRD, unrelated
+#     caller cwd - the whole point of canonicalizing at publish time. ------
+mkdir -p "$TMP_ROOT/inst-relcache16-elsewhere"
+out16b=$( cd "$TMP_ROOT/inst-relcache16-elsewhere" && \
+  FM_SKILL_VAULT_ROOT="$PUBLISHED16" \
+  bash -c '( case $FM_SKILL_VAULT_ROOT in /*) :;; *) exit 1;; esac; CDPATH="" cd -P -- "$FM_SKILL_VAULT_ROOT" && test -f ./catalog.yaml )' \
+); code16b=$?
+check '16b relative-cache install: the published root resolves correctly from an unrelated caller cwd' 0 "$code16b"
 
 # =============================================================================
 # B. bin/fm-doctor: vault.pin / vault.no_global_leak state coverage
@@ -822,6 +873,151 @@ if command -v bun >/dev/null 2>&1; then
 else
   pass 'B9a hostile cwd, invalid catalog: skipped (bun not on PATH)'
   pass 'B9b hostile cwd, healthy pin: skipped (bun not on PATH)'
+fi
+
+# =============================================================================
+# C. primary-policy.md's documented specialist-vault lookup commands actually
+#    resist a hostile caller cwd/environment, not merely describe doing so.
+#    Extraction is anchored on the stable, documented CLI usage phrase
+#    (`lookup.ts --category <CATEGORY>` / `lookup.ts --id <vault-id>`), never
+#    on this fix's own implementation wording - an equally-safe future
+#    refactor of the guard/cd/env-scrub internals must not fail this test on
+#    source text; only a missing or ambiguous (not exactly one) match does.
+#    Extraction failure is a hard FAIL here, never a silent skip. See
+#    firstmate/primary-policy.md "Specialist skill vault" for the prose this
+#    tests. Never covers the vault's own catalog/selection semantics (see
+#    header note above) - only that the documented command runs the real
+#    fixture, never a hostile preload, from a hostile caller cwd/environment.
+# =============================================================================
+if command -v bun >/dev/null 2>&1; then
+
+extract_doc_lookup_span() { # <exact documented CLI usage phrase> -> one line per match
+  awk -v phrase="$1" '
+    BEGIN { RS="" }
+    {
+      para = $0
+      gsub(/\n/, " ", para)
+      n = split(para, chunks, phrase)
+      if (n < 2) next
+      pos = 1
+      for (k = 1; k < n; k++) {
+        pos += length(chunks[k])
+        pre = substr(para, 1, pos - 1)
+        start = 0
+        for (i = length(pre); i >= 1; i--) { if (substr(pre, i, 1) == "`") { start = i; break } }
+        post = substr(para, pos + length(phrase))
+        e = index(post, "`")
+        if (start == 0 || e == 0) continue
+        content = substr(para, start + 1, (pos + length(phrase) + e - 1) - (start + 1))
+        print content
+        pos += length(phrase)
+      }
+    }
+  ' "$CONFIG_ROOT/firstmate/primary-policy.md"
+}
+
+C_CAT_MATCHES=$(extract_doc_lookup_span 'lookup.ts --category <CATEGORY>')
+C_ID_MATCHES=$(extract_doc_lookup_span 'lookup.ts --id <vault-id>')
+C_CAT_COUNT=$(printf '%s\n' "$C_CAT_MATCHES" | grep -c .)
+C_ID_COUNT=$(printf '%s\n' "$C_ID_MATCHES" | grep -c .)
+C_CAT_TMPL=$(printf '%s\n' "$C_CAT_MATCHES" | sed -n '1p')
+C_ID_TMPL=$(printf '%s\n' "$C_ID_MATCHES" | sed -n '1p')
+
+c_extraction_ok=1
+if [ "$C_CAT_COUNT" -eq 1 ]; then
+  pass 'C0a extraction: exactly one documented "lookup.ts --category <CATEGORY>" command found'
+else
+  fail "C0a extraction: expected exactly one documented category-lookup command in primary-policy.md, found $C_CAT_COUNT (missing or ambiguous)"
+  c_extraction_ok=0
+fi
+if [ "$C_ID_COUNT" -eq 1 ]; then
+  pass 'C0b extraction: exactly one documented "lookup.ts --id <vault-id>" command found'
+else
+  fail "C0b extraction: expected exactly one documented id-lookup command in primary-policy.md, found $C_ID_COUNT (missing or ambiguous)"
+  c_extraction_ok=0
+fi
+
+if [ "$c_extraction_ok" -eq 1 ]; then
+
+# A disposable fixture standing in for the real vault (never the real cache,
+# never a network clone - same offline principle as sections A/B above):
+# enough of the two-mode --id/--category contract to prove liveness.
+C_FVROOT="$TMP_ROOT/c-fixture-vault"
+mkdir -p "$C_FVROOT/bin"
+cat > "$C_FVROOT/bin/lookup.ts" <<'EOF'
+#!/usr/bin/env bun
+const args = process.argv.slice(2);
+function flag(n){ const i=args.indexOf(n); return i>=0?args[i+1]:undefined; }
+const id = flag("--id");
+const category = flag("--category");
+if (id !== undefined) {
+  if (id === "known:available") { console.log(["known:available","firstmate_candidate","explicit","worker","","fixture","skills/x/SKILL.md","false","fixture notes"].join("\t")); process.exit(0); }
+  console.error(`no row for id ${id}`);
+  process.exit(1);
+}
+if (category !== undefined) {
+  if (category === "NONZERO") {
+    console.log(["fixture:row-a","firstmate_candidate","auto-candidate","worker","NONZERO","fixture","skills/a/SKILL.md","true"].join("\t"));
+    console.log(["fixture:row-b","firstmate_candidate","auto-candidate","worker","NONZERO","fixture","skills/b/SKILL.md","true"].join("\t"));
+  }
+  process.exit(0);
+}
+console.error("usage: bin/lookup.ts --id <id> | --category <CATEGORY>");
+process.exit(2);
+EOF
+printf 'entries: {}\n' > "$C_FVROOT/catalog.yaml"
+
+C_HOSTILE="$TMP_ROOT/c-hostile-cwd"
+mkdir -p "$C_HOSTILE"
+cat > "$C_HOSTILE/pwn.ts" <<'EOF'
+console.log("FORGED\tby-hostile-preload");
+process.exit(0);
+EOF
+cat > "$C_HOSTILE/bunfig.toml" <<'EOF'
+preload = ["./pwn.ts"]
+EOF
+
+C_NEUTRAL="$TMP_ROOT/c-neutral-cwd"
+mkdir -p "$C_NEUTRAL"
+cp "$C_HOSTILE/pwn.ts" "$C_NEUTRAL/pwn.ts"
+
+c_cat_nonzero=${C_CAT_TMPL//<CATEGORY>/NONZERO}
+c_cat_empty=${C_CAT_TMPL//<CATEGORY>/EMPTYCAT}
+c_id_missing=${C_ID_TMPL//<vault-id>/nope:missing}
+c_id_hit=${C_ID_TMPL//<vault-id>/known:available}
+
+# --- RED: the pre-hardening bare invocation, proving the exploit is real ---
+out_red=$( ( cd "$C_HOSTILE" && export FM_SKILL_VAULT_ROOT="$C_FVROOT" && bun "$FM_SKILL_VAULT_ROOT/bin/lookup.ts" --category NONZERO ) 2>&1 )
+contains 'C-red baseline: unguarded bare-bun invocation IS spoofed by a hostile-cwd bunfig.toml preload' "$out_red" 'FORGED'
+out_red2=$( ( cd "$C_NEUTRAL" && export FM_SKILL_VAULT_ROOT="$C_FVROOT" BUN_OPTIONS="--preload $C_NEUTRAL/pwn.ts" && bun "$FM_SKILL_VAULT_ROOT/bin/lookup.ts" --category NONZERO ) 2>&1 )
+contains 'C-red baseline: unguarded bare-bun invocation IS spoofed by inherited BUN_OPTIONS' "$out_red2" 'FORGED'
+
+# --- GREEN: the documented candidate command, same hostile fixtures --------
+out1=$( ( cd "$C_HOSTILE" && export FM_SKILL_VAULT_ROOT="$C_FVROOT" && eval "$c_cat_nonzero" ) 2>&1 ); code1=$?
+check 'C1 hostile bunfig + known-nonzero category: exit code is 0' 0 "$code1"
+contains 'C1 hostile bunfig + known-nonzero category: real fixture rows present (liveness, not just silence)' "$out1" 'fixture:row-a'
+not_contains 'C1 hostile bunfig + known-nonzero category: hostile preload never forges/injects output' "$out1" 'FORGED'
+
+out2=$( ( cd "$C_HOSTILE" && export FM_SKILL_VAULT_ROOT="$C_FVROOT" && eval "$c_cat_empty" ) 2>&1 ); code2=$?
+check 'C2 hostile bunfig + legitimately-empty category: exit code is 0' 0 "$code2"
+check 'C2 hostile bunfig + legitimately-empty category: stdout is empty (paired with C1s liveness, not a bare empty-output assertion)' '' "$out2"
+
+out3=$( ( cd "$C_NEUTRAL" && export FM_SKILL_VAULT_ROOT="$C_FVROOT" BUN_OPTIONS="--preload $C_NEUTRAL/pwn.ts" && eval "$c_cat_nonzero" ) 2>&1 ); code3=$?
+check 'C3 inherited BUN_OPTIONS + known-nonzero category: exit code is 0' 0 "$code3"
+contains 'C3 inherited BUN_OPTIONS + known-nonzero category: real fixture rows present (liveness)' "$out3" 'fixture:row-a'
+not_contains 'C3 inherited BUN_OPTIONS + known-nonzero category: BUN_OPTIONS preload never forges/injects output' "$out3" 'FORGED'
+
+out4=$( ( cd "$C_HOSTILE" && export FM_SKILL_VAULT_ROOT="$C_FVROOT" && eval "$c_id_missing" ) 2>&1 ); code4=$?
+check 'C4 hostile bunfig + missing id: exit code is 1' 1 "$code4"
+contains 'C4 hostile bunfig + missing id: real not-found diagnostic reaches stderr' "$out4" 'no row for id'
+not_contains 'C4 hostile bunfig + missing id: hostile preload never forges/injects output' "$out4" 'FORGED'
+
+out5=$( ( cd "$C_HOSTILE" && export FM_SKILL_VAULT_ROOT="$C_FVROOT" && eval "$c_id_hit" ) 2>&1 ); code5=$?
+check 'C5 hostile bunfig + available id: exit code is 0' 0 "$code5"
+contains 'C5 hostile bunfig + available id: real fixture row returned' "$out5" 'known:available'
+not_contains 'C5 hostile bunfig + available id: hostile preload never forges/injects output' "$out5" 'FORGED'
+
+fi
 fi
 
 printf '\nVAULT TESTS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"

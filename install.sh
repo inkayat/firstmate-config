@@ -172,11 +172,35 @@ EOF
   fi
 }
 
-vault_publishable_root() { # -> the only vault root safe to publish right now
-  local previous state
+# canonical_dir <dir> -> the physical absolute path of an existing directory.
+#   A relative FM_VAULT_CACHE (a supported override) would otherwise publish
+#   a relative FM_SKILL_VAULT_ROOT whose meaning silently depends on
+#   whatever cwd a later reader happens to be in - the exact ambiguity the
+#   consuming lookup command in primary-policy.md now refuses outright.
+#   Resolving physically here, once, at the one trusted place this value is
+#   ever written, keeps every later reader's contract simple: an absolute,
+#   symlink/`..`-free path, from any caller cwd. No raw-path fallback: a
+#   directory fm_vault_verify just confirmed exists should always resolve,
+#   so a failure here (race, permission) is real and must propagate as a
+#   failure, never silently republish an unresolved/relative path.
+canonical_dir() {
+  ( CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P )
+}
+
+vault_publishable_root() { # -> the only vault root safe to publish right now.
+  #   Returns 1 (distinct from the normal 0-with-empty-stdout "nothing
+  #   configured" case) when a verified candidate's physical path could not
+  #   be resolved - the caller must treat that as a real failure, never
+  #   silently publish empty/relative as if the vault were just unconfigured.
+  local previous state dir
   if [ "$VAULT_LOCK_STATE" -eq 0 ]; then
     state=$(fm_vault_verify "$FM_VAULT_DIR" "$FM_VAULT_COMMIT")
-    case $state in healthy|unverified_catalog) printf '%s' "$FM_VAULT_DIR"; return ;; esac
+    case $state in
+      healthy|unverified_catalog)
+        dir=$(canonical_dir "$FM_VAULT_DIR") || return 1
+        printf '%s' "$dir"
+        return 0 ;;
+    esac
   fi
   # No lock at all means the vault is deliberately unconfigured: publish
   # nothing, so removing skills/vault.lock actually disables it instead of
@@ -188,28 +212,39 @@ vault_publishable_root() { # -> the only vault root safe to publish right now
   previous=$([ ! -f "$ENV_FILE" ] || sed -n 's/^FM_SKILL_VAULT_ROOT="\(.*\)"$/\1/p' "$ENV_FILE" | head -1)
   [ -n "$previous" ] || return 0
   state=$(fm_vault_verify "$previous" "$(basename "$previous")")
-  case $state in healthy|unverified_catalog) printf '%s' "$previous" ;; esac
+  case $state in
+    healthy|unverified_catalog)
+      dir=$(canonical_dir "$previous") || return 1
+      printf '%s' "$dir" ;;
+  esac
 }
 
-publish_vault_root() { # <verified-dir>, called only after verification
-  [ "$1" != "$VAULT_PUBLISHED_ROOT" ] || return 0
-  case $(write_env_file "$1") in
+publish_vault_root() { # <verified-dir>, called only after verification.
+  #   Returns 1 if the physical path cannot be resolved; the caller must
+  #   failf, never treat that as a successful (if silent) publish.
+  local dir
+  dir=$(canonical_dir "$1") || return 1
+  [ "$dir" != "$VAULT_PUBLISHED_ROOT" ] || return 0
+  case $(write_env_file "$dir") in
     ok) : ;;
-    changed) changedf "published FM_SKILL_VAULT_ROOT=$1" ;;
-    drift) driftf "publish FM_SKILL_VAULT_ROOT=$1 in $ENV_FILE" ;;
+    changed) changedf "published FM_SKILL_VAULT_ROOT=$dir" ;;
+    drift) driftf "publish FM_SKILL_VAULT_ROOT=$dir in $ENV_FILE" ;;
     *) failf "cannot publish FM_SKILL_VAULT_ROOT in $ENV_FILE" ;;
   esac
-  VAULT_PUBLISHED_ROOT=$1
+  VAULT_PUBLISHED_ROOT=$dir
 }
 
 step '4. machine-local environment'
-VAULT_PUBLISHED_ROOT=$(vault_publishable_root)
-case $(write_env_file "$VAULT_PUBLISHED_ROOT") in
-  ok) ok "$ENV_FILE" ;;
-  drift) driftf "write $ENV_FILE" ;;
-  changed) changedf "wrote $ENV_FILE" ;;
-  *) failf "cannot write $ENV_FILE" ;;
-esac
+if VAULT_PUBLISHED_ROOT=$(vault_publishable_root); then
+  case $(write_env_file "$VAULT_PUBLISHED_ROOT") in
+    ok) ok "$ENV_FILE" ;;
+    drift) driftf "write $ENV_FILE" ;;
+    changed) changedf "wrote $ENV_FILE" ;;
+    *) failf "cannot write $ENV_FILE" ;;
+  esac
+else
+  failf "specialist skill vault: a verified cache directory's physical path could not be resolved for publication"
+fi
 
 # --- 5. runtime backend -----------------------------------------------------
 step '5. runtime backend'
@@ -491,10 +526,10 @@ elif [ -e "$FM_VAULT_DIR" ]; then
   case $vault_state in
     healthy)
       printf '  ok      %s at %s\n' "$FM_VAULT_REPO" "${FM_VAULT_COMMIT:0:12}"
-      publish_vault_root "$FM_VAULT_DIR" ;;
+      publish_vault_root "$FM_VAULT_DIR" || failf "$FM_VAULT_REPO cache verified but its physical path could not be resolved for publication" ;;
     unverified_catalog)
       warn "$(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")"
-      publish_vault_root "$FM_VAULT_DIR" ;;
+      publish_vault_root "$FM_VAULT_DIR" || failf "$FM_VAULT_REPO cache verified but its physical path could not be resolved for publication" ;;
     *) failf "$FM_VAULT_REPO cache $(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")" ;;
   esac
 elif would "clone $FM_VAULT_REPO into $FM_VAULT_DIR, pinned to $FM_VAULT_COMMIT"; then
@@ -512,7 +547,7 @@ elif would "clone $FM_VAULT_REPO into $FM_VAULT_DIR, pinned to $FM_VAULT_COMMIT"
         if mv "$vault_stage" "$FM_VAULT_DIR"; then
           changedf "cloned $FM_VAULT_REPO into $FM_VAULT_DIR, pinned to ${FM_VAULT_COMMIT:0:12}"
           [ "$vault_state" = healthy ] || warn "$(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")"
-          publish_vault_root "$FM_VAULT_DIR"
+          publish_vault_root "$FM_VAULT_DIR" || failf "$FM_VAULT_REPO clone verified but its physical path could not be resolved for publication"
         else
           failf "could not move the verified clone into $FM_VAULT_DIR"
           rm -rf "$vault_stage"
