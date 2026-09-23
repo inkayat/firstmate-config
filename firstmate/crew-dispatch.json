@@ -25,9 +25,14 @@
           "harness": "omp",
           "model": "anthropic/claude-haiku-4-5",
           "effort": "low"
+        },
+        {
+          "harness": "omp",
+          "model": "openai-codex/gpt-5.6-luna",
+          "effort": "low"
         }
       ],
-      "why": "Ordinary in-repo recon is cheap, bounded work: Haiku at low effort reads and reports without needing deep synthesis - never Sol, Astra, or Opus for ordinary exploration; those buy nothing a careful read does not already give here. EXPLORE never leaves this repository's own source; RESEARCH is aimed at documentation, APIs, or code outside it - that is the line between them."
+      "why": "Ordinary in-repo recon is cheap, bounded work: Haiku at low effort reads and reports without needing deep synthesis. Luna at low effort is a genuinely interchangeable same-tier peer here too, the same capacity-aware pairing QUICK already uses, so FirstMate's quota-array procedure may resolve between them - never Sol, Astra, or Opus for ordinary exploration; those buy nothing a careful read does not already give here. EXPLORE never leaves this repository's own source; RESEARCH is aimed at documentation, APIs, or code outside it - that is the line between them."
     },
     {
       "category": "EXPLORE",
@@ -59,11 +64,11 @@
       "use": [
         {
           "harness": "pi",
-          "model": "openai-codex/gpt-5.6-sol",
+          "model": "openai-codex/gpt-6-sol",
           "effort": "medium"
         }
       ],
-      "why": "Sol on Pi is the deliberate route once Pi's own tooling is the better fit for the research target: it fits Pi's tooling profile for this specific job better than a cold OMP session would, at the same medium effort as the OMP default."
+      "why": "openai-codex/gpt-6-sol directly replaces the retired gpt-5.6-sol here. Sol on Pi is the deliberate route once Pi's own tooling is the better fit for the research target: it fits Pi's tooling profile for this specific job better than a cold OMP session would, at the same medium effort as the OMP default."
     },
     {
       "category": "REVIEW",
@@ -99,7 +104,19 @@
           "effort": "high"
         }
       ],
-      "why": "Opus 5.5 at high effort is reserved for review where the cost of a missed defect is highest - release-critical, auth/security, payment, migration, or otherwise high-blast-radius changes. Specialist skills such as Thermos remain independently selectable on top of this lane through the normal skill-selection path (primary-policy.md section 2); picking one never starts a second orchestration framework or supervisor identity."
+      "why": "Opus 5.5 at high effort is reserved for review where the cost of a missed defect is highest - release-critical, auth/security, payment, migration, or otherwise high-blast-radius changes. Specialist skills such as Thermos remain independently selectable on top of this lane through the normal skill-selection path (primary-policy.md section 2); picking one never starts a second orchestration framework or supervisor identity. A cross-family second reviewer is a separate, more specific rule below, reached for only when an independent-family second opinion is genuinely warranted in addition to this primary review, never a default."
+    },
+    {
+      "category": "REVIEW",
+      "when": "the same release-critical or high-blast-radius REVIEW work above, specifically when an independent, cross-family second reviewer is warranted in addition to the Opus 5.5 primary review - the highest-stakes cases where a single reviewer's model family should not be the only check. This is a separate, more specific rule within REVIEW, not a quota-resolved peer of the primary high-risk case: pick it only when that additional independent-family need genuinely applies, not by default.",
+      "use": [
+        {
+          "harness": "pi",
+          "model": "openai-codex/gpt-6-sol",
+          "effort": "xhigh"
+        }
+      ],
+      "why": "openai-codex/gpt-6-sol on Pi is REVIEW's cross-family second reviewer, reached for only when the highest-stakes case above genuinely needs an independent, differently-sourced check in addition to the Opus 5.5 primary review, never as a routine substitute for it."
     },
     {
       "category": "ARCHITECTURE",
@@ -124,15 +141,15 @@
         },
         {
           "harness": "pi",
-          "model": "openai-codex/gpt-6-astra",
+          "model": "openai-codex/gpt-6-sol",
           "effort": "xhigh"
         }
       ],
-      "why": "anthropic/claude-opus-5-5 on OMP at xhigh and openai-codex/gpt-6-astra on Pi at xhigh are active xhigh peers for exceptional architecture; FirstMate resolves between them through the quota-array procedure after this rule matches. Astra especially serves as an independent second opinion, on a different harness and model family from the primary OMP session."
+      "why": "anthropic/claude-opus-5-5 on OMP at xhigh and openai-codex/gpt-6-sol on Pi at xhigh are active xhigh peers for exceptional architecture; FirstMate resolves between them through the quota-array procedure after this rule matches. Sol especially serves as an independent second opinion, on a different harness and model family from the primary OMP session, at the lowest cost that still satisfies that independence. openai-codex/gpt-6-astra remains reserved for the separate, more specific ultra-exceptional rule below, reached for only when even this Sol pairing is not enough - never a routine peer here."
     },
     {
-      "category": "TENTH-MAN",
-      "when": "deliberate adversarial challenge: an independent second opinion, a stress test of a plan's assumptions and failure modes, or scrutiny of a completion claim before an expensive or hard-to-reverse commitment - specifically when the work under review was primarily produced by a Claude/Anthropic model. Use role tenth-man. Never routine; risk-triggered or explicitly requested. If the goal is ordinary correctness/maintainability feedback rather than adversarial challenge, that is REVIEW instead; if the goal is a forward structural recommendation rather than challenging an existing one, that is ARCHITECTURE instead.",
+      "category": "ARCHITECTURE",
+      "when": "the same exceptional ARCHITECTURE work above, specifically on the rare occasion even the Opus 5.5/Sol exceptional pairing above is not enough: the decision is so consequential or so deeply contested that the strongest available independent reasoning is warranted regardless of cost. This is a separate, more specific rule within ARCHITECTURE, not a quota-resolved peer of either case above: pick it only when that ultra-exceptional condition genuinely applies, never by default and never merely because the exceptional rule already matched.",
       "use": [
         {
           "harness": "pi",
@@ -140,7 +157,31 @@
           "effort": "xhigh"
         }
       ],
-      "why": "Model-family diversity is the whole point: when the primary author is a Claude/Anthropic model, the challenger runs on Pi with Astra, a different provider and a different harness from the OMP session that likely produced the work. TENTH-MAN versus DEEP: DEEP investigates why something is broken; TENTH-MAN challenges whether a plan or a completion claim actually holds, broken or not."
+      "why": "openai-codex/gpt-6-astra on Pi at xhigh is reached for only on this narrowest, most consequential tier of architecture decision, once the Opus 5.5/Sol exceptional pairing above is not enough. Astra stays limited to this and this configuration's other genuinely exceptional lanes; it is never a routine architecture default."
+    },
+    {
+      "category": "TENTH-MAN",
+      "when": "deliberate adversarial challenge: an independent second opinion, a stress test of a plan's assumptions and failure modes, or scrutiny of a completion claim before an expensive or hard-to-reverse commitment - specifically when the work under review was primarily produced by a Claude/Anthropic model. Use role tenth-man. Never routine; risk-triggered or explicitly requested. If the goal is ordinary correctness/maintainability feedback rather than adversarial challenge, that is REVIEW instead; if the goal is a forward structural recommendation rather than challenging an existing one, that is ARCHITECTURE instead.",
+      "use": [
+        {
+          "harness": "pi",
+          "model": "openai-codex/gpt-6-sol",
+          "effort": "xhigh"
+        }
+      ],
+      "why": "Model-family diversity is the whole point: when the primary author is a Claude/Anthropic model, the challenger runs on Pi with GPT-6 Sol, a different provider and a different harness from the OMP session that likely produced the work, at the lowest cost that still satisfies family diversity. GPT-6 Astra remains available as a separate, more specific escalation below for the most critical or unresolved cases, never a routine default. TENTH-MAN versus DEEP: DEEP investigates why something is broken; TENTH-MAN challenges whether a plan or a completion claim actually holds, broken or not."
+    },
+    {
+      "category": "TENTH-MAN",
+      "when": "the same deliberate adversarial-challenge TENTH-MAN work above, specifically when the primary author is still a Claude/Anthropic model and the Sol challenge above leaves the matter critical or genuinely unresolved - not merely difficult, but a case where the stakes or the ambiguity demand the strongest available cross-family challenger. This is a separate, more specific rule within TENTH-MAN, not a routine default: pick it only after the Sol challenge above has genuinely left the matter unresolved, never as a first choice.",
+      "use": [
+        {
+          "harness": "pi",
+          "model": "openai-codex/gpt-6-astra",
+          "effort": "xhigh"
+        }
+      ],
+      "why": "openai-codex/gpt-6-astra on Pi is reached for only as the most critical or unresolved escalation once the Sol challenge above is not enough, preserving TENTH-MAN's Claude-primary family-diversity route while keeping Astra an explicit, rarely-selected escalation rather than a routine default."
     },
     {
       "category": "TENTH-MAN",
@@ -200,11 +241,11 @@
           "effort": "high"
         }
       ],
-      "why": "Opus 5.5 here is difficult execution, not difficult reasoning - that is what separates this escalation from DEEP's Opus/Astra lanes. Opus 5.5 directly replaces Opus 5 in this lane. Escalate to xhigh, by explicit captain choice, only when even high effort is not enough."
+      "why": "Opus 5.5 here is difficult execution, not difficult reasoning - that is what separates this escalation from DEEP's Opus/Sol/Astra lanes. Opus 5.5 directly replaces Opus 5 in this lane. Escalate to xhigh, by explicit captain choice, only when even high effort is not enough."
     },
     {
       "category": "DEEP",
-      "when": "subtle root-cause work that calls for read-only diagnosis first: an intermittent bug, a concurrency or race condition, an algorithmic problem, a security or data-integrity issue, highly coupled reasoning across a system, or a problem that has already survived repeated attempts, where the immediate deliverable is finding the root cause rather than fixing it yet (the scout form). This is a difficulty-of-reasoning test, not a size test - many files touched does not imply DEEP, and a single concurrency bug can. If the work is mostly settled, broad execution rather than an unsettled reasoning problem, that is IMPLEMENT-LARGE instead; if the deliverable is a forward structural recommendation rather than a diagnosis, that is ARCHITECTURE instead; if the deliverable is adversarial challenge of someone else's plan or claim rather than your own diagnosis, that is TENTH-MAN instead. If Opus 5.5's own diagnosis pass needs an independent alternative or escalation, that is the Astra-diagnosis rule below instead.",
+      "when": "subtle root-cause work that calls for read-only diagnosis first: an intermittent bug, a concurrency or race condition, an algorithmic problem, a security or data-integrity issue, highly coupled reasoning across a system, or a problem that has already survived repeated attempts, where the immediate deliverable is finding the root cause rather than fixing it yet (the scout form). This is a difficulty-of-reasoning test, not a size test - many files touched does not imply DEEP, and a single concurrency bug can. If the work is mostly settled, broad execution rather than an unsettled reasoning problem, that is IMPLEMENT-LARGE instead; if the deliverable is a forward structural recommendation rather than a diagnosis, that is ARCHITECTURE instead; if the deliverable is adversarial challenge of someone else's plan or claim rather than your own diagnosis, that is TENTH-MAN instead. If Opus 5.5's own diagnosis pass needs an independent alternative or escalation, that is the Sol-escalation rule below instead.",
       "use": [
         {
           "harness": "omp",
@@ -212,7 +253,7 @@
           "effort": "xhigh"
         }
       ],
-      "why": "OMP + Opus 5.5 at xhigh is the active, single-candidate primary for the read-only diagnosis form: find the root cause, do not fix it yet. This is not a quota-resolved peer of the Astra-escalation rule below - Opus 5.5 is the default diagnosis route, Astra is reached for only when that rule's escalation condition genuinely applies."
+      "why": "OMP + Opus 5.5 at xhigh is the active, single-candidate primary for the read-only diagnosis form: find the root cause, do not fix it yet. This is not a quota-resolved peer of the Sol-escalation rule below - Opus 5.5 is the default diagnosis route, Sol is reached for only when that rule's escalation condition genuinely applies."
     },
     {
       "category": "DEEP",
@@ -220,15 +261,15 @@
       "use": [
         {
           "harness": "pi",
-          "model": "openai-codex/gpt-6-astra",
+          "model": "openai-codex/gpt-6-sol",
           "effort": "xhigh"
         }
       ],
-      "why": "openai-codex/gpt-6-astra on Pi is the independent alternative/escalation for DEEP diagnosis, deliberately kept on a different harness and model family from the OMP Opus 5.5 primary above, preserving the existing Pi placement for Astra in the diagnosis form."
+      "why": "openai-codex/gpt-6-sol on Pi is the independent alternative/escalation for DEEP diagnosis, deliberately kept on a different harness and model family from the OMP Opus 5.5 primary above, preserving the existing Pi placement for this escalation in the diagnosis form. openai-codex/gpt-6-astra remains available only through the separate, more specific exceptional rule below, once even this Sol escalation leaves the diagnosis unresolved."
     },
     {
       "category": "DEEP",
-      "when": "the same reasoning-difficulty DEEP work above, once the difficult implementation and its supporting tools are clean enough to diagnose and fix in one session (the ship form), rather than requiring a separate read-only diagnosis pass first. If the Opus 5.5 ship pass leaves the problem unresolved, that is the Astra-ship rule below instead.",
+      "when": "the same reasoning-difficulty DEEP work above, once the difficult implementation and its supporting tools are clean enough to diagnose and fix in one session (the ship form), rather than requiring a separate read-only diagnosis pass first. If the Opus 5.5 ship pass leaves the problem unresolved, that is the Sol second-hypothesis rule below instead.",
       "use": [
         {
           "harness": "omp",
@@ -236,7 +277,7 @@
           "effort": "xhigh"
         }
       ],
-      "why": "OMP + Opus 5.5 at xhigh is the active, single-candidate primary once diagnosis and the difficult implementation belong in the same mutating session. This is not a quota-resolved peer of the Astra second-hypothesis rule below - Opus 5.5 runs first, Astra is reached for only after that rule's condition genuinely applies."
+      "why": "OMP + Opus 5.5 at xhigh is the active, single-candidate primary once diagnosis and the difficult implementation belong in the same mutating session. This is not a quota-resolved peer of the Sol second-hypothesis rule below - Opus 5.5 runs first, Sol is reached for only after that rule's condition genuinely applies."
     },
     {
       "category": "DEEP",
@@ -244,11 +285,23 @@
       "use": [
         {
           "harness": "omp",
+          "model": "openai-codex/gpt-6-sol",
+          "effort": "xhigh"
+        }
+      ],
+      "why": "openai-codex/gpt-6-sol on OMP is reached for only as a second hypothesis once the Opus 5.5 ship pass above leaves the problem unresolved, preserving the existing OMP placement for this escalation in the ship form. openai-codex/gpt-6-astra remains available only through the separate, more specific exceptional rule below, once even this Sol second hypothesis leaves the problem unresolved."
+    },
+    {
+      "category": "DEEP",
+      "when": "the same reasoning-difficulty DEEP work above, in either the scout or ship form, specifically as the last escalation once the relevant Sol escalation above (scout diagnosis or ship second hypothesis) has already run and the problem remains genuinely unresolved. This is a separate, more specific rule within DEEP, not a routine default and not a quota-resolved peer of any rule above: pick it only after a Sol escalation has genuinely failed to resolve the problem, never as a first or second choice.",
+      "use": [
+        {
+          "harness": "pi",
           "model": "openai-codex/gpt-6-astra",
           "effort": "xhigh"
         }
       ],
-      "why": "openai-codex/gpt-6-astra on OMP is reached for only as a second hypothesis once the Opus 5.5 ship pass above leaves the problem unresolved, preserving the existing OMP placement for Astra in the ship form."
+      "why": "openai-codex/gpt-6-astra on Pi is DEEP's last escalation, reached for only once the Opus 5.5 primary and the Sol escalation above have both failed to resolve the problem. Astra stays limited to this and this configuration's other genuinely exceptional lanes across both the scout and ship forms; it is never a routine DEEP default."
     },
     {
       "category": "UI/BROWSER",

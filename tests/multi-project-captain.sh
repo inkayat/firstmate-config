@@ -160,7 +160,7 @@ printf 'test\n' > "$fake_firstmate/.omp/extensions/fm-primary-turnend-guard.ts"
 cat > "$fake_bin/omp" <<'SH'
 #!/usr/bin/env bash
 [ "${1:-}" = models ] || exit 64
-printf '{"models":[{"provider":"openai-codex","id":"gpt-5.6-sol","reasoning":true,"thinking":["high"]}]}\n'
+printf '{"models":[{"provider":"openai-codex","id":"gpt-6-sol","reasoning":true,"thinking":["medium"]}]}\n'
 SH
 chmod +x "$fake_bin/omp"
 
@@ -174,7 +174,7 @@ cat > "$fake_bin/pi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --list-models ]; then
   printf 'provider      model        context  max-out  thinking  images\n'
-  printf 'openai-codex  gpt-5.6-sol  1K  1K  yes  no\n'
+  printf 'openai-codex  gpt-6-sol  1K  1K  yes  no\n'
   exit 0
 fi
 if [ "${1:-}" = auth ] && [ "${2:-}" = check ]; then

@@ -151,14 +151,14 @@ wins over the table.
 | Category | Primary route | Role |
 | --- | --- | --- |
 | QUICK | omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-5.6-luna` low - genuinely interchangeable) | senior-fullstack |
-| EXPLORE | omp `anthropic/claude-haiku-4-5` low | senior-fullstack |
-| RESEARCH | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
+| EXPLORE | omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-5.6-luna` low - genuinely interchangeable) | senior-fullstack |
+| RESEARCH | omp `anthropic/claude-sonnet-5` medium (or pi `openai-codex/gpt-6-sol` medium when Pi's own tooling fits the research target better) | senior-fullstack |
 | REVIEW | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
 | ARCHITECTURE | omp `anthropic/claude-opus-5-5` high | architecture |
-| TENTH-MAN | pi `openai-codex/gpt-6-astra` xhigh (Claude-authored work) or omp `anthropic/claude-opus-5-5` xhigh (Astra/OpenAI-authored work) | tenth-man |
+| TENTH-MAN | pi `openai-codex/gpt-6-sol` xhigh (Claude-authored work, escalating to pi `openai-codex/gpt-6-astra` xhigh only when critical/unresolved) or omp `anthropic/claude-opus-5-5` xhigh (Astra/OpenAI-authored work) | tenth-man |
 | IMPLEMENT | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
 | IMPLEMENT-LARGE | omp `anthropic/claude-sonnet-5` high | senior-fullstack |
-| DEEP | omp `anthropic/claude-opus-5-5` xhigh, with Astra xhigh reached only through an explicit single-candidate escalation rule, never a quota peer (Pi for diagnosis, omp for implementation) | senior-fullstack |
+| DEEP | omp `anthropic/claude-opus-5-5` xhigh, with `openai-codex/gpt-6-sol` xhigh reached only through an explicit single-candidate escalation rule (pi for diagnosis, omp for implementation) and `openai-codex/gpt-6-astra` xhigh as the last, most exceptional escalation beyond that - never a quota peer | senior-fullstack |
 | UI/BROWSER | omp `anthropic/claude-sonnet-5` high, escalating to omp `anthropic/claude-opus-5-5` high for deep code-plus-browser work | senior-fullstack |
 | DEFAULT | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
 
@@ -167,15 +167,19 @@ more-specific rules and documented overrides (below) are not fallback pairs;
 they remain explicit so semantic escalation cannot be mistaken for quota
 selection.
 
-`config/crew-dispatch.json` carries twenty-two `rules` entries (ten distinct
-`category` values; EXPLORE, RESEARCH, IMPLEMENT-LARGE, REVIEW,
-ARCHITECTURE, TENTH-MAN, IMPLEMENT, and UI/BROWSER each span two or three
-more-specific rules; DEEP spans four single-candidate conditional rules -
-scout primary, scout Astra escalation, ship primary, ship Astra
-escalation - never a quota-resolved array) plus `default` for the DEFAULT
-catch-all, in the form Firstmate reads at intake, each with the full
-natural-language `when`/`why` text this table compresses. An explicit
-captain choice always wins over it.
+`config/crew-dispatch.json` carries twenty-six `rules` entries (ten distinct
+`category` values; EXPLORE, IMPLEMENT, IMPLEMENT-LARGE, and UI/BROWSER each
+span two more-specific rules; RESEARCH spans two; REVIEW spans four
+(ordinary, complex, high-risk, cross-family second review); ARCHITECTURE
+spans three (ordinary, exceptional, Astra ultra-exceptional); TENTH-MAN
+spans three (Claude-primary Sol, Astra critical escalation,
+OpenAI-primary Opus 5.5); DEEP spans five single-candidate conditional
+rules - scout primary, scout Sol escalation, ship primary, ship Sol
+second-hypothesis, Astra exceptional last escalation - never a
+quota-resolved array) plus `default` for the DEFAULT catch-all, in the
+form Firstmate reads at intake, each with the full natural-language
+`when`/`why` text this table compresses. An explicit captain choice always
+wins over it.
 
 **Effort is not negotiable downward.** Where the table says xhigh, a lane
 that cannot run xhigh does not run at reduced effort; it is reported as
@@ -186,12 +190,16 @@ capacity on this fleet is roughly Claude 20 against GPT 5 - a ratio of about
 4:1, not 20:1 - so ordinary, comparable work defaults to a Claude lane
 (Haiku for QUICK/EXPLORE, Sonnet for RESEARCH/REVIEW/IMPLEMENT/
 IMPLEMENT-LARGE/UI-BROWSER). ARCHITECTURE's exceptional rule reaches for
-Claude Opus 5.5 paired with GPT-6 Astra as active xhigh peers; DEEP instead
-reaches for Opus 5.5 as its single-candidate primary in both the scout and
-ship forms, with Astra configured only as a separate, more specific
-escalation rule so it can never be selected ahead of Opus 5.5 by quota
-resolution. TENTH-MAN enforces model-family diversity directly: it never
-shares a model family with the work it is challenging. Semantic fit is
+Claude Opus 5.5 paired with GPT-6 Sol as active xhigh peers, with GPT-6
+Astra reserved for a further, ultra-exceptional single-candidate
+escalation beyond that pairing; DEEP instead reaches for Opus 5.5 as its
+single-candidate primary in both the scout and ship forms, with Sol
+configured only as a separate, more specific escalation rule (and Astra as
+a further, more specific escalation beyond Sol) so neither can be selected
+ahead of Opus 5.5 by quota resolution. TENTH-MAN enforces model-family
+diversity directly: it never shares a model family with the work it is
+challenging, defaulting to the lower-cost GPT-6 Sol and escalating to GPT-6
+Astra only for the most critical or unresolved cases. Semantic fit is
 decided first; provider availability and capacity only break ties within a
 rule's own listed candidates, never override the category or rule itself.
 
@@ -199,34 +207,43 @@ rule's own listed candidates, never override the category or rule itself.
 FirstMate resolves a matched rule's `use` array through its quota-array
 procedure, so an array contains only candidates intended as semantic peers:
 
-- QUICK pairs Haiku and Luna at low effort.
-- ARCHITECTURE's exceptional rule pairs OMP + Opus 5.5 and Pi + Astra at
+- QUICK and EXPLORE's ordinary rule each pair Haiku and Luna at low effort.
+- ARCHITECTURE's exceptional rule pairs OMP + Opus 5.5 and Pi + Sol at
   xhigh as active quota-resolved peers.
 
-DEEP and UI/BROWSER's escalations are deliberately NOT `use` arrays: DEEP's
-Astra rules and UI/BROWSER's Opus 5.5 rule are each separate,
-single-candidate conditional rules, so an escalation model can never be
-selected ahead of the primary by quota resolution.
+DEEP, TENTH-MAN, REVIEW's cross-family escalation, ARCHITECTURE's
+ultra-exceptional escalation, and UI/BROWSER's escalation are deliberately
+NOT `use` arrays: each Sol/Astra/Opus 5.5 escalation rule in those
+categories is a separate, single-candidate conditional rule, so an
+escalation model can never be selected ahead of the primary by quota
+resolution.
 
 Separate, more-specific rules carry the same `category` value when the
 difference is a semantic trigger rather than a quota choice: EXPLORE's
-harder-reasoning rule, RESEARCH's Pi-tooling-better rule, REVIEW's complex
-and high-risk escalations, ARCHITECTURE's exceptional-decision escalation,
-IMPLEMENT's delicate-implementation escalation, IMPLEMENT-LARGE's
-sustained-execution rule, TENTH-MAN's two author-family conditions,
-UI/BROWSER's deep-code-plus-browser escalation, and DEEP's four
-conditional rules (scout primary, scout Astra escalation, ship primary,
-ship Astra second-hypothesis).
+harder-reasoning rule, RESEARCH's Pi-tooling-better rule, REVIEW's complex,
+high-risk, and cross-family-second-review escalations, ARCHITECTURE's
+exceptional-decision and ultra-exceptional escalations, IMPLEMENT's
+delicate-implementation escalation, IMPLEMENT-LARGE's sustained-execution
+rule, TENTH-MAN's three author-family/escalation conditions,
+UI/BROWSER's deep-code-plus-browser escalation, and DEEP's five
+conditional rules (scout primary, scout Sol escalation, ship primary,
+ship Sol second-hypothesis, Astra exceptional last escalation).
 
-**Opus 5.5 and Astra** stay semantically scoped. Opus 5.5 is difficult
-*execution* for IMPLEMENT-LARGE's sustained-work escalation, and difficult
-*reasoning* for ARCHITECTURE and DEEP; it is also REVIEW's highest-stakes
-escalation, UI/BROWSER's deep-code-plus-browser escalation, and one of
-TENTH-MAN's two family-diversity routes. Astra is ARCHITECTURE's active
-xhigh peer, DEEP's explicit single-candidate escalation (never a quota
-peer there), and TENTH-MAN's route whenever the work under review was
-authored by Claude. Many files touched does not itself select either of
-them; a single hard concurrency bug or a release-critical diff can.
+**Opus 5.5, Sol, and Astra** stay semantically scoped. Opus 5.5 is
+difficult *execution* for IMPLEMENT-LARGE's sustained-work escalation, and
+difficult *reasoning* for ARCHITECTURE and DEEP; it is also REVIEW's
+highest-stakes escalation, UI/BROWSER's deep-code-plus-browser escalation,
+and one of TENTH-MAN's two family-diversity routes. GPT-6 Sol is the
+lower-cost, everyday cross-family independent-challenge route: RESEARCH's
+Pi-tooling-better rule, REVIEW's cross-family second reviewer, one of
+ARCHITECTURE's exceptional active peers, DEEP's diagnosis/ship
+escalations, and TENTH-MAN's default route whenever the work under review
+was authored by Claude. GPT-6 Astra is reserved strictly for each
+category's most extreme, exceptional escalation beyond Sol: ARCHITECTURE's
+ultra-exceptional rule, DEEP's last escalation across both the scout and
+ship forms, and TENTH-MAN's most-critical/unresolved Claude-primary
+escalation. Many files touched does not itself select any of them; a
+single hard concurrency bug or a release-critical diff can.
 
 **Role stays separate from category.** The category table selects
 harness/model/effort; it never selects a role. Only three roles exist
@@ -252,16 +269,20 @@ high-risk escalation, ARCHITECTURE, TENTH-MAN's Astra/OpenAI-authored rule,
 IMPLEMENT-LARGE's sustained-execution escalation (directly replacing Opus
 5), UI/BROWSER's deep-code-plus-browser escalation, and both DEEP forms;
 OMP's catalog reports xhigh support, while Pi exposes no Anthropic provider
-on this machine. Pi therefore carries Astra for DEEP's scout-escalation
-rule and ARCHITECTURE's exceptional rule; DEEP's ship-escalation rule
-keeps Astra on OMP instead, matching the harness its primary rule already
-uses.
-`openai-codex/gpt-5.6-sol` remains the Captain-startup candidate in
-`captain-startup-models.tsv` and RESEARCH's Pi-tooling-better route; that
-chain's Claude Sonnet fallback step is harness-scoped (OMP's own
+on this machine. `openai-codex/gpt-6-sol` directly replaces the retired
+`openai-codex/gpt-5.6-sol` as the Captain-startup candidate in
+`captain-startup-models.tsv` (now at medium effort) and as the everyday
+cross-family route across RESEARCH's Pi-tooling-better rule, REVIEW's
+cross-family second reviewer, ARCHITECTURE's exceptional peer, DEEP's
+diagnosis/ship escalations, and TENTH-MAN's Claude-primary rule; that
+startup chain's Claude Sonnet fallback step is harness-scoped (OMP's own
 `anthropic/claude-sonnet-5` versus Pi's `pi-claude-code-provider/sonnet`)
-- see README.md "Captain startup model". `openai-codex/gpt-5.5` and
-`anthropic/claude-fable-5-1` remain retired from worker routing.
+- see README.md "Captain startup model". `openai-codex/gpt-6-astra` is
+confined to Pi and to each category's own narrowest, most exceptional
+escalation - ARCHITECTURE's ultra-exceptional rule, DEEP's last escalation,
+and TENTH-MAN's most-critical/unresolved escalation - never a routine
+peer or default. `openai-codex/gpt-5.5` and `anthropic/claude-fable-5-1`
+remain retired from worker routing.
 
 **Deferred to a later release.** The local Qwen/Ollama lane remains absent
 while that machine is offline. It is not configured anywhere in this

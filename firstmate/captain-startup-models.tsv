@@ -5,7 +5,7 @@
 # native catalog carries anthropic/claude-sonnet-5, while Pi's Claude Code
 # provider extension carries pi-claude-code-provider/sonnet - not an OMP
 # model id, so it never belongs in the harness-agnostic candidate rows.
-openai-codex/gpt-5.6-sol	high
+openai-codex/gpt-6-sol	medium
 anthropic/claude-sonnet-5	high	omp
 pi-claude-code-provider/sonnet	high	pi
 openai-codex/gpt-6-astra	xhigh

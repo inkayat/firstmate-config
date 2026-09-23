@@ -79,7 +79,7 @@ mkdir -p "$FAKE_BIN"
 
 cat > "$FAKE_BIN/pi" <<'SH'
 #!/usr/bin/env bash
-available=",${FM_TEST_AVAILABLE-openai-codex/gpt-5.6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra},"
+available=",${FM_TEST_AVAILABLE-openai-codex/gpt-6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra},"
 model_base() { printf '%s' "${1#*/}"; }
 provider_of() { printf '%s' "${1%%/*}"; }
 is_available() { case "$available" in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
@@ -171,7 +171,7 @@ chmod +x "$FAKE_BIN/herdr"
 # an omp lane's model through omp, never through pi's fake.
 cat > "$FAKE_BIN/omp" <<'SH'
 #!/usr/bin/env bash
-available=",${FM_TEST_OMP_AVAILABLE-${FM_TEST_AVAILABLE-openai-codex/gpt-5.6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra}},"
+available=",${FM_TEST_OMP_AVAILABLE-${FM_TEST_AVAILABLE-openai-codex/gpt-6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra}},"
 if [ "${1:-}" = --version ]; then
   printf 'omp/%s\n' "${FM_TEST_OMP_VERSION:-9.9.9-fake}"
   exit 0
@@ -185,7 +185,7 @@ if [ "${1:-}" = models ]; then
     p=${entry%%/*}
     id=${entry#*/}
     [ "$first" -eq 1 ] || json="$json,"
-    json="$json{\"provider\":\"$p\",\"id\":\"$id\",\"reasoning\":true,\"thinking\":[\"high\",\"xhigh\"]}"
+    json="$json{\"provider\":\"$p\",\"id\":\"$id\",\"reasoning\":true,\"thinking\":[\"medium\",\"high\",\"xhigh\"]}"
     first=0
   done
   json="$json]}"
@@ -294,7 +294,7 @@ chmod +x "$LAUNCHER_OTHER/fm"
 
 # Every model this repository's crew-dispatch.json and captain-startup-models
 # reference, so the fully-healthy scenario has nothing left UNAVAILABLE.
-HEALTHY_AVAILABLE="openai-codex/gpt-5.6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-5.6-luna"
+HEALTHY_AVAILABLE="openai-codex/gpt-6-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-5.6-luna"
 
 # A fully hermetic system PATH: symlink only the exact utilities fm-doctor
 # needs, never a whole real bin directory. On macOS, /usr/bin itself ships a
@@ -364,7 +364,7 @@ out=$(run_doctor); code=$?
 check 'healthy: exit code is 0' 0 "$code"
 contains 'healthy: overall status is UNKNOWN (only commit_compat is unproven offline)' "$out" 'DOCTOR UNKNOWN exit=0'
 contains 'healthy: launcher resolves ours first' "$out" "PASS          launcher.resolution"
-contains 'healthy: captain selects the preferred candidate' "$out" 'selected preferred candidate openai-codex/gpt-5.6-sol'
+contains 'healthy: captain selects the preferred candidate' "$out" 'selected preferred candidate openai-codex/gpt-6-sol'
 contains 'healthy: herdr server reported running' "$out" 'PASS          runtime.herdr_server'
 contains 'healthy: FM_HOME is explicitly reported' "$out" "FM_HOME=$FAKE_FM_HOME"
 contains 'healthy: an explicit heartbeat check is reported' "$out" 'runtime.heartbeat'
@@ -411,7 +411,7 @@ unset FM_TEST_AVAILABLE
 check 'Sol down: exit code is 0' 0 "$code"
 contains 'Sol down: Sonnet is selected' "$out" 'selected pi-claude-code-provider/sonnet'
 contains 'Sol down: Sonnet reports available despite broker invalid_state' "$out" 'PASS          captain.model.pi-claude-code-provider/sonnet'
-contains 'Sol down: fallback reason names Sol' "$out" 'openai-codex/gpt-5.6-sol'
+contains 'Sol down: fallback reason names Sol' "$out" 'openai-codex/gpt-6-sol'
 
 # =============================================================================
 # 5. Every Captain candidate unavailable -> FAIL, nonzero exit
@@ -598,7 +598,7 @@ if [ -n "$SYS_JQ" ]; then
   unset RUN_PATH
   check 'jq tier: exit code is 0' 0 "$code"
   contains 'jq tier: crew-dispatch reports it was parsed via jq' "$out" 'parsed via jq'
-  contains 'jq tier: the real crew-dispatch.json has 25 lanes' "$out" '25 lane(s)'
+  contains 'jq tier: the real crew-dispatch.json has 30 lanes' "$out" '30 lane(s)'
 else
   pass 'jq tier: skipped (no jq installed on the test runner)'
 fi
@@ -606,16 +606,17 @@ fi
 # =============================================================================
 # 12. Routing model discovery is scoped to each lane's own harness
 # =============================================================================
-# openai-codex/gpt-6-astra is configured on both a pi lane and an omp lane in
-# the real crew-dispatch.json. Make it available in pi's fake catalog but
-# absent from omp's, so a doctor that still used the Captain's Pi detector for
-# every lane would wrongly report the omp lane available too.
-FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5'
+# openai-codex/gpt-6-sol is configured on both a pi lane and an omp lane in
+# the real crew-dispatch.json (Astra, by contrast, is now confined to
+# pi-only exceptional lanes). Make it absent from omp's fake catalog but
+# available in pi's, so a doctor that still used the Captain's Pi detector
+# for every lane would wrongly report the omp lane available too.
+FM_TEST_OMP_AVAILABLE='anthropic/claude-sonnet-5,anthropic/claude-opus-5-5'
 out=$(run_doctor); code=$?
 unset FM_TEST_OMP_AVAILABLE
 check 'harness-scoped routing: exit code stays 0 (non-mandatory)' 0 "$code"
-contains 'harness-scoped routing: the pi lane is checked through pi and is available' "$out" 'PASS          routing.model.pi.openai-codex/gpt-6-astra'
-contains 'harness-scoped routing: the omp lane for the same model is checked independently through omp and is unavailable' "$out" 'FAIL          routing.model.omp.openai-codex/gpt-6-astra'
+contains 'harness-scoped routing: the pi lane is checked through pi and is available' "$out" 'PASS          routing.model.pi.openai-codex/gpt-6-sol'
+contains 'harness-scoped routing: the omp lane for the same model is checked independently through omp and is unavailable' "$out" 'FAIL          routing.model.omp.openai-codex/gpt-6-sol'
 
 # =============================================================================
 # 13. No JSON parser available -> crew-dispatch validity UNKNOWN, exit 0
@@ -780,12 +781,12 @@ status_exit_agree '20a healthy' "$out20a" "$json20a" "$code20a"
 # (fm-doctor's default), Sol and Astra are available in OMP's native
 # catalog, but the Pi-only Sonnet provider is not - exactly the shape
 # README.md documents as expected on OMP. Selection still succeeds via Sol.
-FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-5.6-luna'
+FM_TEST_OMP_AVAILABLE='openai-codex/gpt-6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-5.6-luna'
 out20b=$(run_doctor); code20b=$?
-json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-5.6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-5.6-luna' run_doctor --json)
+json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-6-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-5.6-luna' run_doctor --json)
 unset FM_TEST_OMP_AVAILABLE
 check '20b optional-unavailable: exit code stays 0' 0 "$code20b"
-contains '20b optional-unavailable: Sol is selected as preferred' "$out20b" 'selected preferred candidate openai-codex/gpt-5.6-sol'
+contains '20b optional-unavailable: Sol is selected as preferred' "$out20b" 'selected preferred candidate openai-codex/gpt-6-sol'
 not_contains '20b optional-unavailable: the absent Pi-only candidate is never reported FAIL' "$out20b" 'FAIL          captain.model.pi-claude-code-provider/sonnet'
 status_exit_agree '20b optional-unavailable' "$out20b" "$json20b" "$code20b"
 

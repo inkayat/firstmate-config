@@ -34,10 +34,11 @@ policy chooses worker harness, model, effort, and role by task semantics.
 ## Highlights
 
 - OMP-first Captain with an explicit Pi fallback
-- Nineteen-rule semantic task routing across ten dispatch categories
+- Twenty-six-rule semantic task routing across ten dispatch categories
 - Claude-heavy, capacity-aware everyday routing
-- Opus 5.5 and Astra reserved for architecture, deep reasoning, and
-  highest-stakes review
+- Opus 5.5 reserved for architecture, deep reasoning, and highest-stakes
+  review; GPT-6 Sol is the everyday cross-family challenger, with Astra
+  limited to each lane's most extreme, exceptional escalation
 - Multi-project operation with per-task project resolution
 - Scoped `AGENTS.md` / `CLAUDE.md` context and project-local skills
 - Reproducibly installed shared worker skills and external pins
@@ -54,29 +55,34 @@ Captain choices can override the table.
 | Category | Active candidates | Intent |
 | --- | --- | --- |
 | `QUICK` | OMP · Claude Haiku 4.5 low, or GPT-5.6 Luna low | Tiny edits, mechanical cleanup, quick factual work |
-| `EXPLORE` | OMP · Claude Haiku 4.5 low | Read-only reconnaissance inside a repository |
+| `EXPLORE` | OMP · Claude Haiku 4.5 low, or GPT-5.6 Luna low | Read-only reconnaissance inside a repository |
 | `RESEARCH` | OMP · Claude Sonnet 5 medium | External docs, APIs, standards, and upstream source |
 | `REVIEW` | OMP · Claude Sonnet 5 medium | Ordinary correctness and maintainability review |
-| `ARCHITECTURE` | OMP · Claude Opus 5.5 high | Boundaries, data models, migrations, structural decisions |
-| `TENTH-MAN` | Pi · GPT-6 Astra xhigh, or OMP · Claude Opus 5.5 xhigh | Independent adversarial challenge |
+| `ARCHITECTURE` | OMP · Claude Opus 5.5 high, escalating to Opus 5.5 + GPT-6 Sol xhigh peers, then GPT-6 Astra xhigh only when exceptional | Boundaries, data models, migrations, structural decisions |
+| `TENTH-MAN` | Pi · GPT-6 Sol xhigh (Claude-authored work, escalating to GPT-6 Astra xhigh only when critical/unresolved), or OMP · Claude Opus 5.5 xhigh (Astra/OpenAI-authored work) | Independent adversarial challenge |
 | `IMPLEMENT` | OMP · Claude Sonnet 5 medium | Normal features, fixes, refactors, and tests |
 | `IMPLEMENT-LARGE` | OMP · Claude Sonnet 5 high | Broad, mostly settled implementation |
-| `DEEP` | OMP · Claude Opus 5.5 xhigh, with GPT-6 Astra xhigh reached only as an explicit escalation/second hypothesis (Pi diagnosis / OMP implementation) | Hard root-cause and reasoning-heavy work |
+| `DEEP` | OMP · Claude Opus 5.5 xhigh, with GPT-6 Sol xhigh reached only as an explicit escalation/second hypothesis (Pi diagnosis / OMP implementation), and GPT-6 Astra xhigh as the last, most exceptional escalation | Hard root-cause and reasoning-heavy work |
 | `UI/BROWSER` | OMP · Claude Sonnet 5 high, or Opus 5.5 high for deep code-plus-browser work | Browser-visible behavior and end-to-end flows |
 | `DEFAULT` | OMP · Claude Sonnet 5 medium | Work with no more specific category |
 
 Routing philosophy:
 
 - Claude handles most everyday work because practical capacity is larger.
-- ARCHITECTURE's exceptional escalation pairs Opus 5.5 with Astra at xhigh
-  as active quota-resolved peers; DEEP instead routes to Astra only through
-  explicit single-candidate escalation rules, so it can never be picked
-  ahead of Opus 5.5 by quota.
+- ARCHITECTURE's exceptional escalation pairs Opus 5.5 with GPT-6 Sol at
+  xhigh as active quota-resolved peers, with Astra reserved for a further
+  ultra-exceptional single-candidate escalation; DEEP instead routes to
+  Sol, and Astra as DEEP's last escalation, only through explicit
+  single-candidate escalation rules, so neither can be picked ahead of
+  Opus 5.5 by quota.
 - TENTH-MAN enforces model-family diversity: a Claude-authored change is
-  challenged by Pi + Astra; an Astra/OpenAI-authored change is challenged by
-  OMP + Opus 5.5.
-- REVIEW escalates from Sonnet medium to Sonnet high for complex diffs, and
-  to Opus 5.5 high for release-critical or high-blast-radius work.
+  challenged by Pi + GPT-6 Sol, escalating to Pi + GPT-6 Astra only for the
+  most critical or unresolved cases; an Astra/OpenAI-authored change is
+  challenged by OMP + Opus 5.5.
+- REVIEW escalates from Sonnet medium to Sonnet high for complex diffs, to
+  Opus 5.5 high for release-critical or high-blast-radius work, and
+  optionally to a Pi + GPT-6 Sol cross-family second reviewer for the
+  highest-stakes cases.
 - Opus 5.5 is a deliberate escalation for sustained execution, exceptional
   architecture, deep reasoning, and highest-stakes review - not a default.
 - Haiku and Luna cover cheap, fast work where their lane is appropriate.
@@ -124,7 +130,7 @@ completion.
 
 `firstmate/captain-startup-models.tsv` is the ordered list of Captain startup
 candidates, tried in order and skipped on any authoritative `UNAVAILABLE`
-result: `openai-codex/gpt-5.6-sol` high, then a harness-scoped Claude Sonnet
+result: `openai-codex/gpt-6-sol` medium, then a harness-scoped Claude Sonnet
 step, then `openai-codex/gpt-6-astra` xhigh. `bin/fm`, `fm doctor`, and
 `fm version` all resolve this chain through the one shared availability path
 in `firstmate/fm-captain-lib.sh`.

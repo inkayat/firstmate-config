@@ -158,12 +158,16 @@ PY
 }
 
 # =============================================================================
-# 1. Structural shape: exactly the ten named category values (twenty-two
-#    `rules` entries total - EXPLORE, RESEARCH, IMPLEMENT-LARGE, REVIEW,
-#    ARCHITECTURE, TENTH-MAN, IMPLEMENT, and UI/BROWSER each span two or
-#    three more-specific rules; DEEP spans four single-candidate
-#    conditional rules (scout primary, scout Astra escalation, ship
-#    primary, ship Astra escalation); every other category is a single
+# 1. Structural shape: exactly the ten named category values (twenty-six
+#    `rules` entries total - EXPLORE, RESEARCH, IMPLEMENT-LARGE, and
+#    UI/BROWSER each span two more-specific rules; IMPLEMENT spans two;
+#    REVIEW spans four (ordinary, complex, high-risk, cross-family second
+#    review); ARCHITECTURE spans three (ordinary, exceptional, Astra
+#    ultra-exceptional); TENTH-MAN spans three (Claude-primary Sol, Astra
+#    critical escalation, OpenAI-primary Opus 5.5); DEEP spans five
+#    single-candidate conditional rules (scout primary, scout Sol
+#    escalation, ship primary, ship Sol second-hypothesis, Astra
+#    exceptional last escalation); every other category is a single
 #    rule), plus the untagged `default` catch-all for DEFAULT. No stray
 #    category names.
 # =============================================================================
@@ -182,9 +186,9 @@ actual_categories=$(all_categories | sort -u)
 check 'exactly the ten named categories are present, no more, no fewer' "$EXPECTED_CATEGORIES" "$actual_categories"
 
 total_rules=$(all_categories | wc -l | tr -d ' ')
-check 'twenty-two total rules entries (ten categories, several split)' 22 "$total_rules"
+check 'twenty-six total rules entries (ten categories, several split)' 26 "$total_rules"
 
-for pair in QUICK:1 EXPLORE:2 RESEARCH:2 REVIEW:3 ARCHITECTURE:2 TENTH-MAN:2 IMPLEMENT:2 IMPLEMENT-LARGE:2 DEEP:4 UI/BROWSER:2; do
+for pair in QUICK:1 EXPLORE:2 RESEARCH:2 REVIEW:4 ARCHITECTURE:3 TENTH-MAN:3 IMPLEMENT:2 IMPLEMENT-LARGE:2 DEEP:5 UI/BROWSER:2; do
   cat=${pair%%:*}
   expected=${pair##*:}
   actual=$(category_rule_count "$cat")
@@ -195,10 +199,11 @@ done
 # 2. Pinned active route per category rule (regression protection):
 #    harness/model/effort exactly as documented in primary-policy.md and
 #    README.md. Multi-candidate arrays are limited to the deliberate peer sets
-#    for QUICK and ARCHITECTURE's exceptional rule; DEEP and UI/BROWSER
-#    escalate through separate single-candidate conditional rules instead
-#    of quota-resolved arrays, so Astra/Opus 5.5 in DEEP can never be
-#    selected ahead of the primary by quota resolution.
+#    for QUICK and ARCHITECTURE's exceptional rule; DEEP, TENTH-MAN, REVIEW's
+#    highest lanes, and UI/BROWSER escalate through separate single-candidate
+#    conditional rules instead of quota-resolved arrays, so Astra/Sol/Opus
+#    5.5 in those categories can never be selected ahead of the primary by
+#    quota resolution.
 # =============================================================================
 check_rule_use() { # <category> <rule-occurrence, for the message only> <aggregated-line-number> <harness> <model> <effort>
   # <aggregated-line-number> indexes category_field's own output, which is
@@ -219,49 +224,67 @@ check_array_length QUICK 1 2
 check_rule_use QUICK 1 1 omp anthropic/claude-haiku-4-5 low
 check_rule_use QUICK 1 2 omp openai-codex/gpt-5.6-luna low
 
-# EXPLORE: two separate rules (ordinary, then harder-reasoning escalation).
-check_array_length EXPLORE 1 1
+# EXPLORE: two separate rules (ordinary, with Haiku/Luna as interchangeable
+# peers - the same capacity-aware pairing QUICK uses - then a
+# harder-reasoning escalation).
+check_array_length EXPLORE 1 2
 check_array_length EXPLORE 2 1
 check_rule_use EXPLORE 1 1 omp anthropic/claude-haiku-4-5 low
-check_rule_use EXPLORE 2 2 omp anthropic/claude-sonnet-5 medium
+check_rule_use EXPLORE 1 2 omp openai-codex/gpt-5.6-luna low
+check_rule_use EXPLORE 2 3 omp anthropic/claude-sonnet-5 medium
 
 # RESEARCH: two separate rules (default OMP, then Pi-tooling-better).
 check_array_length RESEARCH 1 1
 check_array_length RESEARCH 2 1
 check_rule_use RESEARCH 1 1 omp anthropic/claude-sonnet-5 medium
-check_rule_use RESEARCH 2 2 pi openai-codex/gpt-5.6-sol medium
+check_rule_use RESEARCH 2 2 pi openai-codex/gpt-6-sol medium
 
-# REVIEW: three separate rules (ordinary, then complex, then high-risk).
+# REVIEW: four separate rules (ordinary, then complex, then high-risk,
+# then an explicit cross-family second-reviewer escalation).
 check_array_length REVIEW 1 1
 check_array_length REVIEW 2 1
 check_array_length REVIEW 3 1
+check_array_length REVIEW 4 1
 check_rule_use REVIEW 1 1 omp anthropic/claude-sonnet-5 medium
 check_rule_use REVIEW 2 2 omp anthropic/claude-sonnet-5 high
 check_rule_use REVIEW 3 3 omp anthropic/claude-opus-5-5 high
+check_rule_use REVIEW 4 4 pi openai-codex/gpt-6-sol xhigh
 review_why=$(category_field REVIEW why)
 contains 'REVIEW: why-text names Thermos as independently selectable' "$review_why" 'Thermos'
+review_when4=$(category_rule_field REVIEW 4 when)
+contains 'REVIEW rule 4: cross-family second review is an explicit escalation, not a default' "$review_when4" 'not by default'
 
-# ARCHITECTURE: ordinary rule (Opus 5.5 high), then an exceptional rule
-# pairing Opus 5.5 xhigh with Astra xhigh as active peers.
+# ARCHITECTURE: ordinary rule (Opus 5.5 high), an exceptional rule pairing
+# Opus 5.5 xhigh with Sol xhigh as active peers, then an ultra-exceptional
+# single-candidate Astra escalation.
 check_array_length ARCHITECTURE 1 1
 check_array_length ARCHITECTURE 2 2
+check_array_length ARCHITECTURE 3 1
 check_rule_use ARCHITECTURE 1 1 omp anthropic/claude-opus-5-5 high
 check_rule_use ARCHITECTURE 2 2 omp anthropic/claude-opus-5-5 xhigh
-check_rule_use ARCHITECTURE 2 3 pi openai-codex/gpt-6-astra xhigh
+check_rule_use ARCHITECTURE 2 3 pi openai-codex/gpt-6-sol xhigh
+check_rule_use ARCHITECTURE 3 4 pi openai-codex/gpt-6-astra xhigh
 arch_why=$(category_field ARCHITECTURE why)
 contains 'ARCHITECTURE: why-text names Opus 5.5' "$arch_why" 'anthropic/claude-opus-5-5'
+arch_when3=$(category_rule_field ARCHITECTURE 3 when)
+contains 'ARCHITECTURE rule 3: Astra ultra-exceptional is an explicit escalation, not a default' "$arch_when3" 'ultra-exceptional'
 
-# TENTH-MAN: two rules enforcing model-family diversity via explicit,
+# TENTH-MAN: three rules enforcing model-family diversity via explicit,
 # inspectable conditions on the primary author's model family - never
-# prose that cannot route.
+# prose that cannot route. Claude-primary defaults to Sol, escalates to
+# Astra only when critical/unresolved; OpenAI-primary stays on Opus 5.5.
 check_array_length TENTH-MAN 1 1
 check_array_length TENTH-MAN 2 1
-check_rule_use TENTH-MAN 1 1 pi openai-codex/gpt-6-astra xhigh
-check_rule_use TENTH-MAN 2 2 omp anthropic/claude-opus-5-5 xhigh
+check_array_length TENTH-MAN 3 1
+check_rule_use TENTH-MAN 1 1 pi openai-codex/gpt-6-sol xhigh
+check_rule_use TENTH-MAN 2 2 pi openai-codex/gpt-6-astra xhigh
+check_rule_use TENTH-MAN 3 3 omp anthropic/claude-opus-5-5 xhigh
 tenthman_when1=$(category_rule_field TENTH-MAN 1 when)
 tenthman_when2=$(category_rule_field TENTH-MAN 2 when)
-contains 'TENTH-MAN rule 1: routes to Astra when the primary author is Claude' "$tenthman_when1" 'Claude'
-contains 'TENTH-MAN rule 2: routes to Opus 5.5 when the primary author is Astra/OpenAI-codex' "$tenthman_when2" 'Astra'
+tenthman_when3=$(category_rule_field TENTH-MAN 3 when)
+contains 'TENTH-MAN rule 1: routes to Sol when the primary author is Claude' "$tenthman_when1" 'Claude'
+contains 'TENTH-MAN rule 2: Astra escalation is explicitly critical/unresolved, not a default' "$tenthman_when2" 'unresolved'
+contains 'TENTH-MAN rule 3: routes to Opus 5.5 when the primary author is Astra/OpenAI-codex' "$tenthman_when3" 'Astra'
 
 # IMPLEMENT: two separate rules (ordinary, then delicate-implementation
 # escalation).
@@ -277,24 +300,28 @@ check_array_length IMPLEMENT-LARGE 2 1
 check_rule_use IMPLEMENT-LARGE 1 1 omp anthropic/claude-sonnet-5 high
 check_rule_use IMPLEMENT-LARGE 2 2 omp anthropic/claude-opus-5-5 high
 
-# DEEP: four single-candidate conditional rules, never quota-resolved
-# arrays, so Astra can never be selected ahead of Opus 5.5 by quota
-# resolution - scout primary, scout Astra escalation, ship primary, ship
-# Astra second-hypothesis.
+# DEEP: five single-candidate conditional rules, never quota-resolved
+# arrays, so Sol/Astra can never be selected ahead of Opus 5.5 by quota
+# resolution - scout primary, scout Sol escalation, ship primary, ship
+# Sol second-hypothesis, Astra exceptional last escalation.
 check_array_length DEEP 1 1
 check_array_length DEEP 2 1
 check_array_length DEEP 3 1
 check_array_length DEEP 4 1
+check_array_length DEEP 5 1
 check_rule_use DEEP 1 1 omp anthropic/claude-opus-5-5 xhigh
-check_rule_use DEEP 2 2 pi openai-codex/gpt-6-astra xhigh
+check_rule_use DEEP 2 2 pi openai-codex/gpt-6-sol xhigh
 check_rule_use DEEP 3 3 omp anthropic/claude-opus-5-5 xhigh
-check_rule_use DEEP 4 4 omp openai-codex/gpt-6-astra xhigh
+check_rule_use DEEP 4 4 omp openai-codex/gpt-6-sol xhigh
+check_rule_use DEEP 5 5 pi openai-codex/gpt-6-astra xhigh
 deep_why=$(category_field DEEP why)
 contains 'DEEP: why-text names Opus 5.5' "$deep_why" 'Opus 5.5'
 deep_when2=$(category_rule_field DEEP 2 when)
 deep_when4=$(category_rule_field DEEP 4 when)
-contains 'DEEP rule 2: Astra diagnosis is an explicit escalation, not a default' "$deep_when2" 'escalation'
-contains 'DEEP rule 4: Astra ship is an explicit second hypothesis, not a default' "$deep_when4" 'unresolved'
+deep_when5=$(category_rule_field DEEP 5 when)
+contains 'DEEP rule 2: Sol diagnosis is an explicit escalation, not a default' "$deep_when2" 'escalation'
+contains 'DEEP rule 4: Sol ship is an explicit second hypothesis, not a default' "$deep_when4" 'unresolved'
+contains 'DEEP rule 5: Astra exceptional is an explicit last escalation, not a default' "$deep_when5" 'unresolved'
 
 # UI/BROWSER: ordinary rule, then an explicit deep-code-plus-browser
 # escalation to Opus 5.5 high - a real routing rule, not a prose override.
