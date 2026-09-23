@@ -7,8 +7,8 @@ layout without forking or patching FirstMate.
 
 The official checkout remains upstream-clean. Tracked configuration lives here;
 operational state, credentials, sessions, and project registries stay outside
-the repository. The latest tagged baseline is `v0.3.0`; `main` may contain newer
-reviewed configuration changes.
+the repository. See [GitHub Releases](https://github.com/inkayat/firstmate-config/releases)
+for the latest tagged version; `main` may contain newer reviewed changes.
 
 ## Architecture
 
@@ -34,7 +34,7 @@ policy chooses worker harness, model, effort, and role by task semantics.
 ## Highlights
 
 - OMP-first Captain with an explicit Pi fallback
-- Twenty-six-rule semantic task routing across ten dispatch categories
+- Semantic task routing across eleven dispatch categories
 - Claude-heavy, capacity-aware everyday routing
 - Opus 5.5 reserved for architecture, deep reasoning, and highest-stakes
   review; GPT-6 Sol is the everyday cross-family challenger, with Astra
@@ -47,6 +47,9 @@ policy chooses worker harness, model, effort, and role by task semantics.
   mutating work - advisory only, distinct from `no-mistakes`'s own automated
   pipeline gate (see `firstmate/primary-policy.md` "Independent review
   before merge")
+- Specialist-vault verification runs Bun inside the verified physical pin;
+  lookup also clears inherited Bun/Node preload options, without installing
+  vault skills globally
 - Read-only `fm doctor` and `fm version` diagnostics
 - Fast-forward-only `fm update` and deterministic, idempotent installation
 
