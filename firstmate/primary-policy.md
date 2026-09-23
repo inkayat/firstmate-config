@@ -339,10 +339,12 @@ globally registered - never symlinked into `~/.agents/skills`, never an OMP
 `skills.customDirectories`/`includeSkills` entry - so consulting it is always
 this per-task, explicit decision, never ambient context.
 
-Consult it only when a task plausibly benefits from a specialist skill past
-what the shared worker skills already cover. Zero is the default and a fully
-valid outcome for an ordinary task. Look up candidates read-only, never by
-parsing a skill body, and always from within the pinned vault root: a
+For every task where a specialist skill could plausibly add benefit beyond
+the shared worker skills, explicitly consult the pinned vault before dispatch
+and record the concise selected-skill or none reason in the task's
+`## Firstmate spec`. Zero remains the valid outcome for ordinary tasks and
+whenever the shortlist yields no justified fit. Look up candidates read-only,
+never by parsing a skill body, and always from within the pinned vault root: a
 non-absolute `$FM_SKILL_VAULT_ROOT` is refused outright rather than
 resolved against the caller's own directory. This isolates the caller's
 working-directory Bun config discovery - `bunfig.toml`, `BUN_OPTIONS`,
