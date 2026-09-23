@@ -479,6 +479,96 @@ reveal a problem automated tests miss, whether that verification was assigned,
 whether the relevant flow was actually exercised, and whether the evidence
 matches the change's risk and scope.
 
+### Independent review before merge
+
+Before treating a merge-eligible task as ready, judge whether the change
+warrants an independent read-only review pass separate from the worker that
+wrote it. This is advisory guidance layered on the existing REVIEW/TENTH-MAN
+routes (section 3) and the specialist skill vault (section 5) - it adds no
+new dispatch category, severity engine, or router logic. This section
+governs only the Captain-dispatched advisory path described below; a task
+running through `no-mistakes`'s own automated pipeline is reviewed by that
+pipeline's own gate, which this policy does not touch, does not duplicate,
+and cannot guarantee a separate outside reviewer for - reaching into that
+pipeline to insert or require one is an official FirstMate change, out of
+scope for this configuration.
+
+**When review is required**, not merely considered: IMPLEMENT-LARGE work
+(including its sustained-execution escalation), a DEEP ship/implementation
+outcome, any change touching authentication or security, payments, data
+integrity, a nontrivial migration, concurrency, or otherwise carrying a
+high blast radius, release-critical status, or a substantial public API
+change - and, independent of that topic list, any change that is
+materially substantive (meaningful new behavior, a nontrivial refactor, or
+work spanning multiple components) or that carries real cross-component
+regression risk, whatever its category. Ordinary IMPLEMENT work is judged
+by its actual risk and substance against that same standard, never
+exempted merely for not naming a listed topic - a normal IMPLEMENT task
+that is materially substantive, carries cross-component regression risk,
+or touches one of the listed areas needs review; a narrowly bounded one
+that does none of those does not. QUICK work and other genuinely trivial,
+narrowly bounded changes may skip review only when neither a listed
+mandatory-risk topic nor this substantive/regression-risk trigger applies
+- never as a blanket exemption for the category alone.
+
+**How review runs.** Every required review needs a different, read-only
+worker in a fresh context, never the implementation worker itself even in
+a new context or session - this is the baseline independence axis, and
+REVIEW's existing rules (ordinary, complex, high-risk, section 3) already
+satisfy it by construction, since REVIEW always dispatches as its own
+separate task with its own worker. Model-family or adversarial independence is a second, separate
+axis: reach for REVIEW's cross-family second-reviewer rule or for
+TENTH-MAN only when that additional adversarial or cross-family check is
+itself warranted - the highest-stakes review escalation, or a deliberate
+adversarial challenge - never merely because a review is required; an
+ordinary REVIEW pass in a fresh session already satisfies this section's
+baseline. The reviewer is read-only: it inspects the resulting diff and the
+surrounding code it touches, never re-implements. Model and harness choice
+for the reviewer stays exactly what section 3 already assigns for the
+matched rule - this policy changes when a reviewer is required and what it
+must report, never which model reviews it. A specialist vault pick
+(section 5) for the reviewer, when one genuinely fits, counts against the
+same existing skill budget, never a separate one.
+
+Because each dispatched task owns its own isolated worktree (section 2), a
+separately dispatched reviewer cannot assume it can see the implementation
+worker's uncommitted change on its own. Before a review pass counts as run,
+the Captain hands the reviewer the actual complete diff together with its
+base and head revision, or an immutable commit/patch reviewable from the
+reviewer's own worktree - never a bare instruction to "review the change"
+with no reviewable artifact. The same handoff - including the original
+findings/report the re-review must close, not just the corrected code -
+scoped to the corrected delta, is required before a re-review can be
+claimed complete: a re-review report is not valid without evidence the
+reviewer actually received and read the corrected code against those
+original findings, not merely the original diff again.
+
+**Findings and severity.** The reviewer reports each finding as one of:
+
+- **BLOCKER** - must be fixed before the change is merge-ready.
+- **IMPORTANT** - should be fixed; waivable only by the captain's explicit
+  word, never by the implementation worker or the reviewer itself.
+- **OPTIONAL** - worth noting, never blocking.
+
+Fix every BLOCKER finding and every IMPORTANT finding that is not
+explicitly waived, and send each fix through a targeted independent
+re-review of the corrected delta before treating the change as
+merge-ready - re-review is not optional for either severity once a fix is
+made, only the fix-or-waive choice differs between them: BLOCKER must be
+fixed, IMPORTANT either gets fixed or stays open pending an explicit
+captain waiver, and it is never silently dropped. OPTIONAL findings alone,
+with nothing outstanding at BLOCKER or unwaived IMPORTANT, may proceed
+without another review pass.
+
+**Report.** For any task this section applied to, state: what was
+implemented, how it was verified, whether review ran or was judged
+skippable and why, who reviewed (route/model/harness), any vault specialist
+consulted, the BLOCKER/IMPORTANT/OPTIONAL counts, and the resulting
+merge-readiness. This is guidance and reporting discipline, not a
+mechanical gate: this configuration has no trusted enforcement runner for
+it, so it never auto-merges on a pass and never substitutes for genuinely
+running the review it calls for.
+
 This policy and the selected verification skills are guidance, not a
 mechanical completion check. This configuration has no trusted verification
 runner or FirstMate completion hook; a passing fixture report cannot stand

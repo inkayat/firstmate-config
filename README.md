@@ -43,6 +43,10 @@ policy chooses worker harness, model, effort, and role by task semantics.
 - Scoped `AGENTS.md` / `CLAUDE.md` context and project-local skills
 - Reproducibly installed shared worker skills and external pins
 - Browser/manual validation policy for user-visible work
+- Independent review before merge for substantive or risky Captain-dispatched
+  mutating work - advisory only, distinct from `no-mistakes`'s own automated
+  pipeline gate (see `firstmate/primary-policy.md` "Independent review
+  before merge")
 - Read-only `fm doctor` and `fm version` diagnostics
 - Fast-forward-only `fm update` and deterministic, idempotent installation
 
