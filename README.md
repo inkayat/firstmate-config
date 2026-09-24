@@ -119,10 +119,9 @@ firstmate-config directly manages its own shared/core skills, installed
 under `~/.agents/skills` by `install.sh`. Project-local skills remain
 project-owned, living under each project's own tracked directories. The
 standalone [`agent-skill-vault`](https://github.com/inkayat/agent-skill-vault)
-repository is a separate, manually curated and evaluated skill collection;
-promoting one of its skills into this repository's shared set is a
-deliberate, explicit decision, never automatic or dynamically looked up at
-runtime.
+repository is a separate, manually curated skill collection; promoting one
+of its skills into this repository's shared set is a deliberate, explicit
+decision.
 
 Official FirstMate internal skills remain separate and are not installed as
 shared worker skills. Context and skill selection are policy and handoff
