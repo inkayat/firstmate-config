@@ -104,7 +104,7 @@
           "effort": "high"
         }
       ],
-      "why": "Opus 5.5 at high effort is reserved for review where the cost of a missed defect is highest - release-critical, auth/security, payment, migration, or otherwise high-blast-radius changes. Specialist skills such as Thermos remain independently selectable on top of this lane through the normal skill-selection path (primary-policy.md section 2); picking one never starts a second orchestration framework or supervisor identity. A cross-family second reviewer is a separate, more specific rule below, reached for only when an independent-family second opinion is genuinely warranted in addition to this primary review, never a default."
+      "why": "Opus 5.5 at high effort is reserved for review where the cost of a missed defect is highest - release-critical, auth/security, payment, migration, or otherwise high-blast-radius changes. A cross-family second reviewer is a separate, more specific rule below, reached for only when an independent-family second opinion is genuinely warranted in addition to this primary review, never a default."
     },
     {
       "category": "REVIEW",

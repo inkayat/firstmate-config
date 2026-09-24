@@ -249,8 +249,6 @@ check_rule_use REVIEW 1 1 omp anthropic/claude-sonnet-5 medium
 check_rule_use REVIEW 2 2 omp anthropic/claude-sonnet-5 high
 check_rule_use REVIEW 3 3 omp anthropic/claude-opus-5-5 high
 check_rule_use REVIEW 4 4 pi openai-codex/gpt-6-sol xhigh
-review_why=$(category_field REVIEW why)
-contains 'REVIEW: why-text names Thermos as independently selectable' "$review_why" 'Thermos'
 review_when4=$(category_rule_field REVIEW 4 when)
 contains 'REVIEW rule 4: cross-family second review is an explicit escalation, not a default' "$review_when4" 'not by default'
 
