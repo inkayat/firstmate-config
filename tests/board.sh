@@ -311,7 +311,8 @@ case "\$id" in
   a-working-1) printf 'state: working . source: stub . harness busy\n' ;;
   a-parked-1)  printf 'state: parked . source: stub . needs-decision\n' ;;
   a-done-1)    printf 'state: done . source: stub . checks green\n' ;;
-  *)           printf 'state: unknown . source: stub . no data\n' ;;
+  a-blocked-1) printf 'state: blocked . source: stub . daemon socket refused\n' ;;
+  *)           printf 'state: unknown . source: stub . backend target gone\n' ;;
 esac
 SH
 chmod +x "$FIRSTMATE6/bin/fm-crew-state.sh"
@@ -321,25 +322,39 @@ cat > "$HOME6/state/home-summary.json" <<'JSON'
   "schema": "fm-secondmate-home-summary.v1",
   "queued": [
     {"id": "q-todo-1", "repo": "proj-a", "title": "Queued task", "kind": "ship", "since": "2026-09-10"},
-    {"id": "q-blocked-1", "repo": "proj-a", "title": "Held queued task", "kind": "scout", "since": "2026-09-11", "hold_kind": "captain", "captain_actionable": true, "hold_reason": "need confirmation"}
+    {"id": "q-blocked-1", "repo": "proj-a", "title": "Live captain call", "kind": "scout", "since": "2026-09-11", "hold_kind": "captain", "hold_bucket": "live", "captain_actionable": true, "hold_reason": "need confirmation"},
+    {"id": "q-deferred-1", "repo": "proj-a", "title": "Captain deferred until a date", "kind": "scout", "since": "2026-09-11", "hold_kind": "captain", "hold_bucket": "dated", "hold_until": "2099-01-01", "captain_actionable": false, "hold_reason": "revisit later"},
+    {"id": "q-future-1", "repo": "proj-a", "title": "Kept in Todo", "kind": "ship", "since": "2026-09-11", "hold_kind": "future", "captain_actionable": false, "hold_reason": "not a priority"},
+    {"id": "q-dep-1", "repo": "proj-a", "title": "Waits on another task", "kind": "ship", "since": "2026-09-12", "blocked_by": "q-todo-1", "blocked_by_ids": ["q-todo-1"], "unresolved_blocker_ids": ["q-todo-1"], "captain_actionable": false}
   ],
   "active_children": [
-    {"id": "a-working-1", "repo": "proj-b", "kind": "ship", "name": "Working task", "doing": "harness busy"},
-    {"id": "a-parked-1", "repo": "proj-b", "kind": "ship", "name": "Parked task"},
-    {"id": "a-done-1", "repo": "proj-b", "kind": "ship", "name": "Finished impl task"}
+    {"id": "a-working-1", "repo": "proj-b", "kind": "ship", "name": "Working task", "doing": "harness busy"}
   ],
-  "endpoints": [],
+  "endpoints": [
+    {"id": "a-working-1", "state": "working", "source": "pane"},
+    {"id": "a-parked-1", "state": "parked", "source": "run-step"},
+    {"id": "a-done-1", "state": "done", "source": "status-log"},
+    {"id": "a-blocked-1", "state": "blocked", "source": "status-log"},
+    {"id": "a-gone-1", "state": "unknown", "source": "none"}
+  ],
   "holds": [
-    {"id": "a-parked-1", "reason": "needs captain decision", "hold_kind": "captain"}
+    {"id": "a-parked-1", "reason": "needs captain decision"}
   ],
   "decisions_open": [
-    {"id": "a-parked-1", "hold_kind": "captain"}
+    {"id": "a-parked-1", "key": "a-parked-1", "verb": "needs-decision", "summary": "needs captain decision", "source": "status"}
   ],
   "landed": [
     {"id": "l-done-1", "repo": "proj-c", "title": "Landed task", "kind": "ship", "completion": {"verb": "done", "date": "2026-09-15"}}
   ]
 }
 JSON
+
+# Endpoint rows carry no repo/name; the archive lookup supplies identity.
+cat > "$FIRSTMATE6/bin/fm-tasks-axi.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'task:\n  id: %s\n  title: Endpoint task %s\n  repo: proj-b\n' "$2" "$2"
+SH
+chmod +x "$FIRSTMATE6/bin/fm-tasks-axi.sh"
 
 for id in a-working-1 a-parked-1 a-done-1; do
   cat > "$HOME6/state/$id.meta" <<META
@@ -358,12 +373,13 @@ if python3 -c '
 import json, sys
 o = json.loads(sys.argv[1])
 p = o["projects"]
-assert p["proj-a"]["todo"] == 1, p["proj-a"]
+assert p["proj-a"]["todo"] == 3, p["proj-a"]
 assert p["proj-a"]["blocked"] == 1, p["proj-a"]
+assert p["proj-a"]["waiting_review"] == 1, p["proj-a"]
 assert p["proj-a"]["in_progress"] == 1, p["proj-a"]
 assert p["proj-b"]["in_progress"] == 1, p["proj-b"]
-assert p["proj-b"]["blocked"] == 1, p["proj-b"]
-assert p["proj-b"]["waiting_review"] == 1, p["proj-b"]
+assert p["proj-b"]["blocked"] == 2, p["proj-b"]
+assert p["proj-b"]["waiting_review"] == 2, p["proj-b"]
 assert p["proj-c"]["done"] == 1, p["proj-c"]
 ' "$summary_json"; then pass '16 reconcile: lifecycle mapping matches counts per project'; else fail '16 reconcile: lifecycle mapping matches counts per project'; fi
 
@@ -375,10 +391,31 @@ else
 fi
 
 json=$(run6 show q-blocked-1 --json)
-if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="blocked", o; assert o["hold_reason"]=="need confirmation", o' "$json"; then
-  pass '16 reconcile: queued task with captain hold is blocked'
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="waiting_review", o; assert o["captain_review"] is True, o; assert o["hold_reason"]=="need confirmation", o' "$json"; then
+  pass '16 reconcile: live captain call (captain_actionable hold) waits on the captain'
 else
-  fail '16 reconcile: queued task with captain hold is blocked'
+  fail '16 reconcile: live captain call (captain_actionable hold) waits on the captain'
+fi
+
+json=$(run6 show q-deferred-1 --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="todo", o; assert o["captain_review"] is False, o; assert o["hold_reason"].startswith("until 2099-01-01"), o' "$json"; then
+  pass '16 reconcile: dated captain deferral stays todo, never blocked'
+else
+  fail '16 reconcile: dated captain deferral stays todo, never blocked'
+fi
+
+json=$(run6 show q-future-1 --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="todo", o; assert o["hold_reason"]=="not a priority", o' "$json"; then
+  pass '16 reconcile: non-captain (future) hold stays todo'
+else
+  fail '16 reconcile: non-captain (future) hold stays todo'
+fi
+
+json=$(run6 show q-dep-1 --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="blocked", o; assert "q-todo-1" in o["hold_reason"], o' "$json"; then
+  pass '16 reconcile: unresolved dependency blocker is blocked and names the blocker'
+else
+  fail '16 reconcile: unresolved dependency blocker is blocked and names the blocker'
 fi
 
 json=$(run6 show a-working-1 --json)
@@ -389,10 +426,24 @@ else
 fi
 
 json=$(run6 show a-parked-1 --json)
-if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="blocked", o; assert o["captain_review"] is True, o' "$json"; then
-  pass '16 reconcile: crew-state parked maps to blocked and flags captain review'
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="waiting_review", o; assert o["captain_review"] is True, o; assert o["hold_reason"]=="needs captain decision", o' "$json"; then
+  pass '16 reconcile: crew-state parked (decision/gate pending) is waiting_review, not blocked'
 else
-  fail '16 reconcile: crew-state parked maps to blocked and flags captain review'
+  fail '16 reconcile: crew-state parked (decision/gate pending) is waiting_review, not blocked'
+fi
+
+json=$(run6 show a-blocked-1 --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="blocked", o; assert o["project"]=="proj-b", o; assert "socket refused" in o["running"], o' "$json"; then
+  pass '16 reconcile: crew-state blocked is blocked with its detail'
+else
+  fail '16 reconcile: crew-state blocked is blocked with its detail'
+fi
+
+json=$(run6 show a-gone-1 --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="blocked", o; assert "target gone" in o["running"], o' "$json"; then
+  pass '16 reconcile: unknown/gone child is never shown as in_progress'
+else
+  fail '16 reconcile: unknown/gone child is never shown as in_progress'
 fi
 
 json=$(run6 show a-done-1 --json)
@@ -694,7 +745,7 @@ if grep -q '"event": "retire"' "$HOME10/data/board/events.jsonl"; then pass '22 
 # ledger from an older producer with no `valid` key at all - none without a-1.
 summary10 true '[]' a-1 ''; run10 list >/dev/null
 summary10 false '[]' '' ''; run10 list >/dev/null
-check '23 guard: invalid ledger retires nothing' "$(state_of10 a-1)" in_progress
+check '23 guard: invalid ledger with no invalidity kind retires nothing' "$(state_of10 a-1)" in_progress
 summary10 true '[{"surface": "landed", "count": 3}]' '' ''; run10 list >/dev/null
 check '23 guard: truncated ledger retires nothing' "$(state_of10 a-1)" in_progress
 python3 - "$HOME10/state/home-summary.json" <<'PY'
@@ -716,5 +767,45 @@ summary10 true '[]' '' ''
 if run10 show a-1 >/dev/null 2>&1; then fail '24 narrow: show retires the requested stale id'; else pass '24 narrow: show retires the requested stale id'; fi
 found_a2=$(python3 -c 'import json; print("a-2" in json.load(open("'"$HOME10"'/data/board/state.json"))["tasks"])')
 check '24 narrow: show leaves other stale ids for the full reconcile' "$found_a2" True
+
+# =============================================================================
+# Scenario 11: the live-board regression. A local-only task that finished and
+# awaits captain approval stays in-flight with a terminal child state, so the
+# real producer publishes valid:false / terminal_in_flight for days while every
+# surface is still complete. That must not freeze stale cards: ids absent from
+# every surface are retired, the invalidity's own ids are protected, and a
+# surface-hiding invalidity (unstructured_current) still retires nothing.
+# =============================================================================
+ledger10() {  # <valid> <invalidity-kind-or-empty> <invalidity-ids-csv> <active-ids-csv>
+  python3 - "$HOME10/state/home-summary.json" "$@" <<'PY'
+import json, sys
+path, valid, kind, inv_ids, active = sys.argv[1:6]
+ids = lambda csv: [i for i in csv.split(",") if i]
+children = [{"id": i, "repo": "proj-r", "kind": "ship", "name": "Task " + i} for i in ids(active)]
+json.dump({"schema": "fm-secondmate-home-summary.v1", "valid": valid == "true",
+           "invalidity": {"kind": kind or None, "ids": ids(inv_ids)}, "omitted": [],
+           "queued": [], "active_children": children,
+           "endpoints": [{"id": c["id"], "state": "working"} for c in children],
+           "holds": [], "decisions_open": [], "landed": []}, open(path, "w"))
+PY
+}
+ledger10 true '' '' s-1,o-1,u-1,done-wait-1; run10 list >/dev/null
+ledger10 false terminal_in_flight done-wait-1 done-wait-1,o-1,u-1; run10 list >/dev/null
+check '25 terminal_in_flight: stale id absent from every surface is retired' "$(state_of10 s-1)" absent
+check '25 terminal_in_flight: the finished-awaiting-approval task stays' "$(state_of10 done-wait-1)" in_progress
+ledger10 false orphan_in_flight o-1 done-wait-1,u-1; run10 list >/dev/null
+check '25 orphan_in_flight: the orphaned in-flight id is protected' "$(state_of10 o-1)" in_progress
+ledger10 false unstructured_current '' done-wait-1; run10 list >/dev/null
+check '25 unstructured_current: surface-hiding invalidity retires nothing' "$(state_of10 u-1)" in_progress
+
+# An unchanged projection is not rewritten: a re-render loop neither grows
+# events.jsonl nor bumps updated_at, so `updated` shows the last transition.
+ledger10 true '' '' done-wait-1; run10 list >/dev/null
+before_events=$(wc -l < "$HOME10/data/board/events.jsonl")
+before_ts=$(run10 show done-wait-1 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["updated_at"])')
+sleep 1
+run10 list >/dev/null; run10 render >/dev/null
+check '26 idempotent: unchanged ledger appends no event' "$(wc -l < "$HOME10/data/board/events.jsonl")" "$before_events"
+check '26 idempotent: unchanged ledger keeps updated_at' "$(run10 show done-wait-1 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["updated_at"])')" "$before_ts"
 
 [ "$failed" -eq 0 ] || exit 1

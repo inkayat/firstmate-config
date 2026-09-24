@@ -197,18 +197,26 @@
     ["in_progress", "In Progress"],
     ["waiting_review", "Waiting Review"],
     ["blocked", "Blocked"],
-    ["done", "Done"]
+    ["done", "Completed"]
   ];
+  // The page is a static file:// snapshot; `fm-board open` keeps
+  // board-data.js current while its viewer runs, and the page re-reads it on
+  // this cadence so an open board follows transitions without a refresh.
+  var REFRESH_MS = 3000;
 
-  var data = (typeof window.BOARD_DATA === "object" && window.BOARD_DATA) || { tasks: [], generated_at: null };
-  var tasks = Array.isArray(data.tasks) ? data.tasks : [];
-
-  document.getElementById("generated").textContent = data.generated_at
-    ? "generated " + data.generated_at
-    : "";
-
-  var projects = Array.from(new Set(tasks.map(function (t) { return t.project || "(unassigned)"; }))).sort();
+  var data, tasks, projects;
   var activeProject = "__all__";
+
+  function load(next) {
+    data = (typeof next === "object" && next) || { tasks: [], generated_at: null };
+    tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    projects = Array.from(new Set(tasks.map(function (t) { return t.project || "(unassigned)"; }))).sort();
+    if (activeProject !== "__all__" && projects.indexOf(activeProject) === -1) activeProject = "__all__";
+    document.getElementById("generated").textContent = data.generated_at
+      ? "generated " + data.generated_at
+      : "";
+  }
+  load(window.BOARD_DATA);
 
   function el(tag, opts) {
     var node = document.createElement(tag);
@@ -235,7 +243,7 @@
     var needsReview = t.state === "waiting_review" || !!t.captain_review;
     var card = el("div", { className: "card" + (needsReview ? " needs-review" : "") });
     if (needsReview) {
-      card.appendChild(el("span", { className: "review-badge", text: "Captain review" }));
+      card.appendChild(el("span", { className: "review-badge", text: t.captain_review ? "Captain review" : "Review" }));
     }
     card.appendChild(el("div", { className: "id", text: t.id || "" }));
     card.appendChild(el("div", { className: "title", text: t.title || "(untitled)" }));
@@ -244,7 +252,7 @@
     if (t.agent) meta.appendChild(el("span", { text: t.agent }));
     if (t.running) meta.appendChild(el("span", { text: t.running }));
     if (t.updated_at) meta.appendChild(el("span", { text: "updated " + t.updated_at }));
-    if (t.state === "blocked" && t.hold_reason) {
+    if (t.hold_reason && t.state !== "done") {
       meta.appendChild(el("span", { text: "hold: " + t.hold_reason }));
     }
     card.appendChild(meta);
@@ -284,6 +292,23 @@
   }
 
   render();
+
+  // Re-read board-data.js by re-injecting its script tag (the one way a
+  // file:// page can re-load a sibling file); re-render only on a new
+  // generation so the active project tab survives every refresh.
+  setInterval(function () {
+    var s = document.createElement("script");
+    s.src = "board-data.js?t=" + Date.now();
+    s.onload = s.onerror = function () {
+      s.remove();
+      var next = window.BOARD_DATA;
+      if (next && next.generated_at !== data.generated_at) {
+        load(next);
+        render();
+      }
+    };
+    document.head.appendChild(s);
+  }, REFRESH_MS);
 })();
 </script>
 </body>
