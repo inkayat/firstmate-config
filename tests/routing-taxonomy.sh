@@ -282,9 +282,9 @@ check_rule_use TENTH-MAN 3 3 omp anthropic/claude-opus-5-5 xhigh
 tenthman_when1=$(category_rule_field TENTH-MAN 1 when)
 tenthman_when2=$(category_rule_field TENTH-MAN 2 when)
 tenthman_when3=$(category_rule_field TENTH-MAN 3 when)
-contains 'TENTH-MAN rule 1: routes to Sol when the primary author is Claude' "$tenthman_when1" 'Claude'
+contains 'TENTH-MAN rule 1: when-text names Claude as the triggering author family (text only, no classifier runs this)' "$tenthman_when1" 'Claude'
 contains 'TENTH-MAN rule 2: Astra escalation is explicitly critical/unresolved, not a default' "$tenthman_when2" 'unresolved'
-contains 'TENTH-MAN rule 3: routes to Opus 5.5 when the primary author is Astra/OpenAI-codex' "$tenthman_when3" 'Astra'
+contains 'TENTH-MAN rule 3: when-text names Astra/OpenAI-codex as the triggering author family (text only, no classifier runs this)' "$tenthman_when3" 'Astra'
 
 # IMPLEMENT: two separate rules (ordinary, then delicate-implementation
 # escalation).
@@ -364,7 +364,7 @@ collision_check() { # <category> <required substring> <pair label>
   when=$(category_field "$cat" when)
   why=$(category_field "$cat" why)
   combined="$when $why"
-  contains "$label: $cat's when/why resolves toward the neighbor" "$combined" "$phrase"
+  contains "$label: $cat's when/why text states the disambiguating phrase toward the neighbor (text only, never routing behavior)" "$combined" "$phrase"
 }
 
 collision_check QUICK           'IMPLEMENT instead, not QUICK'    'QUICK/IMPLEMENT'

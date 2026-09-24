@@ -456,10 +456,17 @@ itself warranted - the highest-stakes review escalation, or a deliberate
 adversarial challenge - never merely because a review is required; an
 ordinary REVIEW pass in a fresh session already satisfies this section's
 baseline. The reviewer is read-only: it inspects the resulting diff and the
-surrounding code it touches, never re-implements. Model and harness choice
-for the reviewer stays exactly what section 3 already assigns for the
-matched rule - this policy changes when a reviewer is required and what it
-must report, never which model reviews it.
+surrounding code it touches, never re-implements. Read-only also means it
+never fetches, pulls, or otherwise updates a canonical checkout (official
+FirstMate, this configuration repository, or a project's own primary
+checkout) to get evidence - it works from the diff/patch and base/head
+revisions it was handed, refs already present in its own isolated
+worktree, or a disposable clone made for that one review, never a live
+`git fetch`/`git pull`/`fm update` against shared state. This is a rule
+for how a review is conducted, not new enforcement infrastructure. Model
+and harness choice for the reviewer stays exactly what section 3 already
+assigns for the matched rule - this policy changes when a reviewer is
+required and what it must report, never which model reviews it.
 
 Because each dispatched task owns its own isolated worktree (section 2), a
 separately dispatched reviewer cannot assume it can see the implementation

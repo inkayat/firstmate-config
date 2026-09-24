@@ -791,6 +791,133 @@ json20c=$(FM_TEST_AVAILABLE='' run_doctor --json)
 unset FM_TEST_AVAILABLE
 status_exit_agree '20c genuine failure' "$out20c" "$json20c" "$code20c"
 
+# =============================================================================
+# 21. Missing/broken official FirstMate checkout (no AGENTS.md at all under
+#     FIRSTMATE_ROOT) -> mandatory FAIL, nonzero exit. bin/fm-doctor's own
+#     exit-code doc comment names this first among genuine mandatory breaks
+#     (FIRSTMATE_BROKEN feeds MANDATORY_FAIL unconditionally,
+#     bin/fm-doctor:230-258,1111): every other scenario in this file always
+#     ships a fixture FIRSTMATE_ROOT with AGENTS.md present, so this branch
+#     had zero coverage. Isolated: copies the full healthy FAKE_FIRSTMATE
+#     tree (both harnesses' primary extension files stay present) and
+#     removes only AGENTS.md, exactly scenario 22b's pattern below - a
+#     bare empty directory would also fail captain.extensions
+#     (bin/fm-doctor:322-327, since CAPTAIN_WATCH_EXT/CAPTAIN_TURNEND_EXT
+#     are themselves computed from FIRSTMATE_ROOT), confounding which
+#     mandatory gate this scenario actually proves.
+# =============================================================================
+BROKEN_FIRSTMATE="$TMP_ROOT/firstmate-no-agents"
+cp -R "$FAKE_FIRSTMATE" "$BROKEN_FIRSTMATE"
+rm -f "$BROKEN_FIRSTMATE/AGENTS.md"
+RUN_FIRSTMATE_ROOT="$BROKEN_FIRSTMATE"
+out=$(run_doctor); code=$?
+json=$(run_doctor --json)
+unset RUN_FIRSTMATE_ROOT
+if [ "$code" -eq 0 ]; then fail "21 missing official FirstMate: expected nonzero exit (mandatory), got 0"; else pass '21 missing official FirstMate: exit code is nonzero (mandatory)'; fi
+contains '21 missing official FirstMate: firstmate.official reports FAIL' "$out" 'FAIL          firstmate.official'
+contains '21 missing official FirstMate: names the missing AGENTS.md path' "$out" "no AGENTS.md under $BROKEN_FIRSTMATE"
+contains '21 missing official FirstMate: captain.extensions is unaffected (isolated cause - both harnesses'"'"' extension files are still present)' "$out" 'PASS          captain.extensions'
+contains '21 missing official FirstMate: overall exit is reported nonzero' "$out" 'exit=1'
+contains '21 missing official FirstMate JSON: exit_code is 1' "$json" '"exit_code":1'
+
+# =============================================================================
+# 22. Selected Captain harness unusable -> mandatory FAIL, nonzero exit.
+#     Two independent real causes, both feeding NO_USABLE_CAPTAIN
+#     (bin/fm-doctor:322-334,412-413,1113): the selected harness's own
+#     executable missing from PATH (captain.harness), and the selected
+#     harness's own primary extension file missing (captain.extensions).
+#     Neither had any test reference anywhere in this repository. Each
+#     sub-scenario changes only the one fixture input under test.
+# =============================================================================
+# 22a. The selected (default omp) Captain executable is missing from PATH.
+FAKE_BIN_NO_OMP="$TMP_ROOT/bin-no-omp"
+mkdir -p "$FAKE_BIN_NO_OMP"
+ln -s "$FAKE_BIN/pi" "$FAKE_BIN_NO_OMP/pi"
+ln -s "$FAKE_BIN/claude" "$FAKE_BIN_NO_OMP/claude"
+ln -s "$FAKE_BIN/herdr" "$FAKE_BIN_NO_OMP/herdr"
+RUN_PATH="$LAUNCHER_OK:$FAKE_BIN_NO_OMP:$SYS_PATH"
+out=$(run_doctor); code=$?
+json=$(run_doctor --json)
+unset RUN_PATH
+if [ "$code" -eq 0 ]; then fail "22a missing selected captain executable: expected nonzero exit (mandatory), got 0"; else pass '22a missing selected captain executable: exit code is nonzero (mandatory)'; fi
+contains '22a missing selected captain executable: captain.harness reports FAIL' "$out" 'FAIL          captain.harness'
+contains '22a missing selected captain executable: names the missing executable' "$out" 'selected Captain executable is missing'
+contains '22a missing selected captain executable: overall exit is reported nonzero' "$out" 'exit=1'
+contains '22a missing selected captain executable JSON: exit_code is 1' "$json" '"exit_code":1'
+
+# 22b. The selected (default omp) Captain's own primary extension file is
+#      missing, while its executable and every other fixture stays healthy.
+FAKE_FIRSTMATE_NOEXT="$TMP_ROOT/firstmate-no-omp-ext"
+cp -R "$FAKE_FIRSTMATE" "$FAKE_FIRSTMATE_NOEXT"
+rm -f "$FAKE_FIRSTMATE_NOEXT/.omp/extensions/fm-primary-omp-watch.ts"
+RUN_FIRSTMATE_ROOT="$FAKE_FIRSTMATE_NOEXT"
+out=$(run_doctor); code=$?
+json=$(run_doctor --json)
+unset RUN_FIRSTMATE_ROOT
+if [ "$code" -eq 0 ]; then fail "22b missing selected captain extension: expected nonzero exit (mandatory), got 0"; else pass '22b missing selected captain extension: exit code is nonzero (mandatory)'; fi
+contains '22b missing selected captain extension: captain.extensions reports FAIL' "$out" 'FAIL          captain.extensions'
+contains '22b missing selected captain extension: firstmate.official is unaffected (isolated cause)' "$out" 'PASS          firstmate.official'
+contains '22b missing selected captain extension: overall exit is reported nonzero' "$out" 'exit=1'
+contains '22b missing selected captain extension JSON: exit_code is 1' "$json" '"exit_code":1'
+
+# =============================================================================
+# 23. Neither harness executable is on PATH at all -> harnesses.pi and
+#     harnesses.omp both report their own bare binary-presence FAIL
+#     (bin/fm-doctor:579-611), and - since the default selected harness is
+#     omp - captain.harness FAILs on exactly the same missing binary,
+#     genuinely gating the mandatory exit code
+#     (NO_USABLE_CAPTAIN -> MANDATORY_FAIL, bin/fm-doctor:412-413,1113). No
+#     prior scenario ever removed both harness executables from PATH at
+#     once: every RUN_PATH override in this file kept the fake-bin
+#     directory (carrying both) on PATH.
+# =============================================================================
+FAKE_BIN_NEITHER="$TMP_ROOT/bin-neither-harness"
+mkdir -p "$FAKE_BIN_NEITHER"
+ln -s "$FAKE_BIN/herdr" "$FAKE_BIN_NEITHER/herdr"
+RUN_PATH="$LAUNCHER_OK:$FAKE_BIN_NEITHER:$SYS_PATH"
+out=$(run_doctor); code=$?
+json=$(run_doctor --json)
+unset RUN_PATH
+if [ "$code" -eq 0 ]; then fail "23 neither harness executable on PATH: expected nonzero exit (mandatory), got 0"; else pass '23 neither harness executable on PATH: exit code is nonzero (mandatory)'; fi
+contains '23 neither harness executable on PATH: harnesses.pi reports FAIL' "$out" 'FAIL          harnesses.pi '
+contains '23 neither harness executable on PATH: harnesses.omp reports FAIL' "$out" 'FAIL          harnesses.omp '
+contains '23 neither harness executable on PATH: the selected (omp) captain.harness also FAILs' "$out" 'FAIL          captain.harness'
+contains '23 neither harness executable on PATH: overall exit is reported nonzero' "$out" 'exit=1'
+contains '23 neither harness executable on PATH JSON: exit_code is 1' "$json" '"exit_code":1'
+
+# =============================================================================
+# 24. Missing captain-startup-models.tsv itself (the model chain file) ->
+#     mandatory FAIL, nonzero exit (bin/fm-doctor:344,406-408,412-413,1113).
+#     `grep -rn model_chain tests/` had zero hits outside setup-copy lines
+#     before this scenario: every other fixture always ships a real, valid
+#     model chain file. Mirrors scenario 7's disposable fake-CONFIG_ROOT
+#     pattern (never the real repository's own file), just omitting the one
+#     file under test.
+# =============================================================================
+FAKE_CFG_NOCHAIN="$TMP_ROOT/fake-config-root-no-chain"
+mkdir -p "$FAKE_CFG_NOCHAIN/bin" "$FAKE_CFG_NOCHAIN/firstmate" \
+  "$FAKE_CFG_NOCHAIN/roles/senior-fullstack" "$FAKE_CFG_NOCHAIN/roles/architecture" "$FAKE_CFG_NOCHAIN/roles/tenth-man"
+cp "$CONFIG_ROOT/bin/fm-doctor" "$FAKE_CFG_NOCHAIN/bin/fm-doctor"
+ln -s "$CONFIG_ROOT/bin/fm" "$FAKE_CFG_NOCHAIN/bin/fm"
+chmod +x "$FAKE_CFG_NOCHAIN/bin/fm-doctor"
+cp "$CONFIG_ROOT/firstmate/fm-captain-lib.sh" "$FAKE_CFG_NOCHAIN/firstmate/fm-captain-lib.sh"
+cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$FAKE_CFG_NOCHAIN/firstmate/fm-stack-manifest.sh"
+cp "$CONFIG_ROOT/firstmate/stack-manifest.tsv" "$FAKE_CFG_NOCHAIN/firstmate/stack-manifest.tsv"
+cp "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$FAKE_CFG_NOCHAIN/firstmate/crew-dispatch.json"
+printf '# role\n' > "$FAKE_CFG_NOCHAIN/roles/senior-fullstack/ROLE.md"
+printf '# role\n' > "$FAKE_CFG_NOCHAIN/roles/architecture/ROLE.md"
+printf '# role\n' > "$FAKE_CFG_NOCHAIN/roles/tenth-man/ROLE.md"
+# captain-startup-models.tsv deliberately never written.
+RUN_DOC="$FAKE_CFG_NOCHAIN/bin/fm-doctor"
+out=$(run_doctor); code=$?
+json=$(run_doctor --json)
+unset RUN_DOC
+if [ "$code" -eq 0 ]; then fail "24 missing model chain file: expected nonzero exit (mandatory), got 0"; else pass '24 missing model chain file: exit code is nonzero (mandatory)'; fi
+contains '24 missing model chain file: captain.model_chain reports FAIL' "$out" 'FAIL          captain.model_chain'
+contains '24 missing model chain file: names the missing file path' "$out" "$FAKE_CFG_NOCHAIN/firstmate/captain-startup-models.tsv"
+contains '24 missing model chain file: overall exit is reported nonzero' "$out" 'exit=1'
+contains '24 missing model chain file JSON: exit_code is 1' "$json" '"exit_code":1'
+
 
 printf '\nDOCTOR TESTS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]
