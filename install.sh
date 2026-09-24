@@ -20,10 +20,6 @@
 #      settings so its bundled ponytail/ponytail-review duplicates never
 #      collide with step 7's authoritative copies, and defaultMode=off in
 #      ponytail's own config
-#  10. clones/pins the optional specialist skill vault (agent-skill-vault)
-#      into an install-managed, commit-qualified cache directory, detached at
-#      the exact commit in skills/vault.lock; never symlinked into
-#      ~/.agents/skills
 #
 # What it never does: store a credential, touch a project repository, or modify
 # anything tracked in the official FirstMate checkout.
@@ -36,10 +32,6 @@ set -u
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=firstmate/fm-stack-manifest.sh
 . "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh"
-# The one owner of vault pin parsing, commit-qualified path construction, and
-# cache verification, shared with bin/fm-doctor and bin/fm-version.
-# shellcheck source=firstmate/fm-vault-lib.sh
-. "$CONFIG_ROOT/firstmate/fm-vault-lib.sh"
 if ! stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv"; then
   printf 'install: %s\n' "$SM_LOAD_ERROR" >&2
   exit 1
@@ -52,10 +44,6 @@ ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
 SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
 SKILL_CACHE="${FM_SKILL_CACHE:-$HOME/.local/share/firstmate-config/skills-src}"
 BIN_DIR="${FM_BIN_DIR:-$HOME/.local/bin}"
-VAULT_CACHE="${FM_VAULT_CACHE:-$HOME/.local/share/firstmate-config/vault-src}"
-VAULT_LOCK="$CONFIG_ROOT/skills/vault.lock"
-fm_vault_load "$VAULT_LOCK" "$VAULT_CACHE"
-VAULT_LOCK_STATE=$?
 # Every git probe below inspects a repository it must not silently write to
 # (an existing official checkout it never updates); a clone still needs a
 # real write, which this setting does not affect.
@@ -143,15 +131,8 @@ else
   done
 fi
 
-# --- 4. machine-local resolution -------------------------------------------
-# FM_SKILL_VAULT_ROOT is a handoff surface: a worker is given a skill path
-# resolved beneath it. Only a commit directory that verifies right now is ever
-# published there. When the pinned directory does not verify (not cloned yet,
-# corrupt, wrong revision, invalid catalog), the previously published root is
-# kept if it still verifies, and otherwise the value is left empty - never a
-# path to unverified vault content. Step 10 publishes the new root itself once
-# it has cloned and verified the directory.
-write_env_file() { # <vault-root> -> prints ok|drift|changed|fail
+# --- 4. machine-local environment -------------------------------------------
+write_env_file() { # -> prints ok|drift|changed|fail
   local env_body
   env_body=$(cat <<EOF
 # Written by firstmate-config/install.sh. Machine-local: never commit this.
@@ -159,8 +140,7 @@ FIRSTMATE_ROOT="$FIRSTMATE_ROOT"
 FM_CONFIG_ROOT="$CONFIG_ROOT"
 FM_HOME="$FM_HOME"
 FM_BACKEND="$FM_BACKEND"
-FM_SKILL_VAULT_ROOT="$1"
-export FIRSTMATE_ROOT FM_CONFIG_ROOT FM_HOME FM_BACKEND FM_SKILL_VAULT_ROOT
+export FIRSTMATE_ROOT FM_CONFIG_ROOT FM_HOME FM_BACKEND
 EOF
   )
   if [ -f "$ENV_FILE" ] && [ "$(cat "$ENV_FILE")" = "$env_body" ]; then printf ok; return; fi
@@ -172,79 +152,13 @@ EOF
   fi
 }
 
-# canonical_dir <dir> -> the physical absolute path of an existing directory.
-#   A relative FM_VAULT_CACHE (a supported override) would otherwise publish
-#   a relative FM_SKILL_VAULT_ROOT whose meaning silently depends on
-#   whatever cwd a later reader happens to be in - the exact ambiguity the
-#   consuming lookup command in primary-policy.md now refuses outright.
-#   Resolving physically here, once, at the one trusted place this value is
-#   ever written, keeps every later reader's contract simple: an absolute,
-#   symlink/`..`-free path, from any caller cwd. No raw-path fallback: a
-#   directory fm_vault_verify just confirmed exists should always resolve,
-#   so a failure here (race, permission) is real and must propagate as a
-#   failure, never silently republish an unresolved/relative path.
-canonical_dir() {
-  ( CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P )
-}
-
-vault_publishable_root() { # -> the only vault root safe to publish right now.
-  #   Returns 1 (distinct from the normal 0-with-empty-stdout "nothing
-  #   configured" case) when a verified candidate's physical path could not
-  #   be resolved - the caller must treat that as a real failure, never
-  #   silently publish empty/relative as if the vault were just unconfigured.
-  local previous state dir
-  if [ "$VAULT_LOCK_STATE" -eq 0 ]; then
-    state=$(fm_vault_verify "$FM_VAULT_DIR" "$FM_VAULT_COMMIT")
-    case $state in
-      healthy|unverified_catalog)
-        dir=$(canonical_dir "$FM_VAULT_DIR") || return 1
-        printf '%s' "$dir"
-        return 0 ;;
-    esac
-  fi
-  # No lock at all means the vault is deliberately unconfigured: publish
-  # nothing, so removing skills/vault.lock actually disables it instead of
-  # leaving it reachable through a stale environment value. Last-known-good
-  # below is only for a still-configured vault whose candidate does not verify.
-  [ "$VAULT_LOCK_STATE" -ne 1 ] || return 0
-  # A commit directory is named for its own commit, so the previously
-  # published value carries everything needed to re-verify it.
-  previous=$([ ! -f "$ENV_FILE" ] || sed -n 's/^FM_SKILL_VAULT_ROOT="\(.*\)"$/\1/p' "$ENV_FILE" | head -1)
-  [ -n "$previous" ] || return 0
-  state=$(fm_vault_verify "$previous" "$(basename "$previous")")
-  case $state in
-    healthy|unverified_catalog)
-      dir=$(canonical_dir "$previous") || return 1
-      printf '%s' "$dir" ;;
-  esac
-}
-
-publish_vault_root() { # <verified-dir>, called only after verification.
-  #   Returns 1 if the physical path cannot be resolved; the caller must
-  #   failf, never treat that as a successful (if silent) publish.
-  local dir
-  dir=$(canonical_dir "$1") || return 1
-  [ "$dir" != "$VAULT_PUBLISHED_ROOT" ] || return 0
-  case $(write_env_file "$dir") in
-    ok) : ;;
-    changed) changedf "published FM_SKILL_VAULT_ROOT=$dir" ;;
-    drift) driftf "publish FM_SKILL_VAULT_ROOT=$dir in $ENV_FILE" ;;
-    *) failf "cannot publish FM_SKILL_VAULT_ROOT in $ENV_FILE" ;;
-  esac
-  VAULT_PUBLISHED_ROOT=$dir
-}
-
 step '4. machine-local environment'
-if VAULT_PUBLISHED_ROOT=$(vault_publishable_root); then
-  case $(write_env_file "$VAULT_PUBLISHED_ROOT") in
-    ok) ok "$ENV_FILE" ;;
-    drift) driftf "write $ENV_FILE" ;;
-    changed) changedf "wrote $ENV_FILE" ;;
-    *) failf "cannot write $ENV_FILE" ;;
-  esac
-else
-  failf "specialist skill vault: a verified cache directory's physical path could not be resolved for publication"
-fi
+case $(write_env_file) in
+  ok) ok "$ENV_FILE" ;;
+  drift) driftf "write $ENV_FILE" ;;
+  changed) changedf "wrote $ENV_FILE" ;;
+  *) failf "cannot write $ENV_FILE" ;;
+esac
 
 # --- 5. runtime backend -----------------------------------------------------
 step '5. runtime backend'
@@ -497,70 +411,6 @@ PY
         esac
       fi
     fi
-  fi
-fi
-
-# --- 10. specialist skill vault (optional) ----------------------------------
-# A private, curated, provenance-pinned index of specialist skills
-# (agent-skill-vault) a Captain can name by exact path in a task brief. This
-# step only clones/pins the repository itself into a machine-local,
-# install-managed cache directory named for the exact commit in
-# skills/vault.lock - it never symlinks anything from it into $SKILLS_ROOT or
-# any other global skill root (see firstmate/primary-policy.md "Specialist
-# skill vault").
-#
-# A commit directory is immutable: it is created once, verified, and then only
-# ever read. Nothing here re-points, resets, or deletes an existing one - a
-# new pin is a new directory beside it, and a directory that fails
-# verification is reported for a human to remove, never repaired in place. The
-# only path that ever deletes anything is a failed fresh clone removing its
-# own incomplete staging directory. Absent skills/vault.lock, this step is a
-# no-op: the vault is entirely optional.
-step '10. specialist skill vault'
-if [ "$VAULT_LOCK_STATE" -eq 1 ]; then
-  warn 'no skills/vault.lock; skipping specialist skill vault'
-elif [ "$VAULT_LOCK_STATE" -ne 0 ]; then
-  failf "skills/vault.lock is malformed (expected '<repo><TAB><40-hex-commit>')"
-elif [ -e "$FM_VAULT_DIR" ]; then
-  vault_state=$(fm_vault_verify "$FM_VAULT_DIR" "$FM_VAULT_COMMIT")
-  case $vault_state in
-    healthy)
-      printf '  ok      %s at %s\n' "$FM_VAULT_REPO" "${FM_VAULT_COMMIT:0:12}"
-      publish_vault_root "$FM_VAULT_DIR" || failf "$FM_VAULT_REPO cache verified but its physical path could not be resolved for publication" ;;
-    unverified_catalog)
-      warn "$(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")"
-      publish_vault_root "$FM_VAULT_DIR" || failf "$FM_VAULT_REPO cache verified but its physical path could not be resolved for publication" ;;
-    *) failf "$FM_VAULT_REPO cache $(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")" ;;
-  esac
-elif would "clone $FM_VAULT_REPO into $FM_VAULT_DIR, pinned to $FM_VAULT_COMMIT"; then
-  # Clone into a staging directory and move it into place only once it
-  # verifies, so an interrupted or wrong clone can never leave a
-  # half-populated directory that a later run would read as the pinned commit.
-  vault_stage="$FM_VAULT_DIR.incomplete"
-  rm -rf "$vault_stage"
-  mkdir -p "$(dirname "$FM_VAULT_DIR")"
-  if git clone -q "https://github.com/$FM_VAULT_REPO.git" "$vault_stage" \
-     && git -C "$vault_stage" checkout -q --detach "$FM_VAULT_COMMIT" 2>/dev/null; then
-    vault_state=$(fm_vault_verify "$vault_stage" "$FM_VAULT_COMMIT")
-    case $vault_state in
-      healthy|unverified_catalog)
-        if mv "$vault_stage" "$FM_VAULT_DIR"; then
-          changedf "cloned $FM_VAULT_REPO into $FM_VAULT_DIR, pinned to ${FM_VAULT_COMMIT:0:12}"
-          [ "$vault_state" = healthy ] || warn "$(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")"
-          publish_vault_root "$FM_VAULT_DIR" || failf "$FM_VAULT_REPO clone verified but its physical path could not be resolved for publication"
-        else
-          failf "could not move the verified clone into $FM_VAULT_DIR"
-          rm -rf "$vault_stage"
-        fi
-        ;;
-      *)
-        failf "$FM_VAULT_REPO clone $(fm_vault_state_reason "$vault_state" "$FM_VAULT_DIR")"
-        rm -rf "$vault_stage"
-        ;;
-    esac
-  else
-    failf "could not clone $FM_VAULT_REPO and pin it to $FM_VAULT_COMMIT"
-    rm -rf "$vault_stage"
   fi
 fi
 

@@ -169,7 +169,6 @@ ln -s "$CONFIG_ROOT/bin/fm" "$DOC_CFG/bin/fm"
 chmod +x "$DOC_CFG/bin/fm-doctor"
 cp "$CONFIG_ROOT/firstmate/fm-captain-lib.sh" "$DOC_CFG/firstmate/fm-captain-lib.sh"
 cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$DOC_CFG/firstmate/fm-stack-manifest.sh"
-cp "$CONFIG_ROOT/firstmate/fm-vault-lib.sh" "$DOC_CFG/firstmate/fm-vault-lib.sh"
 cp "$CONFIG_ROOT/firstmate/captain-startup-models.tsv" "$DOC_CFG/firstmate/captain-startup-models.tsv"
 cp "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$DOC_CFG/firstmate/crew-dispatch.json"
 printf '# role\n' > "$DOC_CFG/roles/senior-fullstack/ROLE.md"
@@ -410,7 +409,6 @@ mkdir -p "$INST_CFG/bin" "$INST_CFG/firstmate" "$INST_CFG/skills"
 cp "$CONFIG_ROOT/install.sh" "$INST_CFG/install.sh"
 chmod +x "$INST_CFG/install.sh"
 cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$INST_CFG/firstmate/fm-stack-manifest.sh"
-cp "$CONFIG_ROOT/firstmate/fm-vault-lib.sh" "$INST_CFG/firstmate/fm-vault-lib.sh"
 printf '{}\n' > "$INST_CFG/firstmate/crew-dispatch.json"
 printf '# captain notes\n' > "$INST_CFG/firstmate/captain.md"
 : > "$INST_CFG/bin/fm"; chmod +x "$INST_CFG/bin/fm"
@@ -476,6 +474,29 @@ check 'C1 rerun: exit code is 0' 0 "$code2"
 contains 'C1 rerun: 0 change(s), idempotent' "$out2" 'install: 0 change(s), 0 failure(s)'
 contains 'C1 rerun: existing checkout matches the baseline' "$out2" "matches the validated baseline commit $INST_C1"
 
+# --- C1b: a stale FM_SKILL_VAULT_ROOT from a pre-removal install is dropped
+#          by the next reconcile - the generated env is fully rewritten, so
+#          an old exported value can never keep leaking into a worker's
+#          environment after this machine's vault integration is removed.
+cat > "$TMP_ROOT/inst-env-c1" <<EOF
+# Written by firstmate-config/install.sh. Machine-local: never commit this.
+FIRSTMATE_ROOT="$TMP_ROOT/inst-dest-c1"
+FM_CONFIG_ROOT="$INST_CFG"
+FM_HOME="$TMP_ROOT/inst-fm-home-c1"
+FM_BACKEND="herdr"
+FM_SKILL_VAULT_ROOT="$TMP_ROOT/stale-vault-cache/some-owner-some-repo/deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+export FIRSTMATE_ROOT FM_CONFIG_ROOT FM_HOME FM_BACKEND FM_SKILL_VAULT_ROOT
+EOF
+out_c1b=$(run_fake_install c1); code_c1b=$?
+check 'C1b stale vault env: reconcile exit code is 0' 0 "$code_c1b"
+not_contains 'C1b stale vault env: the rewritten env file no longer exports FM_SKILL_VAULT_ROOT' \
+  "$(cat "$TMP_ROOT/inst-env-c1" 2>/dev/null)" 'FM_SKILL_VAULT_ROOT'
+if (. "$TMP_ROOT/inst-env-c1"; [ -z "${FM_SKILL_VAULT_ROOT:-}" ]); then
+  pass 'C1b stale vault env: sourcing the rewritten env leaves FM_SKILL_VAULT_ROOT unset'
+else
+  fail 'C1b stale vault env: sourcing the rewritten env still exports FM_SKILL_VAULT_ROOT'
+fi
+
 verify_out=$(run_fake_install c1 --verify)
 contains 'C1 verify: reports 0 drift item(s)' "$verify_out" '0 drift item(s), 0 failure(s)'
 
@@ -524,7 +545,7 @@ contains 'D1 install.sh --verify names the tracked manifest'"'"'s validated comm
 
 # --- D2: `fm version --json` surfaces the same tracked manifest identity ---
 version_json=$(FM_CONFIG_ENV="$TMP_ROOT/d2-no-env" "$CONFIG_ROOT/bin/fm-version" --json)
-contains 'D2 fm version: JSON schema_version is 3 (specialist_skill_vault field added)' "$version_json" '"schema_version":3'
+contains 'D2 fm version: JSON schema_version is 4 (specialist_skill_vault field removed)' "$version_json" '"schema_version":4'
 contains 'D2 fm version: carries the tracked manifest'"'"'s validated commit' "$version_json" "\"firstmate_validated_commit\":\"$SM_FIRSTMATE_COMMIT\""
 version_human=$(FM_CONFIG_ENV="$TMP_ROOT/d2-no-env" "$CONFIG_ROOT/bin/fm-version")
 contains 'D2 fm version: human output names the validated baseline' "$version_human" "Validated FirstMate baseline: $SM_FIRSTMATE_COMMIT"

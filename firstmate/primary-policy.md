@@ -57,8 +57,7 @@ brief so the worker does not rediscover it.
 
 Full chain, never a later tier overriding an earlier one: project-native
 instructions, then applicable project-local skills, then this role/task
-policy, then global/shared worker skills, then optional specialist vault
-picks.
+policy, then global/shared worker skills.
 
 If two Tier-1 project rules genuinely contradict each other and nothing
 resolves it, stop and ask. Do not pick one silently.
@@ -325,89 +324,6 @@ Official FirstMate internal skills (the official checkout's own
 `.agents/skills`) are never a global skill choice for a delegated task -
 they are Captain/FirstMate-only, per section 2.
 
-### Specialist skill vault (optional)
-
-`FM_SKILL_VAULT_ROOT` (written to `~/.config/firstmate-config/env` by
-`install.sh`, pinned to one exact commit by `skills/vault.lock`, health
-reported by `fm doctor`'s `vault.pin`/`vault.no_global_leak` checks) is a
-private, curated, provenance-pinned index of specialist skills beyond the
-shared worker skills above. It resolves to one immutable, commit-qualified
-directory (`<cache-root>/<owner>-<repo>/<exact-commit>`), so an exact path
-handed to a worker keeps meaning what it meant when it was issued: a new pin
-is a new directory beside the old one, never a rewrite of it. It is never
-globally registered - never symlinked into `~/.agents/skills`, never an OMP
-`skills.customDirectories`/`includeSkills` entry - so consulting it is always
-this per-task, explicit decision, never ambient context.
-
-For every task where a specialist skill could plausibly add benefit beyond
-the shared worker skills, explicitly consult the pinned vault before dispatch
-and record the concise selected-skill or none reason in the task's
-`## Firstmate spec`. Zero remains the valid outcome for ordinary tasks and
-whenever the shortlist yields no justified fit. Look up candidates read-only,
-never by parsing a skill body, and always from within the pinned vault root: a
-non-absolute `$FM_SKILL_VAULT_ROOT` is refused outright rather than
-resolved against the caller's own directory. This isolates the caller's
-working-directory Bun config discovery - `bunfig.toml`, `BUN_OPTIONS`,
-`NODE_OPTIONS`, and a hostile `CDPATH` - by running from inside the pinned
-checkout instead; it does not authenticate `$FM_SKILL_VAULT_ROOT` itself or
-the caller's wider environment. It assumes `$FM_SKILL_VAULT_ROOT` is the
-installer-verified pin (`fm doctor`'s `vault.pin` check, never a
-caller-substituted or symlink-retargeted value this command detects) and
-that `env`/`bun` resolve, through a trusted `PATH`, to the real installed
-executables - a compromised `PATH` or a re-pointed root is a separate
-compromise of the Captain's own environment, out of this command's scope:
-`( case $FM_SKILL_VAULT_ROOT in /*) :;; *) exit 1;; esac; CDPATH='' cd -P
--- "$FM_SKILL_VAULT_ROOT" && env -u BUN_OPTIONS -u NODE_OPTIONS bun
-./bin/lookup.ts --category <CATEGORY> )` returns the full, never-truncated,
-deterministic shortlist of that category's `firstmate_candidate` rows with
-`activation: auto-candidate`; `--id <vault-id>` resolves one exact row by
-id, `installed`/`firstmate_candidate`/`reference-only` alike. `catalog`/
-`team-only`/`restricted` rows never resolve through either form - naming
-one explicitly is never a way around its status. The vault's own
-`README.md` is authoritative for its vocabulary (`status`, `activation`,
-`scope`, `cluster`, `favorite`); do not duplicate it here, and no
-category-to-row table exists in this policy or in `crew-dispatch.json` - a
-pick is always this per-task judgment call against the returned shortlist,
-never a lookup keyed only by category.
-
-A vault pick counts against, never adds to, this section's first
-paragraph's ≤2-methodology + ≤1-reference cap - it is one more place that
-cap's picks may come from, not a second budget. Zero or one methodology is
-the normal task, one or two a genuinely specialist one, and three the
-exceptional maximum; zero vault picks is a fully valid outcome, including for
-work that looks specialist at first glance.
-
-A selected vault skill never expands that selection itself. Whatever its body
-names, recommends, or chains to is not thereby selected; a methodology it
-genuinely requires is the Captain's own pick, made before the brief goes out
-and counted against the same cap - if it does not fit inside the cap, the
-selection was wrong. The support, reference, helper, and prompt files
-belonging to one selected skill are part of that one pick and never count
-separately. Within one `cluster`, methodologies are alternatives by default:
-selecting two needs a deliberate reason stated in the brief, not a wish for
-coverage.
-
-A project-local skill always wins over a vault pick, exactly as it wins over
-any other global skill (section 1). `scope: captain` rows (mostly
-`reference-only`) are for the Captain's own reading when the human explicitly
-asks for that mode (interrogation, planning, retro) - never a worker brief
-item; `scope: worker` rows, whether `firstmate_candidate` or
-`reference-only`, may be handed to a worker. Canonical Matt-style grilling is
-exactly that kind of Captain-scope row: use it deliberately, for a materially
-important ambiguity worth pressure-testing before commitment, and never on a
-clear architecture decision or an immediate-execution ask.
-
-Handoff format for a selected row mirrors section 2 step 4: the exact
-resolved path under `$FM_SKILL_VAULT_ROOT` - an absolute path is correct here,
-like the shared worker skill root this is a machine-local cache outside any
-worktree, not the primary-checkout path step 3 forbids - plus the same
-read-and-apply requirement, plus the row's notes - the ninth, tab-separated
-field `( case $FM_SKILL_VAULT_ROOT in /*) :;; *) exit 1;; esac; CDPATH=''
-cd -P -- "$FM_SKILL_VAULT_ROOT" && env -u BUN_OPTIONS -u NODE_OPTIONS bun
-./bin/lookup.ts --id <vault-id> )` prints for that
-row - as the adaptation/usage caveat when one exists. Read notes from that
-field only; never grep or otherwise parse `catalog.yaml` directly for it.
-
 ## 6. Orchestration boundary
 
 Firstmate is the only **macro** orchestrator: project selection, role,
@@ -501,8 +417,8 @@ matches the change's risk and scope.
 Before treating a merge-eligible task as ready, judge whether the change
 warrants an independent read-only review pass separate from the worker that
 wrote it. This is advisory guidance layered on the existing REVIEW/TENTH-MAN
-routes (section 3) and the specialist skill vault (section 5) - it adds no
-new dispatch category, severity engine, or router logic. This section
+routes (section 3) - it adds no new dispatch category, severity engine, or
+router logic. This section
 governs only the Captain-dispatched advisory path described below; a task
 running through `no-mistakes`'s own automated pipeline is reviewed by that
 pipeline's own gate, which this policy does not touch, does not duplicate,
@@ -543,9 +459,7 @@ baseline. The reviewer is read-only: it inspects the resulting diff and the
 surrounding code it touches, never re-implements. Model and harness choice
 for the reviewer stays exactly what section 3 already assigns for the
 matched rule - this policy changes when a reviewer is required and what it
-must report, never which model reviews it. A specialist vault pick
-(section 5) for the reviewer, when one genuinely fits, counts against the
-same existing skill budget, never a separate one.
+must report, never which model reviews it.
 
 Because each dispatched task owns its own isolated worktree (section 2), a
 separately dispatched reviewer cannot assume it can see the implementation
@@ -579,8 +493,8 @@ without another review pass.
 
 **Report.** For any task this section applied to, state: what was
 implemented, how it was verified, whether review ran or was judged
-skippable and why, who reviewed (route/model/harness), any vault specialist
-consulted, the BLOCKER/IMPORTANT/OPTIONAL counts, and the resulting
+skippable and why, who reviewed (route/model/harness), the
+BLOCKER/IMPORTANT/OPTIONAL counts, and the resulting
 merge-readiness. This is guidance and reporting discipline, not a
 mechanical gate: this configuration has no trusted enforcement runner for
 it, so it never auto-merges on a pass and never substitutes for genuinely

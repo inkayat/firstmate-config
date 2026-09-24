@@ -158,7 +158,12 @@ resolve_model_chain() {
 # detection reads them, so a captain started from inside another agent's pane
 # would misreport its own harness. Herdr pane identity is deliberately kept:
 # when fm runs inside a herdr pane, that pane really is the captain's.
-SCRUB=(CLAUDECODE OMPCODE PI_CODING_AGENT FM_PI_HARNESS FM_OMP_HARNESS CURSOR_AGENT CURSOR_INVOKED_AS GEMINI_CLI GROK_AGENT)
+# FM_SKILL_VAULT_ROOT is the removed specialist-vault handoff surface:
+# sourcing the rewritten env file above only sets what that file assigns, it
+# never clears a value the calling shell already exported, so a stale export
+# from before this integration was removed must be scrubbed here too or it
+# would still reach the Captain process this launcher execs below.
+SCRUB=(CLAUDECODE OMPCODE PI_CODING_AGENT FM_PI_HARNESS FM_OMP_HARNESS CURSOR_AGENT CURSOR_INVOKED_AS GEMINI_CLI GROK_AGENT FM_SKILL_VAULT_ROOT)
 SCRUB_ENV=()
 for scrub_name in "${SCRUB[@]}"; do SCRUB_ENV+=(-u "$scrub_name"); done
 

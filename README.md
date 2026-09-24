@@ -47,9 +47,6 @@ policy chooses worker harness, model, effort, and role by task semantics.
   mutating work - advisory only, distinct from `no-mistakes`'s own automated
   pipeline gate (see `firstmate/primary-policy.md` "Independent review
   before merge")
-- Specialist-vault verification runs Bun inside the verified physical pin;
-  lookup also clears inherited Bun/Node preload options, without installing
-  vault skills globally
 - Read-only `fm doctor` and `fm version` diagnostics
 - Fast-forward-only `fm update` and deterministic, idempotent installation
 
@@ -110,7 +107,6 @@ project-native instructions
   > project-local skills
   > role/task policy
   > shared worker skills
-  > optional specialist vault picks
 ```
 
 Project-native context includes root and nested `AGENTS.override.md`,
@@ -119,14 +115,14 @@ project directories such as `.agents/skills`, `.claude/skills`, or
 `.agent/skills`. Shared worker skills are installed under
 `~/.agents/skills` for Pi and OMP discovery.
 
-An optional, private, curated, provenance-pinned specialist skill vault
-(`skills/vault.lock`, `FM_SKILL_VAULT_ROOT`) supplements shared worker skills
-on a per-task, explicit-pick basis - it is never globally registered and never
-adds to the existing per-task skill budget. Each pinned commit is cached in
-its own immutable, commit-qualified directory, so an exact path handed to a
-worker never changes underneath it. See `firstmate/primary-policy.md`
-"Specialist skill vault" for the consumption contract and `fm doctor`'s
-`vault.*` checks for its pin health.
+firstmate-config directly manages its own shared/core skills, installed
+under `~/.agents/skills` by `install.sh`. Project-local skills remain
+project-owned, living under each project's own tracked directories. The
+standalone [`agent-skill-vault`](https://github.com/inkayat/agent-skill-vault)
+repository is a separate, manually curated and evaluated skill collection;
+promoting one of its skills into this repository's shared set is a
+deliberate, explicit decision, never automatic or dynamically looked up at
+runtime.
 
 Official FirstMate internal skills remain separate and are not installed as
 shared worker skills. Context and skill selection are policy and handoff

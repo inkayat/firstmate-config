@@ -8,6 +8,7 @@ failed=0
 pass(){ printf 'ok   - %s\n' "$1"; }
 fail(){ printf 'FAIL - %s\n' "$1" >&2; failed=1; }
 contains(){ case $2 in *"$3"*) pass "$1";; *) fail "$1 (missing '$3')";; esac; }
+not_contains(){ case $2 in *"$3"*) fail "$1 (unexpectedly found '$3')";; *) pass "$1";; esac; }
 
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-version-test.XXXXXX") || exit 1
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -49,8 +50,6 @@ cp "$CONFIG_ROOT/bin/fm-version" "$CONFIG_FIXTURE/bin/fm-version"
 cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$CONFIG_FIXTURE/firstmate/fm-stack-manifest.sh"
 cp "$CONFIG_ROOT/firstmate/stack-manifest.tsv" "$CONFIG_FIXTURE/firstmate/stack-manifest.tsv"
 cp "$CONFIG_ROOT/firstmate/fm-captain-lib.sh" "$CONFIG_FIXTURE/firstmate/fm-captain-lib.sh"
-cp "$CONFIG_ROOT/firstmate/fm-vault-lib.sh" "$CONFIG_FIXTURE/firstmate/fm-vault-lib.sh"
-printf 'test-owner/test-vault\tdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n' > "$CONFIG_FIXTURE/skills/vault.lock"
 
 # shellcheck source=firstmate/fm-stack-manifest.sh
 . "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh"
@@ -65,7 +64,6 @@ contains 'human includes firstmate path' "$out" "official FirstMate: $FIRSTMATE_
 contains 'human includes pi version' "$out" 'Pi: pi 9.9.9'
 contains 'human includes fm home' "$out" "FM_HOME: $TMP_ROOT/fm-home"
 contains 'human includes the validated FirstMate baseline from the shared manifest' "$out" "Validated FirstMate baseline: $MANIFEST_COMMIT"
-contains 'human includes the specialist skill vault pin, read from the tracked lock file' "$out" 'Specialist skill vault pin: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
 
 printf 'dirty\n' >> "$CONFIG_FIXTURE/file.txt"
 out=$(run_version)
@@ -83,10 +81,10 @@ contains 'missing optional version is unknown' "$out" 'OMP: unknown'
 
 json=$(run_version --json)
 if command -v python3 >/dev/null 2>&1; then
-  printf '%s' "$json" | MANIFEST_COMMIT="$MANIFEST_COMMIT" python3 -c 'import json,os,sys; o=json.load(sys.stdin); assert o["schema_version"]==3; assert o["firstmate_config"]["tag"]=="v1.2.3"; assert o["firstmate"]["path"]; assert o["components"]["omp"]=="unknown"; assert o["fm_home"]; assert o["stack_manifest"]["firstmate_validated_commit"]==os.environ["MANIFEST_COMMIT"]; assert o["specialist_skill_vault"]["pinned_commit"]=="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"' && pass 'json schema is valid' || fail 'json schema is valid'
+  printf '%s' "$json" | MANIFEST_COMMIT="$MANIFEST_COMMIT" python3 -c 'import json,os,sys; o=json.load(sys.stdin); assert o["schema_version"]==4; assert o["firstmate_config"]["tag"]=="v1.2.3"; assert o["firstmate"]["path"]; assert o["components"]["omp"]=="unknown"; assert o["fm_home"]; assert o["stack_manifest"]["firstmate_validated_commit"]==os.environ["MANIFEST_COMMIT"]; assert "specialist_skill_vault" not in o' && pass 'json schema is valid' || fail 'json schema is valid'
 else
-  contains 'json has schema version' "$json" '"schema_version":3'
-  contains 'json has the specialist skill vault pin' "$json" '"specialist_skill_vault":{"pinned_commit":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}'
+  contains 'json has schema version' "$json" '"schema_version":4'
+  not_contains 'json never carries the removed specialist skill vault field' "$json" 'specialist_skill_vault'
 fi
 contains 'json carries the shared manifest'"'"'s validated commit, not a duplicated literal' "$json" "\"firstmate_validated_commit\":\"$MANIFEST_COMMIT\""
 

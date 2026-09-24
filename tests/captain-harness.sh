@@ -36,6 +36,7 @@ esac
 printf 'EXEC_HARNESS=omp\nEXEC_CWD=%s\nEXEC_HOME=%s\nEXEC_BACKEND=%s\nEXEC_ORIGIN=%s\n' "$PWD" "$FM_HOME" "$FM_BACKEND" "$FM_FORK_ORIGIN_CWD"
 printf 'EXEC_FOREIGN=%s%s%s\n' "${CLAUDECODE-}" "${PI_CODING_AGENT-}" "${FM_PI_HARNESS-}"
 printf 'EXEC_OMP_MARKER=%s\nEXEC_TIMEOUT=%s\n' "${FM_OMP_HARNESS-}" "${FM_TIMEOUT_MECHANISM_OVERRIDE-}"
+printf 'EXEC_VAULT=%s\n' "${FM_SKILL_VAULT_ROOT-}"
 printf 'EXEC_ARGS=%s\n' "$*"
 SH
 cat > "$TMP/bin/pi" <<'SH'
@@ -48,6 +49,7 @@ case ${1:-} in
   *)
     printf 'EXEC_HARNESS=pi\n'
     printf 'EXEC_OMP_MARKER=%s\nEXEC_TIMEOUT=%s\n' "${FM_OMP_HARNESS-}" "${FM_TIMEOUT_MECHANISM_OVERRIDE-}"
+    printf 'EXEC_VAULT=%s\n' "${FM_SKILL_VAULT_ROOT-}"
     ;;
 esac
 SH
@@ -99,6 +101,18 @@ check 'OMP selects stock timeout topology within ancestry bound' bash "$(field "
 out=$(FM_OMP_HARNESS=omp FM_TIMEOUT_MECHANISM_OVERRIDE= run --harness pi 2>&1)
 check 'Pi fallback does not inherit OMP identity' '' "$(field "$out" EXEC_OMP_MARKER)"
 check 'Pi fallback does not force OMP timeout topology' '' "$(field "$out" EXEC_TIMEOUT)"
+
+# A previously exported FM_SKILL_VAULT_ROOT (the removed specialist-vault
+# handoff surface) simulates a stale value inherited from the calling
+# shell, not one written by any env file (FM_CONFIG_ENV points at an
+# absent path throughout this fixture) - sourcing that absent file cannot
+# clear it, so only bin/fm's own launch-boundary scrub can.
+export FM_SKILL_VAULT_ROOT="$TMP/inherited-stale-vault-root"
+out=$(run 2>&1)
+check 'inherited stale FM_SKILL_VAULT_ROOT never reaches the OMP Captain process' '' "$(field "$out" EXEC_VAULT)"
+out=$(run --harness pi 2>&1)
+check 'inherited stale FM_SKILL_VAULT_ROOT never reaches the Pi Captain process' '' "$(field "$out" EXEC_VAULT)"
+unset FM_SKILL_VAULT_ROOT
 for harness in omp pi; do
   out=$(run --harness "$harness" doctor --json 2>/dev/null)
   actual=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["captain"]["harness"])' 2>/dev/null)

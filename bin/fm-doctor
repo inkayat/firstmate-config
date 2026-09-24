@@ -94,11 +94,6 @@ STACK_MANIFEST="$CONFIG_ROOT/firstmate/stack-manifest.tsv"
 stack_manifest_load "$STACK_MANIFEST"
 STACK_MANIFEST_LOADED=$?
 
-# The one owner of specialist skill vault pin parsing, commit-qualified cache
-# path construction, and cache verification, shared with install.sh.
-# shellcheck source=firstmate/fm-vault-lib.sh
-. "$CONFIG_ROOT/firstmate/fm-vault-lib.sh"
-
 usage() { sed -n '2,/^set -u$/p' "$self" | sed -e 's/^# \{0,1\}//' -e '/^set -u$/d'; }
 
 JSON_MODE=0
@@ -908,125 +903,6 @@ J_SKILLS=$(printf '{"root":%s,"expected":%s,"installed":%s,"missing":%s,"broken_
   "$(json_array "${SKILL_OFFICIAL_LEAK[@]}")")
 
 # =============================================================================
-# SPECIALIST SKILL VAULT (optional)
-# =============================================================================
-
-# Mirrors skills/external.lock's own single-source-of-truth pattern: one
-# tab-separated <repo><TAB><commit> row, parsed - together with the
-# commit-qualified cache path it implies and that directory's verification -
-# by firstmate/fm-vault-lib.sh, the same owner install.sh step 10 uses.
-# Absent skills/vault.lock, the vault is simply not configured
-# (NOT_APPLICABLE) - it is entirely optional.
-VAULT_LOCK="${FM_VAULT_LOCK:-$CONFIG_ROOT/skills/vault.lock}"
-VAULT_CACHE="${FM_VAULT_CACHE:-$HOME/.local/share/firstmate-config/vault-src}"
-fm_vault_load "$VAULT_LOCK" "$VAULT_CACHE"
-VAULT_LOCK_STATE=$?
-VAULT_REPO=$FM_VAULT_REPO
-VAULT_SHA=$FM_VAULT_COMMIT
-VAULT_DIR=$FM_VAULT_DIR
-VAULT_STATE=none
-
-if [ "$VAULT_LOCK_STATE" -eq 1 ]; then
-  add_check vault.pin NOT_APPLICABLE "no skills/vault.lock; specialist skill vault not configured" ""
-elif [ "$VAULT_LOCK_STATE" -ne 0 ]; then
-  VAULT_STATE=malformed
-  add_check vault.pin FAIL "skills/vault.lock is malformed (expected '<repo><TAB><40-hex-commit>')" "$VAULT_LOCK"
-elif [ ! -e "$VAULT_DIR" ]; then
-  VAULT_STATE=absent
-  add_check vault.pin FAIL "specialist skill vault cache absent; run ./install.sh" "$VAULT_DIR"
-else
-  VAULT_STATE=$(fm_vault_verify "$VAULT_DIR" "$VAULT_SHA")
-  case $VAULT_STATE in
-    healthy)
-      add_check vault.pin PASS "specialist skill vault healthy at ${VAULT_SHA:0:12}" "$VAULT_DIR" ;;
-    unverified_catalog)
-      add_check vault.pin UNKNOWN "specialist skill vault $(fm_vault_state_reason "$VAULT_STATE" "$VAULT_DIR")" "$VAULT_DIR" ;;
-    wrong_revision)
-      add_check vault.pin FAIL "specialist skill vault cache is not a checkout of the commit it is named for, pinned ${VAULT_SHA:0:12} (an immutable commit directory is never re-pinned in place); remove it and rerun ./install.sh" "$VAULT_DIR" ;;
-    *)
-      add_check vault.pin FAIL "specialist skill vault cache $(fm_vault_state_reason "$VAULT_STATE" "$VAULT_DIR")" "$VAULT_DIR" ;;
-  esac
-fi
-
-# The vault is never globally registered (README "Specialist skill vault");
-# a stray symlink under $SKILLS_ROOT resolving into the vault cache, or a
-# vault path named in OMP's own skills.customDirectories/includeSkills
-# config, would silently put every one of its entries into every worker
-# session's context, defeating the whole per-task-explicit-path design.
-#
-# Containment is decided on canonical paths, never on the text in the config
-# file: an OMP entry may be a symlink alias whose name shares nothing with the
-# cache, and the cache root itself may sit under a symlinked HOME. The whole
-# cache root is the boundary, not just the currently pinned commit directory -
-# registering a superseded commit directory leaks exactly as much.
-VAULT_LEAK=()
-VAULT_UNRESOLVED=()
-if [ "$VAULT_LOCK_STATE" -ne 0 ]; then
-  add_check vault.no_global_leak NOT_APPLICABLE "specialist skill vault not configured" ""
-else
-  vault_cache_real=$(real_dir "$VAULT_CACHE")
-  [ -n "$vault_cache_real" ] || vault_cache_real=$VAULT_CACHE
-  inside_vault() { # <canonical-path> -> 0 when it is the cache root or below it
-    case $1 in "$vault_cache_real"/*|"$vault_cache_real") return 0 ;; esac
-    return 1
-  }
-  if [ -d "$SKILLS_ROOT" ]; then
-    for entry in "$SKILLS_ROOT"/*; do
-      [ -e "$entry" ] || continue
-      resolved=$(real_dir "$entry")
-      [ -n "$resolved" ] || resolved=$(canon_path "$entry")
-      ! inside_vault "$resolved" || VAULT_LEAK+=("$(basename "$entry")")
-    done
-  fi
-  if [ -r "$OMP_CONFIG" ]; then
-    # Every filesystem-path scalar in OMP's own config, tilde-expanded exactly
-    # as OMP expands it at load time, then canonicalized. Both YAML shapes OMP
-    # accepts for the same key are read: block lists (`- /path`) and flow
-    # sequences (`customDirectories: ["/a", "/b"]`). A path that resolves is
-    # judged by canonical ancestry; one that cannot be resolved at all is
-    # reported UNKNOWN rather than quietly passing.
-    omp_leaks=0
-    while IFS= read -r omp_path; do
-      [ -n "$omp_path" ] || continue
-      case $omp_path in "~/"*) omp_path="$HOME/${omp_path#\~/}" ;; "~") omp_path=$HOME ;; esac
-      resolved=$(real_dir "$omp_path")
-      if [ -n "$resolved" ]; then
-        ! inside_vault "$resolved" || omp_leaks=1
-      elif inside_vault "$omp_path"; then
-        omp_leaks=1
-      else
-        VAULT_UNRESOLVED+=("$omp_path")
-      fi
-    done < <(sed -e 's/#.*$//' "$OMP_CONFIG" |
-      sed -e 's/^\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*:[[:space:]]*\)\[\(.*\)\]/\1\2/' |
-      tr ',' '\n' |
-      sed -n -E 's/^[[:space:]]*(-[[:space:]]*|[A-Za-z_][A-Za-z0-9_]*:[[:space:]]*)?["'"'"']?([~/][^"'"'"']*).*$/\2/p' |
-      sed -e 's/[[:space:]]*$//')
-    # Lower-bound safety net: whatever shape the extractor above did or did not
-    # recognise, the cache path appearing verbatim in the config - absolute or
-    # in the ~/-relative form OMP expands itself - is a leak.
-    vault_cache_tilde=''
-    case $vault_cache_real in "$HOME"/*) vault_cache_tilde="~${vault_cache_real#"$HOME"}" ;; esac
-    if grep -qF "$vault_cache_real" "$OMP_CONFIG" 2>/dev/null ||
-      { [ -n "$vault_cache_tilde" ] && grep -qF "$vault_cache_tilde" "$OMP_CONFIG" 2>/dev/null; }; then
-      omp_leaks=1
-    fi
-    [ "$omp_leaks" -eq 0 ] || VAULT_LEAK+=("omp:$OMP_CONFIG")
-  fi
-  if [ "${#VAULT_LEAK[@]}" -ne 0 ]; then
-    add_check vault.no_global_leak FAIL "global skill(s) or OMP config resolve into the specialist skill vault cache, which must never be globally registered: ${VAULT_LEAK[*]}" "$SKILLS_ROOT"
-  elif [ "${#VAULT_UNRESOLVED[@]}" -ne 0 ]; then
-    add_check vault.no_global_leak UNKNOWN "cannot resolve OMP-configured skill path(s), so containment in the specialist skill vault cache cannot be decided: ${VAULT_UNRESOLVED[*]}" "$OMP_CONFIG"
-  else
-    add_check vault.no_global_leak PASS "no global skill or OMP config resolves into the specialist skill vault cache" "$SKILLS_ROOT"
-  fi
-fi
-
-J_VAULT=$(printf '{"lock_path":%s,"repo":%s,"pinned_commit":%s,"cache_path":%s,"state":%s,"leaked_into_global":%s,"unresolved_omp_paths":%s}' \
-  "$(jstr "$VAULT_LOCK")" "$(jstr "$VAULT_REPO")" "$(jstr "$VAULT_SHA")" "$(jstr "$VAULT_DIR")" "$(jstr "$VAULT_STATE")" \
-  "$(json_array "${VAULT_LEAK[@]}")" "$(json_array "${VAULT_UNRESOLVED[@]}")")
-
-# =============================================================================
 # PROJECTS
 # =============================================================================
 
@@ -1161,7 +1037,6 @@ section_of() {
     routing.*) printf ROUTING ;;
     roles.*) printf ROLES ;;
     skills.*) printf SKILLS ;;
-    vault.*) printf VAULT ;;
     projects.*) printf PROJECTS ;;
     *) printf OTHER ;;
   esac
@@ -1208,7 +1083,6 @@ render_json() {
   done
   out="$out},"
   out="$out\"skills\":$J_SKILLS,"
-  out="$out\"vault\":$J_VAULT,"
   out="$out\"projects\":$J_PROJECTS,"
   out="$out\"checks\":["
   first=1

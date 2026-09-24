@@ -331,7 +331,6 @@ run_doctor() { # [extra args to fm-doctor]
     FIRSTMATE_ROOT="${RUN_FIRSTMATE_ROOT:-$FAKE_FIRSTMATE}" \
     FM_HOME="${RUN_FM_HOME:-$FAKE_FM_HOME}" \
     FM_CONFIG_ENV="$TMP_ROOT/no-such-env-file" \
-    FM_VAULT_LOCK="${RUN_VAULT_LOCK:-$TMP_ROOT/no-such-vault-lock}" \
     FM_SKILLS_ROOT="${RUN_SKILLS_ROOT:-${RUN_HOME:-$FAKE_HOME}/.agents/skills}" \
     FM_TEST_AVAILABLE="${FM_TEST_AVAILABLE-$HEALTHY_AVAILABLE}" \
     FM_TEST_OMP_AVAILABLE="${FM_TEST_OMP_AVAILABLE-${FM_TEST_AVAILABLE-$HEALTHY_AVAILABLE}}" \
@@ -354,11 +353,7 @@ run_doctor() { # [extra args to fm-doctor]
 #    so fm-doctor correctly reports UNKNOWN rather than guessing PASS or
 #    FAIL. Every other new stack-compatibility check genuinely PASSes here,
 #    because the fake pi/omp/herdr report exactly the tracked manifest's
-#    tested versions (see run_doctor's FM_TEST_*_VERSION defaults). This
-#    scenario runs with the default FM_VAULT_LOCK pointed at a nonexistent
-#    path (see run_doctor), so vault.pin/vault.no_global_leak are honestly
-#    NOT_APPLICABLE here; the vault's own install/doctor states are covered
-#    by tests/vault.sh.
+#    tested versions (see run_doctor's FM_TEST_*_VERSION defaults).
 # =============================================================================
 out=$(run_doctor); code=$?
 check 'healthy: exit code is 0' 0 "$code"
@@ -455,7 +450,6 @@ ln -s "$CONFIG_ROOT/bin/fm" "$FAKE_CFG/bin/fm"
 chmod +x "$FAKE_CFG/bin/fm-doctor"
 cp "$CONFIG_ROOT/firstmate/fm-captain-lib.sh" "$FAKE_CFG/firstmate/fm-captain-lib.sh"
 cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$FAKE_CFG/firstmate/fm-stack-manifest.sh"
-cp "$CONFIG_ROOT/firstmate/fm-vault-lib.sh" "$FAKE_CFG/firstmate/fm-vault-lib.sh"
 cp "$CONFIG_ROOT/firstmate/stack-manifest.tsv" "$FAKE_CFG/firstmate/stack-manifest.tsv"
 cp "$CONFIG_ROOT/firstmate/captain-startup-models.tsv" "$FAKE_CFG/firstmate/captain-startup-models.tsv"
 cp "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$FAKE_CFG/firstmate/crew-dispatch.json"
