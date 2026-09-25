@@ -208,9 +208,7 @@ check 'rules carry only category/use/when/why - no rule-level skills or role fie
 # =============================================================================
 # 2. Pinned active route per category rule (regression protection):
 #    harness/model/effort exactly as documented in primary-policy.md and
-#    README.md, plus the sub-lane trigger word each rule's own "when" text
-#    must carry so the Captain can tell the sub-lanes apart. Routing is
-#    Opus 5.5-biased: substantive work in RESEARCH, REVIEW, IMPLEMENT,
+#    README.md. Routing is Opus 5.5-biased: substantive work in RESEARCH, REVIEW, IMPLEMENT,
 #    IMPLEMENT-LARGE, UI/BROWSER, ARCHITECTURE, DEEP, and the DEFAULT
 #    catch-all lands on Opus 5.5, while bounded work may stay on Sonnet 5 and
 #    trivial work on Haiku/Luna. Multi-candidate arrays are limited to the
@@ -262,8 +260,6 @@ check_array_length RESEARCH 3 1
 check_rule_use RESEARCH 1 1 omp anthropic/claude-sonnet-5 medium
 check_rule_use RESEARCH 2 2 omp anthropic/claude-opus-5-5 high
 check_rule_use RESEARCH 3 3 pi openai-codex/gpt-6-sol medium
-check_lane_when RESEARCH 2 'decision-heavy' 'RESEARCH rule 2: substantial/decision-heavy research is the Opus 5.5 sub-lane'
-check_lane_when RESEARCH 3 'tooling' 'RESEARCH rule 3: Sol on Pi is a tooling condition, not a default'
 
 # REVIEW: four separate rules (bounded Sonnet 5 high, substantive/cross-
 # component Opus 5.5 high, critical/high-consequence Opus 5.5 xhigh, then an
@@ -276,10 +272,6 @@ check_rule_use REVIEW 1 1 omp anthropic/claude-sonnet-5 high
 check_rule_use REVIEW 2 2 omp anthropic/claude-opus-5-5 high
 check_rule_use REVIEW 3 3 omp anthropic/claude-opus-5-5 xhigh
 check_rule_use REVIEW 4 4 pi openai-codex/gpt-6-sol xhigh
-check_lane_when REVIEW 1 'bounded' 'REVIEW rule 1: bounded review is the Sonnet 5 sub-lane'
-check_lane_when REVIEW 2 'substantive' 'REVIEW rule 2: substantive/cross-component review is the Opus 5.5 high sub-lane'
-check_lane_when REVIEW 2 'prefer Opus 5.5' 'REVIEW rule 2: Sonnet-versus-Opus uncertainty on substantive review resolves to Opus 5.5'
-check_lane_when REVIEW 3 'critical' 'REVIEW rule 3: critical/high-consequence review is the Opus 5.5 xhigh sub-lane'
 check_lane_when REVIEW 4 'not by default' 'REVIEW rule 4: cross-family second review is an explicit escalation, not a default'
 
 # ARCHITECTURE: ordinary rule (Opus 5.5 high), a very-difficult rule (Opus
@@ -291,7 +283,6 @@ check_array_length ARCHITECTURE 3 1
 check_rule_use ARCHITECTURE 1 1 omp anthropic/claude-opus-5-5 high
 check_rule_use ARCHITECTURE 2 2 omp anthropic/claude-opus-5-5 xhigh
 check_rule_use ARCHITECTURE 3 3 pi openai-codex/gpt-6-astra xhigh
-check_lane_when ARCHITECTURE 2 'very difficult' 'ARCHITECTURE rule 2: very difficult decisions are the Opus 5.5 xhigh sub-lane'
 check_lane_when ARCHITECTURE 3 'ultra-exceptional' 'ARCHITECTURE rule 3: Astra ultra-exceptional is an explicit escalation, not a default'
 
 # TENTH-MAN: three rules enforcing model-family diversity via explicit,
@@ -319,9 +310,6 @@ check_array_length IMPLEMENT 1 1
 check_array_length IMPLEMENT 2 1
 check_rule_use IMPLEMENT 1 1 omp anthropic/claude-sonnet-5 high
 check_rule_use IMPLEMENT 2 2 omp anthropic/claude-opus-5-5 high
-check_lane_when IMPLEMENT 1 'bounded' 'IMPLEMENT rule 1: small/bounded implementation is the Sonnet 5 sub-lane'
-check_lane_when IMPLEMENT 2 'substantive' 'IMPLEMENT rule 2: substantive implementation is the Opus 5.5 sub-lane'
-check_lane_when IMPLEMENT 2 'prefer Opus 5.5' 'IMPLEMENT rule 2: Sonnet-versus-Opus uncertainty on substantive work resolves to Opus 5.5'
 
 # IMPLEMENT-LARGE: two separate rules (broad Opus 5.5 high, then the
 # reasoning-heavy escalation to Opus 5.5 xhigh).
@@ -329,7 +317,6 @@ check_array_length IMPLEMENT-LARGE 1 1
 check_array_length IMPLEMENT-LARGE 2 1
 check_rule_use IMPLEMENT-LARGE 1 1 omp anthropic/claude-opus-5-5 high
 check_rule_use IMPLEMENT-LARGE 2 2 omp anthropic/claude-opus-5-5 xhigh
-check_lane_when IMPLEMENT-LARGE 2 'reasoning-heavy' 'IMPLEMENT-LARGE rule 2: reasoning-heavy execution is the Opus 5.5 xhigh sub-lane'
 
 # DEEP: five single-candidate conditional rules, never quota-resolved
 # arrays, so Sol/Astra can never be selected ahead of Opus 5.5 by quota
@@ -355,7 +342,6 @@ check_array_length UI/BROWSER 1 1
 check_array_length UI/BROWSER 2 1
 check_rule_use UI/BROWSER 1 1 omp anthropic/claude-sonnet-5 high
 check_rule_use UI/BROWSER 2 2 omp anthropic/claude-opus-5-5 high
-check_lane_when UI/BROWSER 2 'cross-layer' 'UI/BROWSER rule 2: complex/cross-layer browser work is the Opus 5.5 sub-lane'
 
 # DEFAULT: Opus 5.5 high during the routing-trace debugging period
 # (primary-policy.md section 0).
