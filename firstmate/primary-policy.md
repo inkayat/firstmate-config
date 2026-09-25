@@ -147,102 +147,89 @@ the full "when"/"why" text for each in `config/crew-dispatch.json`, the
 authoritative source this table summarizes. An explicit captain choice always
 wins over the table.
 
-| Category | Primary route | Role |
+| Category | Sub-lanes (route) | Role |
 | --- | --- | --- |
 | QUICK | omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-6-luna` low - genuinely interchangeable) | senior-fullstack |
-| EXPLORE | omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-6-luna` low - genuinely interchangeable) | senior-fullstack |
-| RESEARCH | omp `anthropic/claude-sonnet-5` medium (or pi `openai-codex/gpt-6-sol` medium when Pi's own tooling fits the research target better) | senior-fullstack |
-| REVIEW | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
-| ARCHITECTURE | omp `anthropic/claude-opus-5-5` high | architecture |
-| TENTH-MAN | pi `openai-codex/gpt-6-sol` xhigh (Claude-authored work, escalating to pi `openai-codex/gpt-6-astra` xhigh only when critical/unresolved) or omp `anthropic/claude-opus-5-5` xhigh (Astra/OpenAI-authored work) | tenth-man |
-| IMPLEMENT | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
-| IMPLEMENT-LARGE | omp `anthropic/claude-sonnet-5` high | senior-fullstack |
-| DEEP | omp `anthropic/claude-opus-5-5` xhigh, with `openai-codex/gpt-6-sol` xhigh reached only through an explicit single-candidate escalation rule (pi for diagnosis, omp for implementation) and `openai-codex/gpt-6-astra` xhigh as the last, most exceptional escalation beyond that - never a quota peer | senior-fullstack |
-| UI/BROWSER | omp `anthropic/claude-sonnet-5` high, escalating to omp `anthropic/claude-opus-5-5` high for deep code-plus-browser work | senior-fullstack |
-| DEFAULT | omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
+| EXPLORE | simple: omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-6-luna` low); hard: omp `anthropic/claude-sonnet-5` medium | senior-fullstack |
+| RESEARCH | ordinary: omp `anthropic/claude-sonnet-5` medium; substantial/decision-heavy: omp `anthropic/claude-opus-5-5` high; Pi-tooling advantage: pi `openai-codex/gpt-6-sol` medium | senior-fullstack |
+| REVIEW | bounded: omp `anthropic/claude-sonnet-5` high; substantive/cross-component: omp `anthropic/claude-opus-5-5` high; critical/high-consequence: omp `anthropic/claude-opus-5-5` xhigh (optional cross-family second reviewer: pi `openai-codex/gpt-6-sol` xhigh) | senior-fullstack |
+| ARCHITECTURE | omp `anthropic/claude-opus-5-5` high; very difficult: xhigh (pi `openai-codex/gpt-6-astra` xhigh only when ultra-exceptional) | architecture |
+| TENTH-MAN | Claude-authored work: pi `openai-codex/gpt-6-sol` xhigh (pi `openai-codex/gpt-6-astra` xhigh only when critical/unresolved after Sol); Astra/OpenAI-authored work: omp `anthropic/claude-opus-5-5` xhigh | tenth-man |
+| IMPLEMENT | small/bounded: omp `anthropic/claude-sonnet-5` high; substantive: omp `anthropic/claude-opus-5-5` high | senior-fullstack |
+| IMPLEMENT-LARGE | omp `anthropic/claude-opus-5-5` high; reasoning-heavy: xhigh | senior-fullstack |
+| DEEP | scout and ship: omp `anthropic/claude-opus-5-5` xhigh, with `openai-codex/gpt-6-sol` xhigh reached only through an explicit single-candidate escalation rule (pi for diagnosis, omp for implementation) and `openai-codex/gpt-6-astra` xhigh as the last escalation beyond that - never a quota peer | senior-fullstack |
+| UI/BROWSER | normal: omp `anthropic/claude-sonnet-5` high; complex/cross-layer: omp `anthropic/claude-opus-5-5` high | senior-fullstack |
+| DEFAULT | omp `anthropic/claude-opus-5-5` high (debugging period, section 8) | senior-fullstack |
 
-This table summarizes each category's active candidate set. Separate
-more-specific rules and documented overrides (below) are not fallback pairs;
-they remain explicit so semantic escalation cannot be mistaken for quota
+Sub-lanes are separate same-category rules, never new categories and never
+quota-array peers, so semantic escalation cannot be mistaken for quota
 selection.
 
-`config/crew-dispatch.json` carries twenty-six `rules` entries (ten distinct
-`category` values; EXPLORE, IMPLEMENT, IMPLEMENT-LARGE, and UI/BROWSER each
-span two more-specific rules; RESEARCH spans two; REVIEW spans four
-(ordinary, complex, high-risk, cross-family second review); ARCHITECTURE
-spans three (ordinary, exceptional, Astra ultra-exceptional); TENTH-MAN
-spans three (Claude-primary Sol, Astra critical escalation,
-OpenAI-primary Opus 5.5); DEEP spans five single-candidate conditional
-rules - scout primary, scout Sol escalation, ship primary, ship Sol
-second-hypothesis, Astra exceptional last escalation - never a
-quota-resolved array) plus `default` for the DEFAULT catch-all, in the
-form Firstmate reads at intake, each with the full natural-language
-`when`/`why` text this table compresses. An explicit captain choice always
-wins over it.
+`config/crew-dispatch.json` carries twenty-seven `rules` entries (ten
+distinct `category` values; EXPLORE, IMPLEMENT, IMPLEMENT-LARGE, and
+UI/BROWSER each span two more-specific rules; RESEARCH spans three
+(ordinary, substantial/decision-heavy, Pi-tooling); REVIEW spans four
+(bounded, substantive, critical, cross-family second review);
+ARCHITECTURE spans three (ordinary, very difficult, Astra
+ultra-exceptional); TENTH-MAN spans three (Claude-primary Sol, Astra
+critical escalation, OpenAI-primary Opus 5.5); DEEP spans five
+single-candidate conditional rules - scout primary, scout Sol escalation,
+ship primary, ship Sol second-hypothesis, Astra exceptional last
+escalation - never a quota-resolved array) plus `default` for the DEFAULT
+catch-all, in the form Firstmate reads at intake, each with the full
+natural-language `when`/`why` text this table compresses. An explicit
+captain choice always wins over it.
 
 **Effort is not negotiable downward.** Where the table says xhigh, a lane
 that cannot run xhigh does not run at reduced effort; it is reported as
 blocked and the work waits for a decision.
 
-**Claude-heavy by design, GPT where reasoning materially helps.** Practical
-capacity on this fleet is roughly Claude 20 against GPT 5 - a ratio of about
-4:1, not 20:1 - so ordinary, comparable work defaults to a Claude lane
-(Haiku for QUICK/EXPLORE, Sonnet for RESEARCH/REVIEW/IMPLEMENT/
-IMPLEMENT-LARGE/UI-BROWSER). ARCHITECTURE's exceptional rule reaches for
-Claude Opus 5.5 paired with GPT-6 Sol as active xhigh peers, with GPT-6
-Astra reserved for a further, ultra-exceptional single-candidate
-escalation beyond that pairing; DEEP instead reaches for Opus 5.5 as its
-single-candidate primary in both the scout and ship forms, with Sol
-configured only as a separate, more specific escalation rule (and Astra as
-a further, more specific escalation beyond Sol) so neither can be selected
-ahead of Opus 5.5 by quota resolution. TENTH-MAN enforces model-family
-diversity directly: it never shares a model family with the work it is
-challenging, defaulting to the lower-cost GPT-6 Sol and escalating to GPT-6
-Astra only for the most critical or unresolved cases. Semantic fit is
-decided first; provider availability and capacity only break ties within a
-rule's own listed candidates, never override the category or rule itself.
+**Opus 5.5-biased, with bounded work kept cheap.** Substantive work lands on
+Opus 5.5: substantial or decision-heavy RESEARCH, substantive and critical
+REVIEW, all ARCHITECTURE, substantive IMPLEMENT, all IMPLEMENT-LARGE,
+complex UI/BROWSER, both DEEP forms, and - during the debugging period -
+the DEFAULT catch-all. Small or bounded work may stay on Sonnet 5
+(bounded REVIEW/IMPLEMENT, normal UI/BROWSER, ordinary RESEARCH, hard
+EXPLORE) and trivial work on Haiku 4.5 or GPT-6 Luna (QUICK, simple
+EXPLORE). "Substantive" is the same standard section 7 uses to require
+review: meaningful new behavior, a nontrivial refactor, work spanning
+multiple components, or real cross-component regression risk. When
+uncertain between Sonnet 5 and Opus 5.5 for a substantive task, choose
+Opus 5.5. TENTH-MAN enforces model-family diversity directly: it never
+shares a model family with the work it is challenging, defaulting to GPT-6
+Sol and escalating to GPT-6 Astra only for critical cases the Sol
+challenge leaves unresolved. Semantic fit is decided first; provider
+availability and capacity only break ties within a rule's own listed
+candidates, never override the category or rule itself.
 
 **`use` arrays versus separate rules versus documented overrides.**
 FirstMate resolves a matched rule's `use` array through its quota-array
 procedure, so an array contains only candidates intended as semantic peers:
-
-- QUICK and EXPLORE's ordinary rule each pair Haiku and Luna at low effort.
-- ARCHITECTURE's exceptional rule pairs OMP + Opus 5.5 and Pi + Sol at
-  xhigh as active quota-resolved peers.
-
-DEEP, TENTH-MAN, REVIEW's cross-family escalation, ARCHITECTURE's
-ultra-exceptional escalation, and UI/BROWSER's escalation are deliberately
-NOT `use` arrays: each Sol/Astra/Opus 5.5 escalation rule in those
-categories is a separate, single-candidate conditional rule, so an
-escalation model can never be selected ahead of the primary by quota
-resolution.
+QUICK and EXPLORE's simple rule each pair Haiku and Luna at low effort.
+Every other rule is a single candidate, so Sol, Astra, or Sonnet 5 can
+never be selected ahead of an Opus 5.5 primary by quota resolution.
 
 Separate, more-specific rules carry the same `category` value when the
 difference is a semantic trigger rather than a quota choice: EXPLORE's
-harder-reasoning rule, RESEARCH's Pi-tooling-better rule, REVIEW's complex,
-high-risk, and cross-family-second-review escalations, ARCHITECTURE's
-exceptional-decision and ultra-exceptional escalations, IMPLEMENT's
-delicate-implementation escalation, IMPLEMENT-LARGE's sustained-execution
-rule, TENTH-MAN's three author-family/escalation conditions,
-UI/BROWSER's deep-code-plus-browser escalation, and DEEP's five
-conditional rules (scout primary, scout Sol escalation, ship primary,
-ship Sol second-hypothesis, Astra exceptional last escalation).
+harder-reasoning rule, RESEARCH's decision-heavy and Pi-tooling rules,
+REVIEW's substantive, critical, and cross-family-second-review rules,
+ARCHITECTURE's very-difficult and ultra-exceptional rules, IMPLEMENT's
+substantive rule, IMPLEMENT-LARGE's reasoning-heavy rule, TENTH-MAN's
+three author-family/escalation conditions, UI/BROWSER's complex/cross-layer
+rule, and DEEP's five conditional rules (scout primary, scout Sol
+escalation, ship primary, ship Sol second-hypothesis, Astra exceptional
+last escalation).
 
-**Opus 5.5, Sol, and Astra** stay semantically scoped. Opus 5.5 is
-difficult *execution* for IMPLEMENT-LARGE's sustained-work escalation, and
-difficult *reasoning* for ARCHITECTURE and DEEP; it is also REVIEW's
-highest-stakes escalation, UI/BROWSER's deep-code-plus-browser escalation,
-and one of TENTH-MAN's two family-diversity routes. GPT-6 Sol is the
-lower-cost, everyday cross-family independent-challenge route: RESEARCH's
-Pi-tooling-better rule, REVIEW's cross-family second reviewer, one of
-ARCHITECTURE's exceptional active peers, DEEP's diagnosis/ship
-escalations, and TENTH-MAN's default route whenever the work under review
-was authored by Claude. GPT-6 Astra is reserved strictly for each
-category's most extreme, exceptional escalation beyond Sol: ARCHITECTURE's
-ultra-exceptional rule, DEEP's last escalation across both the scout and
-ship forms, and TENTH-MAN's most-critical/unresolved Claude-primary
-escalation. Many files touched does not itself select any of them; a
-single hard concurrency bug or a release-critical diff can.
+**Sol and Astra** stay semantically scoped. GPT-6 Sol is the everyday
+cross-family route: RESEARCH's Pi-tooling rule, REVIEW's cross-family
+second reviewer, DEEP's diagnosis/ship escalations, and TENTH-MAN's
+default route whenever the work under review was authored by Claude - an
+independent second opinion on a Claude-authored architecture
+recommendation is dispatched as TENTH-MAN, not as an ARCHITECTURE quota
+peer. GPT-6 Astra is reserved strictly for each category's most extreme
+escalation beyond Sol or Opus 5.5 xhigh: ARCHITECTURE's ultra-exceptional
+rule, DEEP's last escalation across both forms, and TENTH-MAN's
+critical/unresolved Claude-primary escalation.
 
 **Role stays separate from category.** The category table selects
 harness/model/effort; it never selects a role. Only three roles exist
@@ -260,30 +247,18 @@ ship. Neither mapping is fixed: a QUICK question can be a scout, a QUICK
 rename a ship; a DEEP diagnosis is naturally a scout, a DEEP fix naturally a
 ship. Judge the actual task, not the category label.
 
-**Model catalog adoption.** `openai-codex/gpt-6-luna` is adopted as
-QUICK's and EXPLORE's genuinely-interchangeable OMP array peer,
-directly replacing the superseded `openai-codex/gpt-5.6-luna` in both
-lanes: OMP's native catalog reports its explicit supported effort list
-(low through max, including low).
-`anthropic/claude-opus-5-5` is an active OMP candidate for REVIEW's
-high-risk escalation, ARCHITECTURE, TENTH-MAN's Astra/OpenAI-authored rule,
-IMPLEMENT-LARGE's sustained-execution escalation (directly replacing Opus
-5), UI/BROWSER's deep-code-plus-browser escalation, and both DEEP forms;
-OMP's catalog reports xhigh support, while Pi exposes no Anthropic provider
-on this machine. `openai-codex/gpt-6-sol` directly replaces the retired
-`openai-codex/gpt-5.6-sol` as the Captain-startup candidate in
-`captain-startup-models.tsv` (now at medium effort) and as the everyday
-cross-family route across RESEARCH's Pi-tooling-better rule, REVIEW's
-cross-family second reviewer, ARCHITECTURE's exceptional peer, DEEP's
-diagnosis/ship escalations, and TENTH-MAN's Claude-primary rule; that
-startup chain's Claude Sonnet fallback step is harness-scoped (OMP's own
+**Model catalog adoption.** Active routes use only `anthropic/claude-haiku-4-5`,
+`anthropic/claude-sonnet-5`, `anthropic/claude-opus-5-5`,
+`openai-codex/gpt-6-luna`, `openai-codex/gpt-6-sol`, and
+`openai-codex/gpt-6-astra`. OMP's native catalog lists all six with low
+through xhigh support; Pi exposes no Anthropic provider on this machine, so
+every Claude route is OMP. `openai-codex/gpt-6-sol` is also the
+Captain-startup candidate in `captain-startup-models.tsv` (medium effort);
+that chain's Claude Sonnet fallback step is harness-scoped (OMP's own
 `anthropic/claude-sonnet-5` versus Pi's `pi-claude-code-provider/sonnet`)
 - see README.md "Captain startup model". `openai-codex/gpt-6-astra` is
-confined to Pi and to each category's own narrowest, most exceptional
-escalation - ARCHITECTURE's ultra-exceptional rule, DEEP's last escalation,
-and TENTH-MAN's most-critical/unresolved escalation - never a routine
-peer or default. `openai-codex/gpt-5.5` and `anthropic/claude-fable-5-1`
-remain retired from worker routing.
+confined to Pi. Opus 5, Fable 5.1, GPT-5.5, and GPT-5.6 Luna/Sol are
+retired from worker routing.
 
 **Deferred to a later release.** The local Qwen/Ollama lane remains absent
 while that machine is offline. It is not configured anywhere in this
@@ -427,7 +402,7 @@ pipeline to insert or require one is an official FirstMate change, out of
 scope for this configuration.
 
 **When review is required**, not merely considered: IMPLEMENT-LARGE work
-(including its sustained-execution escalation), a DEEP ship/implementation
+(including its reasoning-heavy escalation), a DEEP ship/implementation
 outcome, any change touching authentication or security, payments, data
 integrity, a nontrivial migration, concurrency, or otherwise carrying a
 high blast radius, release-critical status, or a substantial public API
@@ -447,7 +422,7 @@ mandatory-risk topic nor this substantive/regression-risk trigger applies
 **How review runs.** Every required review needs a different, read-only
 worker in a fresh context, never the implementation worker itself even in
 a new context or session - this is the baseline independence axis, and
-REVIEW's existing rules (ordinary, complex, high-risk, section 3) already
+REVIEW's existing rules (bounded, substantive, critical, section 3) already
 satisfy it by construction, since REVIEW always dispatches as its own
 separate task with its own worker. Model-family or adversarial independence is a second, separate
 axis: reach for REVIEW's cross-family second-reviewer rule or for
@@ -511,3 +486,59 @@ This policy and the selected verification skills are guidance, not a
 mechanical completion check. This configuration has no trusted verification
 runner or FirstMate completion hook; a passing fixture report cannot stand
 in for verification of the actual task changes.
+
+## 8. Routing and skill trace (temporary, debugging period)
+
+Until the captain ends this debugging period, print a short trace in the
+Captain chat. It discloses decisions sections 3 and 5 already made - never
+reasoning or chain-of-thought, never pasted into the brief, never written
+to a file, board, or monitor.
+
+Before each delegation, one block per worker (implementer, reviewer,
+re-reviewer, tenth-man):
+
+    Routing: <CATEGORY> [#n] | role <role> | <harness> | <provider/model> | <effort> | why: <short reason>
+    Skills: <skill> - <short reason>; <skill> - <short reason>
+
+- `#n` is the matched rule's position within its category in
+  `config/crew-dispatch.json` (1-based; required when the category has
+  more than one rule, e.g. `REVIEW #3`), so the sub-lane shown is the rule
+  actually used. Print no free-text sub-lane label: nothing can verify it
+  against the rule, so a wrong one would mislead; the reason goes in
+  `why`. Harness, model, and effort are exactly what is passed to
+  `fm-spawn` for that worker - that rule's resolved candidate. An explicit
+  captain choice outside the rule says `captain override` in `why`.
+- `Skills` names exactly the project-local and shared worker skills
+  selected in that brief (section 2 steps 3-4): project-local ones by
+  their worktree-relative path, shared ones by name. Nothing else - no
+  installed-but-unselected skill, no official FirstMate internal skill.
+  `Skills: none` is valid.
+
+After a worker finishes:
+
+    Skill evidence:
+    - <skill>: <observation citing `verbatim excerpt`>
+    - <skill>: selected, but no strong application evidence observed
+
+- One line per selected skill, none for an unselected skill, at most two
+  observations each.
+- Each observation quotes a short verbatim excerpt from the worker's own
+  pane, transcript, report, or diff - a command it ran, output it saw, a
+  test it added. A skill's existence, its selection, or the worker saying
+  it applied the skill is not evidence; use the second form instead. Read
+  the excerpt in context first: text the worker only quoted, planned, or
+  denied doing is not evidence either.
+
+Independent review stays separate from any automated pipeline:
+
+    Review: <role> | <harness> <model> <effort> | why: <reason> | skills: <...> | BLOCKER n, IMPORTANT n, OPTIONAL n
+    no-mistakes: <result>
+
+`tests/routing-trace.sh check` checks one captured block against the real
+spawn axes, the matched rule's route, the brief's selected skills, and the
+worker transcript; its offline suite also drives the real `fm-spawn.sh`
+seam with a fixture worker. A citation PASS is a lexical match only, so
+`check` prints each citation's transcript context for that reading. It
+does not prove the category or rule was chosen correctly or that a skill
+was applied. It is
+a diagnostic, never a gate.

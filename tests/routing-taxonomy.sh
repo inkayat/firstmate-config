@@ -158,18 +158,21 @@ PY
 }
 
 # =============================================================================
-# 1. Structural shape: exactly the ten named category values (twenty-six
-#    `rules` entries total - EXPLORE, RESEARCH, IMPLEMENT-LARGE, and
-#    UI/BROWSER each span two more-specific rules; IMPLEMENT spans two;
-#    REVIEW spans four (ordinary, complex, high-risk, cross-family second
-#    review); ARCHITECTURE spans three (ordinary, exceptional, Astra
-#    ultra-exceptional); TENTH-MAN spans three (Claude-primary Sol, Astra
-#    critical escalation, OpenAI-primary Opus 5.5); DEEP spans five
-#    single-candidate conditional rules (scout primary, scout Sol
-#    escalation, ship primary, ship Sol second-hypothesis, Astra
-#    exceptional last escalation); every other category is a single
+# 1. Structural shape: exactly the ten named category values (twenty-seven
+#    `rules` entries total - EXPLORE, IMPLEMENT, IMPLEMENT-LARGE, and
+#    UI/BROWSER each span two more-specific rules; RESEARCH spans three
+#    (ordinary, substantial/decision-heavy, Pi-tooling); REVIEW spans four
+#    (bounded, substantive/cross-component, critical/high-consequence,
+#    cross-family second review); ARCHITECTURE spans three (ordinary,
+#    very difficult, Astra ultra-exceptional); TENTH-MAN spans three
+#    (Claude-primary Sol, Astra critical escalation, OpenAI-primary Opus
+#    5.5); DEEP spans five single-candidate conditional rules (scout
+#    primary, scout Sol escalation, ship primary, ship Sol second-
+#    hypothesis, Astra exceptional last escalation); QUICK is a single
 #    rule), plus the untagged `default` catch-all for DEFAULT. No stray
-#    category names.
+#    category names, and no rule carries anything beyond category/when/
+#    use/why: routing never selects skills or roles (primary-policy.md
+#    section 3, "Five decisions").
 # =============================================================================
 EXPECTED_CATEGORIES='ARCHITECTURE
 DEEP
@@ -186,24 +189,39 @@ actual_categories=$(all_categories | sort -u)
 check 'exactly the ten named categories are present, no more, no fewer' "$EXPECTED_CATEGORIES" "$actual_categories"
 
 total_rules=$(all_categories | wc -l | tr -d ' ')
-check 'twenty-six total rules entries (ten categories, several split)' 26 "$total_rules"
+check 'twenty-seven total rules entries (ten categories, several split)' 27 "$total_rules"
 
-for pair in QUICK:1 EXPLORE:2 RESEARCH:2 REVIEW:4 ARCHITECTURE:3 TENTH-MAN:3 IMPLEMENT:2 IMPLEMENT-LARGE:2 DEEP:5 UI/BROWSER:2; do
+for pair in QUICK:1 EXPLORE:2 RESEARCH:3 REVIEW:4 ARCHITECTURE:3 TENTH-MAN:3 IMPLEMENT:2 IMPLEMENT-LARGE:2 DEEP:5 UI/BROWSER:2; do
   cat=${pair%%:*}
   expected=${pair##*:}
   actual=$(category_rule_count "$cat")
   check "$cat: has exactly $expected rules entry(ies)" "$expected" "$actual"
 done
 
+if [ "$PARSE_METHOD" = jq ]; then
+  rule_keys=$(jq -r '[.rules[] | keys[]] | unique | join(",")' "$CREW_DISPATCH")
+else
+  rule_keys=$(python3 -c 'import json,sys; print(",".join(sorted({k for r in json.load(open(sys.argv[1]))["rules"] for k in r})))' "$CREW_DISPATCH")
+fi
+check 'rules carry only category/use/when/why - no rule-level skills or role field' 'category,use,when,why' "$rule_keys"
+
 # =============================================================================
 # 2. Pinned active route per category rule (regression protection):
 #    harness/model/effort exactly as documented in primary-policy.md and
-#    README.md. Multi-candidate arrays are limited to the deliberate peer sets
-#    for QUICK and ARCHITECTURE's exceptional rule; DEEP, TENTH-MAN, REVIEW's
-#    highest lanes, and UI/BROWSER escalate through separate single-candidate
-#    conditional rules instead of quota-resolved arrays, so Astra/Sol/Opus
-#    5.5 in those categories can never be selected ahead of the primary by
-#    quota resolution.
+#    README.md, plus the sub-lane trigger word each rule's own "when" text
+#    must carry so the Captain can tell the sub-lanes apart. Routing is
+#    Opus 5.5-biased: substantive work in RESEARCH, REVIEW, IMPLEMENT,
+#    IMPLEMENT-LARGE, UI/BROWSER, ARCHITECTURE, DEEP, and the DEFAULT
+#    catch-all lands on Opus 5.5, while bounded work may stay on Sonnet 5 and
+#    trivial work on Haiku/Luna. Multi-candidate arrays are limited to the
+#    deliberate Haiku/Luna peer sets for QUICK and ordinary EXPLORE; every
+#    other lane escalates through separate single-candidate conditional
+#    rules instead of quota-resolved arrays, so Sol/Astra can never be
+#    selected ahead of an Opus 5.5 primary by quota resolution.
+#
+#    Limitation: which sub-lane a real task falls into is the Captain's
+#    (an LLM's) reading of these "when" texts; no classifier runs here, so
+#    these checks prove the configured lane, not a live classification.
 # =============================================================================
 check_rule_use() { # <category> <rule-occurrence, for the message only> <aggregated-line-number> <harness> <model> <effort>
   # <aggregated-line-number> indexes category_field's own output, which is
@@ -218,54 +236,63 @@ check_array_length() { # <category> <rule-occurrence> <expected-length>
   actual=$(category_rule_use_length "$cat" "$occ")
   check "$cat rule #$occ: use array has exactly $expected candidate(s)" "$expected" "$actual"
 }
+check_lane_when() { # <category> <rule-occurrence> <sub-lane trigger> <label>
+  contains "$4" "$(category_rule_field "$1" "$2" when)" "$3"
+}
 
 # QUICK: one rule, two genuinely interchangeable candidates.
 check_array_length QUICK 1 2
 check_rule_use QUICK 1 1 omp anthropic/claude-haiku-4-5 low
 check_rule_use QUICK 1 2 omp openai-codex/gpt-6-luna low
 
-# EXPLORE: two separate rules (ordinary, with Haiku/Luna as interchangeable
+# EXPLORE: two separate rules (simple, with Haiku/Luna as interchangeable
 # peers - the same capacity-aware pairing QUICK uses - then a
-# harder-reasoning escalation).
+# harder-reasoning escalation to Sonnet 5 medium).
 check_array_length EXPLORE 1 2
 check_array_length EXPLORE 2 1
 check_rule_use EXPLORE 1 1 omp anthropic/claude-haiku-4-5 low
 check_rule_use EXPLORE 1 2 omp openai-codex/gpt-6-luna low
 check_rule_use EXPLORE 2 3 omp anthropic/claude-sonnet-5 medium
 
-# RESEARCH: two separate rules (default OMP, then Pi-tooling-better).
+# RESEARCH: three separate rules (ordinary Sonnet 5 medium, substantial/
+# decision-heavy Opus 5.5 high, then Pi-tooling-better Sol medium).
 check_array_length RESEARCH 1 1
 check_array_length RESEARCH 2 1
+check_array_length RESEARCH 3 1
 check_rule_use RESEARCH 1 1 omp anthropic/claude-sonnet-5 medium
-check_rule_use RESEARCH 2 2 pi openai-codex/gpt-6-sol medium
+check_rule_use RESEARCH 2 2 omp anthropic/claude-opus-5-5 high
+check_rule_use RESEARCH 3 3 pi openai-codex/gpt-6-sol medium
+check_lane_when RESEARCH 2 'decision-heavy' 'RESEARCH rule 2: substantial/decision-heavy research is the Opus 5.5 sub-lane'
+check_lane_when RESEARCH 3 'tooling' 'RESEARCH rule 3: Sol on Pi is a tooling condition, not a default'
 
-# REVIEW: four separate rules (ordinary, then complex, then high-risk,
-# then an explicit cross-family second-reviewer escalation).
+# REVIEW: four separate rules (bounded Sonnet 5 high, substantive/cross-
+# component Opus 5.5 high, critical/high-consequence Opus 5.5 xhigh, then an
+# explicit cross-family second-reviewer escalation).
 check_array_length REVIEW 1 1
 check_array_length REVIEW 2 1
 check_array_length REVIEW 3 1
 check_array_length REVIEW 4 1
-check_rule_use REVIEW 1 1 omp anthropic/claude-sonnet-5 medium
-check_rule_use REVIEW 2 2 omp anthropic/claude-sonnet-5 high
-check_rule_use REVIEW 3 3 omp anthropic/claude-opus-5-5 high
+check_rule_use REVIEW 1 1 omp anthropic/claude-sonnet-5 high
+check_rule_use REVIEW 2 2 omp anthropic/claude-opus-5-5 high
+check_rule_use REVIEW 3 3 omp anthropic/claude-opus-5-5 xhigh
 check_rule_use REVIEW 4 4 pi openai-codex/gpt-6-sol xhigh
-review_when4=$(category_rule_field REVIEW 4 when)
-contains 'REVIEW rule 4: cross-family second review is an explicit escalation, not a default' "$review_when4" 'not by default'
+check_lane_when REVIEW 1 'bounded' 'REVIEW rule 1: bounded review is the Sonnet 5 sub-lane'
+check_lane_when REVIEW 2 'substantive' 'REVIEW rule 2: substantive/cross-component review is the Opus 5.5 high sub-lane'
+check_lane_when REVIEW 2 'prefer Opus 5.5' 'REVIEW rule 2: Sonnet-versus-Opus uncertainty on substantive review resolves to Opus 5.5'
+check_lane_when REVIEW 3 'critical' 'REVIEW rule 3: critical/high-consequence review is the Opus 5.5 xhigh sub-lane'
+check_lane_when REVIEW 4 'not by default' 'REVIEW rule 4: cross-family second review is an explicit escalation, not a default'
 
-# ARCHITECTURE: ordinary rule (Opus 5.5 high), an exceptional rule pairing
-# Opus 5.5 xhigh with Sol xhigh as active peers, then an ultra-exceptional
-# single-candidate Astra escalation.
+# ARCHITECTURE: ordinary rule (Opus 5.5 high), a very-difficult rule (Opus
+# 5.5 xhigh, single candidate - never a quota peer), then an ultra-
+# exceptional single-candidate Astra escalation.
 check_array_length ARCHITECTURE 1 1
-check_array_length ARCHITECTURE 2 2
+check_array_length ARCHITECTURE 2 1
 check_array_length ARCHITECTURE 3 1
 check_rule_use ARCHITECTURE 1 1 omp anthropic/claude-opus-5-5 high
 check_rule_use ARCHITECTURE 2 2 omp anthropic/claude-opus-5-5 xhigh
-check_rule_use ARCHITECTURE 2 3 pi openai-codex/gpt-6-sol xhigh
-check_rule_use ARCHITECTURE 3 4 pi openai-codex/gpt-6-astra xhigh
-arch_why=$(category_field ARCHITECTURE why)
-contains 'ARCHITECTURE: why-text names Opus 5.5' "$arch_why" 'anthropic/claude-opus-5-5'
-arch_when3=$(category_rule_field ARCHITECTURE 3 when)
-contains 'ARCHITECTURE rule 3: Astra ultra-exceptional is an explicit escalation, not a default' "$arch_when3" 'ultra-exceptional'
+check_rule_use ARCHITECTURE 3 3 pi openai-codex/gpt-6-astra xhigh
+check_lane_when ARCHITECTURE 2 'very difficult' 'ARCHITECTURE rule 2: very difficult decisions are the Opus 5.5 xhigh sub-lane'
+check_lane_when ARCHITECTURE 3 'ultra-exceptional' 'ARCHITECTURE rule 3: Astra ultra-exceptional is an explicit escalation, not a default'
 
 # TENTH-MAN: three rules enforcing model-family diversity via explicit,
 # inspectable conditions on the primary author's model family - never
@@ -277,26 +304,32 @@ check_array_length TENTH-MAN 3 1
 check_rule_use TENTH-MAN 1 1 pi openai-codex/gpt-6-sol xhigh
 check_rule_use TENTH-MAN 2 2 pi openai-codex/gpt-6-astra xhigh
 check_rule_use TENTH-MAN 3 3 omp anthropic/claude-opus-5-5 xhigh
-tenthman_when1=$(category_rule_field TENTH-MAN 1 when)
-tenthman_when2=$(category_rule_field TENTH-MAN 2 when)
-tenthman_when3=$(category_rule_field TENTH-MAN 3 when)
-contains 'TENTH-MAN rule 1: when-text names Claude as the triggering author family (text only, no classifier runs this)' "$tenthman_when1" 'Claude'
-contains 'TENTH-MAN rule 2: Astra escalation is explicitly critical/unresolved, not a default' "$tenthman_when2" 'unresolved'
-contains 'TENTH-MAN rule 3: when-text names Astra/OpenAI-codex as the triggering author family (text only, no classifier runs this)' "$tenthman_when3" 'Astra'
+check_lane_when TENTH-MAN 1 'Claude' 'TENTH-MAN rule 1: when-text names Claude as the triggering author family (text only, no classifier runs this)'
+check_lane_when TENTH-MAN 2 'unresolved' 'TENTH-MAN rule 2: Astra escalation is explicitly critical/unresolved, not a default'
+check_lane_when TENTH-MAN 3 'Astra' 'TENTH-MAN rule 3: when-text names Astra/OpenAI-codex as the triggering author family (text only, no classifier runs this)'
+tenthman_claude_challenger=$(category_field TENTH-MAN use | sed -n 1p | cut -f2)
+case $tenthman_claude_challenger in
+  anthropic/*) fail "TENTH-MAN rule 1: challenger of Claude-authored work must be cross-family, got $tenthman_claude_challenger" ;;
+  *) pass "TENTH-MAN rule 1: challenger of Claude-authored work is cross-family ($tenthman_claude_challenger)" ;;
+esac
 
-# IMPLEMENT: two separate rules (ordinary, then delicate-implementation
-# escalation).
+# IMPLEMENT: two separate rules (small/bounded Sonnet 5 high, then
+# substantive Opus 5.5 high).
 check_array_length IMPLEMENT 1 1
 check_array_length IMPLEMENT 2 1
-check_rule_use IMPLEMENT 1 1 omp anthropic/claude-sonnet-5 medium
-check_rule_use IMPLEMENT 2 2 omp anthropic/claude-sonnet-5 high
+check_rule_use IMPLEMENT 1 1 omp anthropic/claude-sonnet-5 high
+check_rule_use IMPLEMENT 2 2 omp anthropic/claude-opus-5-5 high
+check_lane_when IMPLEMENT 1 'bounded' 'IMPLEMENT rule 1: small/bounded implementation is the Sonnet 5 sub-lane'
+check_lane_when IMPLEMENT 2 'substantive' 'IMPLEMENT rule 2: substantive implementation is the Opus 5.5 sub-lane'
+check_lane_when IMPLEMENT 2 'prefer Opus 5.5' 'IMPLEMENT rule 2: Sonnet-versus-Opus uncertainty on substantive work resolves to Opus 5.5'
 
-# IMPLEMENT-LARGE: two separate rules (ordinary broad, then the
-# sustained-execution escalation to Opus 5.5, directly replacing Opus 5).
+# IMPLEMENT-LARGE: two separate rules (broad Opus 5.5 high, then the
+# reasoning-heavy escalation to Opus 5.5 xhigh).
 check_array_length IMPLEMENT-LARGE 1 1
 check_array_length IMPLEMENT-LARGE 2 1
-check_rule_use IMPLEMENT-LARGE 1 1 omp anthropic/claude-sonnet-5 high
-check_rule_use IMPLEMENT-LARGE 2 2 omp anthropic/claude-opus-5-5 high
+check_rule_use IMPLEMENT-LARGE 1 1 omp anthropic/claude-opus-5-5 high
+check_rule_use IMPLEMENT-LARGE 2 2 omp anthropic/claude-opus-5-5 xhigh
+check_lane_when IMPLEMENT-LARGE 2 'reasoning-heavy' 'IMPLEMENT-LARGE rule 2: reasoning-heavy execution is the Opus 5.5 xhigh sub-lane'
 
 # DEEP: five single-candidate conditional rules, never quota-resolved
 # arrays, so Sol/Astra can never be selected ahead of Opus 5.5 by quota
@@ -312,24 +345,36 @@ check_rule_use DEEP 2 2 pi openai-codex/gpt-6-sol xhigh
 check_rule_use DEEP 3 3 omp anthropic/claude-opus-5-5 xhigh
 check_rule_use DEEP 4 4 omp openai-codex/gpt-6-sol xhigh
 check_rule_use DEEP 5 5 pi openai-codex/gpt-6-astra xhigh
-deep_why=$(category_field DEEP why)
-contains 'DEEP: why-text names Opus 5.5' "$deep_why" 'Opus 5.5'
-deep_when2=$(category_rule_field DEEP 2 when)
-deep_when4=$(category_rule_field DEEP 4 when)
-deep_when5=$(category_rule_field DEEP 5 when)
-contains 'DEEP rule 2: Sol diagnosis is an explicit escalation, not a default' "$deep_when2" 'escalation'
-contains 'DEEP rule 4: Sol ship is an explicit second hypothesis, not a default' "$deep_when4" 'unresolved'
-contains 'DEEP rule 5: Astra exceptional is an explicit last escalation, not a default' "$deep_when5" 'unresolved'
+check_lane_when DEEP 2 'escalation' 'DEEP rule 2: Sol diagnosis is an explicit escalation, not a default'
+check_lane_when DEEP 4 'unresolved' 'DEEP rule 4: Sol ship is an explicit second hypothesis, not a default'
+check_lane_when DEEP 5 'unresolved' 'DEEP rule 5: Astra exceptional is an explicit last escalation, not a default'
 
-# UI/BROWSER: ordinary rule, then an explicit deep-code-plus-browser
+# UI/BROWSER: normal Sonnet 5 high, then an explicit complex/cross-layer
 # escalation to Opus 5.5 high - a real routing rule, not a prose override.
 check_array_length UI/BROWSER 1 1
 check_array_length UI/BROWSER 2 1
 check_rule_use UI/BROWSER 1 1 omp anthropic/claude-sonnet-5 high
 check_rule_use UI/BROWSER 2 2 omp anthropic/claude-opus-5-5 high
+check_lane_when UI/BROWSER 2 'cross-layer' 'UI/BROWSER rule 2: complex/cross-layer browser work is the Opus 5.5 sub-lane'
 
+# DEFAULT: Opus 5.5 high during the routing-trace debugging period
+# (primary-policy.md section 8).
 default_line=$(default_tuple)
-check 'DEFAULT: catch-all route is omp/anthropic/claude-sonnet-5/medium' "omp	anthropic/claude-sonnet-5	medium" "$default_line"
+check 'DEFAULT: catch-all route is omp/anthropic/claude-opus-5-5/high during the debugging period' "omp	anthropic/claude-opus-5-5	high" "$default_line"
+
+# No active route names a superseded model (Opus 5, Fable 5.1, GPT-5.6
+# Luna/Sol, GPT-5.5): every configured model is one of the six adopted ids.
+if [ "$PARSE_METHOD" = jq ]; then
+  configured_models=$(jq -r '[.rules[].use[].model, .default[].model] | unique | .[]' "$CREW_DISPATCH")
+else
+  configured_models=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("\n".join(sorted({u["model"] for r in d["rules"] for u in r["use"]} | {u["model"] for u in d["default"]})))' "$CREW_DISPATCH")
+fi
+check 'every active route uses only the adopted Haiku 4.5/Sonnet 5/Opus 5.5/GPT-6 Luna/Sol/Astra ids' 'anthropic/claude-haiku-4-5
+anthropic/claude-opus-5-5
+anthropic/claude-sonnet-5
+openai-codex/gpt-6-astra
+openai-codex/gpt-6-luna
+openai-codex/gpt-6-sol' "$configured_models"
 
 # =============================================================================
 # 3. Roles referenced by name stay within the three that exist

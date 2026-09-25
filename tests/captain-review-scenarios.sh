@@ -434,8 +434,9 @@ fi
 # =============================================================================
 # D. A premium/Opus implementer does not waive or replace independent
 #    review: the reviewer must be a real, distinct worker AND, per section
-#    3's own routing (REVIEW stays Sonnet, never escalated merely because
-#    the implementer was premium), a genuinely different, cheaper model.
+#    3's own routing (a bounded one-function review is bounded REVIEW on
+#    Sonnet 5 high, never escalated merely because the implementer was
+#    premium), a genuinely different, cheaper model.
 # =============================================================================
 D_DIR=$(new_scratch_home scenario-d-impl)
 new_scratch_project "$D_DIR"
@@ -486,7 +487,7 @@ one line to '$DR_STATUS' as
 \`done [at=<epoch>]: <N> BLOCKER, <M> IMPORTANT, <K> OPTIONAL\`
 (substitute <epoch>/N/M/K for real values) and stop.
 EOF
-  spawn_worker "$DR_DIR" scen-d-review anthropic/claude-sonnet-5 medium "$TMP_ROOT/brief-d-review.md" >/dev/null
+  spawn_worker "$DR_DIR" scen-d-review anthropic/claude-sonnet-5 high "$TMP_ROOT/brief-d-review.md" >/dev/null
   if wait_for_status "$DR_STATUS" 240; then
     DR_META=$(cat "$DR_DIR/fm-home/state/scen-d-review.meta" 2>/dev/null)
     DR_MODEL=$(field "$DR_META" model)

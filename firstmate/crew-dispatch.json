@@ -15,7 +15,7 @@
           "effort": "low"
         }
       ],
-      "why": "Claude practical capacity is about 20 versus GPT's about 5 on this fleet - roughly 4:1, not 20:1 - so the smallest ordinary lane defaults to Claude Haiku rather than spending scarcer GPT headroom on trivial work. Haiku and Luna are genuinely interchangeable same-tier candidates for this bucket (both cheap, both low effort, neither semantically preferred over the other) so FirstMate's quota-array procedure may resolve between them after this rule matches. Escalate to anthropic/claude-sonnet-5 at low or medium, by explicit captain choice, only if the task needs more reasoning than either cheap-tier model comfortably gives - never Astra or Opus for ordinary quick work; those are reserved for genuinely hard reasoning (DEEP) or broad sustained execution (IMPLEMENT-LARGE). QUICK versus IMPLEMENT is a size/decision test, not a keyword match: a rename is QUICK, a rename that also requires touching call sites across a module and deciding a new interface is IMPLEMENT."
+      "why": "Claude practical capacity is about 20 versus GPT's about 5 on this fleet - roughly 4:1, not 20:1 - so the smallest ordinary lane defaults to Claude Haiku rather than spending scarcer GPT headroom on trivial work. Haiku and Luna are genuinely interchangeable same-tier candidates for this bucket (both cheap, both low effort, neither semantically preferred over the other) so FirstMate's quota-array procedure may resolve between them after this rule matches. Escalate to anthropic/claude-sonnet-5 at low or medium, by explicit captain choice, only if the task needs more reasoning than either cheap-tier model comfortably gives - never Astra or Opus for ordinary quick work; Opus 5.5 belongs to substantive work in the neighboring categories and Astra to their most exceptional escalations. QUICK versus IMPLEMENT is a size/decision test, not a keyword match: a rename is QUICK, a rename that also requires touching call sites across a module and deciding a new interface is IMPLEMENT."
     },
     {
       "category": "EXPLORE",
@@ -48,7 +48,7 @@
     },
     {
       "category": "RESEARCH",
-      "when": "questions that require looking outside our own repository: external documentation, third-party APIs, dependency behavior, framework or protocol semantics, standards, or comparing our approach against upstream/OSS source. If the target is our own code rather than an external system, that is EXPLORE instead; if the deliverable is a judgment on a proposed change rather than an information-gathering pass, that is REVIEW instead.",
+      "when": "questions that require looking outside our own repository: external documentation, third-party APIs, dependency behavior, framework or protocol semantics, standards, or comparing our approach against upstream/OSS source. If the target is our own code rather than an external system, that is EXPLORE instead; if the deliverable is a judgment on a proposed change rather than an information-gathering pass, that is REVIEW instead. If the research is substantial or decision-heavy - its findings will drive a significant design, dependency, migration, or vendor decision, or it must reconcile several conflicting sources into a recommendation - that is the substantial-RESEARCH rule below instead.",
       "use": [
         {
           "harness": "omp",
@@ -56,7 +56,19 @@
           "effort": "medium"
         }
       ],
-      "why": "Sonnet at medium effort is the honest default for synthesizing external material."
+      "why": "Sonnet at medium effort is the honest default for ordinary synthesis of external material. Substantial or decision-heavy research is a separate, more specific rule below, never a quota-resolved peer of this ordinary case."
+    },
+    {
+      "category": "RESEARCH",
+      "when": "the same external-research work as ordinary RESEARCH above, specifically when it is substantial or decision-heavy: the findings will drive a significant design, dependency, migration, or vendor decision, or the research must reconcile several conflicting or incomplete sources into a recommendation. This is a separate, more specific rule within RESEARCH, not a quota-resolved peer of the ordinary case: pick it whenever that condition applies; if uncertain between this and ordinary RESEARCH for research whose conclusions carry decision weight, prefer Opus 5.5.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-opus-5-5",
+          "effort": "high"
+        }
+      ],
+      "why": "Opus 5.5 at high effort is the Opus-biased route for research whose conclusions carry real decision weight. Ordinary lookups and summaries stay on Sonnet 5 medium above; research that specifically benefits from Pi's own tooling stays on the Sol rule below."
     },
     {
       "category": "RESEARCH",
@@ -68,23 +80,11 @@
           "effort": "medium"
         }
       ],
-      "why": "openai-codex/gpt-6-sol directly replaces the retired gpt-5.6-sol here. Sol on Pi is the deliberate route once Pi's own tooling is the better fit for the research target: it fits Pi's tooling profile for this specific job better than a cold OMP session would, at the same medium effort as the OMP default."
+      "why": "Sol on Pi is the deliberate route once Pi's own tooling is the better fit for the research target: it fits Pi's tooling profile for this specific job better than a cold OMP session would, at the same medium effort as the OMP default."
     },
     {
       "category": "REVIEW",
-      "when": "ordinary review of code, a diff, a proposal, or a completion claim for correctness, maintainability, or regression risk - not adversarial challenge, not a structural/architecture decision, and not a deep root-cause investigation. If the deliverable is external information-gathering rather than judgment on our own change, that is RESEARCH instead; if independence from the author is the point, that is TENTH-MAN instead; if the question is about system boundaries or long-term structure, that is ARCHITECTURE instead. If the diff itself is complex enough to risk subtle regressions, concurrency bugs, or spans a broad cross-layer diff, that is the complex-REVIEW rule below instead; if the change is release-critical or touches auth/security, payments, migrations, or otherwise carries a high blast radius, that is the high-risk-REVIEW rule below instead.",
-      "use": [
-        {
-          "harness": "omp",
-          "model": "anthropic/claude-sonnet-5",
-          "effort": "medium"
-        }
-      ],
-      "why": "Medium effort covers an ordinary review. REVIEW stays on the same OMP session/harness family as implementation because it is not seeking independence - that is what separates it from TENTH-MAN, which deliberately runs on Pi, away from the implementation session. REVIEW also never owns a structural verdict about boundaries or migrations; that judgment belongs to ARCHITECTURE. Genuinely harder or riskier review scope is a separate, more specific rule below (complex or high-risk REVIEW), never a quota-resolved peer of this ordinary case."
-    },
-    {
-      "category": "REVIEW",
-      "when": "the same ordinary REVIEW work above, specifically when the diff itself is complex enough to risk subtle regressions, concurrency or race-condition bugs, or spans a broad cross-layer diff touching many coordinated pieces at once. This is a separate, more specific rule within REVIEW, not a quota-resolved peer of the ordinary case: pick it only when the complexity condition genuinely applies, not by default.",
+      "when": "bounded review of code, a diff, a proposal, or a completion claim for correctness, maintainability, or regression risk - a small, self-contained change a reviewer can hold in their head - not adversarial challenge, not a structural/architecture decision, and not a deep root-cause investigation. If the deliverable is external information-gathering rather than judgment on our own change, that is RESEARCH instead; if independence from the author is the point, that is TENTH-MAN instead; if the question is about system boundaries or long-term structure, that is ARCHITECTURE instead. If the change under review is substantive - meaningful new behavior, a nontrivial refactor, work spanning multiple components, concurrency or other subtle-regression risk, or real cross-component regression risk - that is the substantive-REVIEW rule below instead; if it is critical or high-consequence - release-critical, auth/security, payments, migrations, data integrity, or otherwise a high blast radius - that is the critical-REVIEW rule below instead.",
       "use": [
         {
           "harness": "omp",
@@ -92,11 +92,11 @@
           "effort": "high"
         }
       ],
-      "why": "High effort is the deliberate escalation once the diff's own complexity - subtle regressions, concurrency, or broad cross-layer scope - genuinely exceeds what medium effort comfortably covers, the same Sonnet-high lane IMPLEMENT-LARGE already validates."
+      "why": "Sonnet 5 at high effort covers a bounded review thoroughly without spending Opus 5.5 on a change a careful Sonnet pass fully covers. REVIEW stays on the same OMP session/harness family as implementation because it is not seeking independence - that is what separates it from TENTH-MAN, which deliberately runs on a different model family from the work it challenges. REVIEW also never owns a structural verdict about boundaries or migrations; that judgment belongs to ARCHITECTURE. Substantive and critical review scope are separate, more specific rules below, never quota-resolved peers of this bounded case."
     },
     {
       "category": "REVIEW",
-      "when": "the same REVIEW work above, specifically for release-critical changes or work touching authentication/security, payments, migrations, or otherwise carrying a high blast radius if the review misses something. This is a separate, more specific rule within REVIEW, not a quota-resolved peer of the ordinary or complex case: pick it only when the stakes genuinely warrant it, not by default.",
+      "when": "the same REVIEW work above, specifically when the change under review is substantive: meaningful new behavior, a nontrivial refactor, work spanning multiple components, concurrency or other subtle-regression risk, or real cross-component regression risk. This is a separate, more specific rule within REVIEW, not a quota-resolved peer of the bounded case: pick it whenever that condition applies; if uncertain between this and bounded REVIEW, prefer Opus 5.5.",
       "use": [
         {
           "harness": "omp",
@@ -104,11 +104,23 @@
           "effort": "high"
         }
       ],
-      "why": "Opus 5.5 at high effort is reserved for review where the cost of a missed defect is highest - release-critical, auth/security, payment, migration, or otherwise high-blast-radius changes. A cross-family second reviewer is a separate, more specific rule below, reached for only when an independent-family second opinion is genuinely warranted in addition to this primary review, never a default."
+      "why": "Opus 5.5 at high effort is the Opus-biased reviewer for substantive and cross-component diffs, where a missed subtle regression costs more than the model difference. Critical or high-consequence changes are the separate xhigh rule below."
     },
     {
       "category": "REVIEW",
-      "when": "the same release-critical or high-blast-radius REVIEW work above, specifically when an independent, cross-family second reviewer is warranted in addition to the Opus 5.5 primary review - the highest-stakes cases where a single reviewer's model family should not be the only check. This is a separate, more specific rule within REVIEW, not a quota-resolved peer of the primary high-risk case: pick it only when that additional independent-family need genuinely applies, not by default.",
+      "when": "the same REVIEW work above, specifically for critical or high-consequence changes: release-critical work, authentication/security, payments, migrations, data integrity, or otherwise a high blast radius if the review misses something. This is a separate, more specific rule within REVIEW, not a quota-resolved peer of the bounded or substantive case: pick it only when the stakes genuinely warrant it, not by default.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-opus-5-5",
+          "effort": "xhigh"
+        }
+      ],
+      "why": "Opus 5.5 at xhigh effort is reserved for review where the cost of a missed defect is highest - critical or high-consequence changes. A cross-family second reviewer is a separate, more specific rule below, reached for only when an independent-family second opinion is genuinely warranted in addition to this primary review, never a default."
+    },
+    {
+      "category": "REVIEW",
+      "when": "the same critical or high-consequence REVIEW work above, specifically when an independent, cross-family second reviewer is warranted in addition to the Opus 5.5 primary review - the highest-stakes cases where a single reviewer's model family should not be the only check. This is a separate, more specific rule within REVIEW, not a quota-resolved peer of the primary critical case: pick it only when that additional independent-family need genuinely applies, not by default.",
       "use": [
         {
           "harness": "pi",
@@ -116,11 +128,11 @@
           "effort": "xhigh"
         }
       ],
-      "why": "openai-codex/gpt-6-sol on Pi is REVIEW's cross-family second reviewer, reached for only when the highest-stakes case above genuinely needs an independent, differently-sourced check in addition to the Opus 5.5 primary review, never as a routine substitute for it."
+      "why": "openai-codex/gpt-6-sol on Pi is REVIEW's cross-family second reviewer, reached for only when the critical case above genuinely needs an independent, differently-sourced check in addition to the Opus 5.5 primary review, never as a routine substitute for it."
     },
     {
       "category": "ARCHITECTURE",
-      "when": "structural decisions with real blast radius: a system or module boundary, an API or domain boundary, a data model, a migration shape, or any ambiguous design with long-term consequences. Use role architecture. If the deliverable is approval or risk-flagging of someone else's proposal rather than an independent structural recommendation, that is REVIEW instead; if the trigger is a hard-to-diagnose bug or subtle reasoning problem rather than a forward design decision, that is DEEP instead. If the decision is exceptional enough to warrant the strongest available reasoning and an independent second opinion, that is the exceptional-architecture rule below instead.",
+      "when": "structural decisions with real blast radius: a system or module boundary, an API or domain boundary, a data model, a migration shape, or any ambiguous design with long-term consequences. Use role architecture. If the deliverable is approval or risk-flagging of someone else's proposal rather than an independent structural recommendation, that is REVIEW instead; if the trigger is a hard-to-diagnose bug or subtle reasoning problem rather than a forward design decision, that is DEEP instead. If the decision is very difficult - unusually high stakes or unusually deep ambiguity - that is the very-difficult-ARCHITECTURE rule below instead.",
       "use": [
         {
           "harness": "omp",
@@ -128,28 +140,23 @@
           "effort": "high"
         }
       ],
-      "why": "OMP + Opus 5.5 at high effort is the default for structural decisions with real blast radius. Consultation here never automatically owns the implementation that follows. Escalate to the exceptional-architecture rule below, not this one, once the decision itself is exceptional rather than merely structural."
+      "why": "OMP + Opus 5.5 at high effort is the default for structural decisions with real blast radius. Consultation here never automatically owns the implementation that follows. Escalate to the very-difficult rule below, not this one, once the decision itself is very difficult rather than merely structural. An independent cross-family challenge of an architecture recommendation is TENTH-MAN's job, never a quota peer here."
     },
     {
       "category": "ARCHITECTURE",
-      "when": "the same structural-decision ARCHITECTURE work above, specifically when the decision is exceptional: unusually high stakes, unusually deep ambiguity, or a genuine need for an independent second opinion beyond the ordinary structural case. This is a separate, more specific rule within ARCHITECTURE, not a quota-resolved peer of the ordinary case: pick it only when the exceptional condition genuinely applies, not by default.",
+      "when": "the same structural-decision ARCHITECTURE work above, specifically when the decision is very difficult: unusually high stakes or unusually deep ambiguity beyond the ordinary structural case. This is a separate, more specific rule within ARCHITECTURE, not a quota-resolved peer of the ordinary case: pick it only when that condition genuinely applies, not by default.",
       "use": [
         {
           "harness": "omp",
           "model": "anthropic/claude-opus-5-5",
           "effort": "xhigh"
-        },
-        {
-          "harness": "pi",
-          "model": "openai-codex/gpt-6-sol",
-          "effort": "xhigh"
         }
       ],
-      "why": "anthropic/claude-opus-5-5 on OMP at xhigh and openai-codex/gpt-6-sol on Pi at xhigh are active xhigh peers for exceptional architecture; FirstMate resolves between them through the quota-array procedure after this rule matches. Sol especially serves as an independent second opinion, on a different harness and model family from the primary OMP session, at the lowest cost that still satisfies that independence. openai-codex/gpt-6-astra remains reserved for the separate, more specific ultra-exceptional rule below, reached for only when even this Sol pairing is not enough - never a routine peer here."
+      "why": "anthropic/claude-opus-5-5 on OMP at xhigh is the single-candidate route for very difficult architecture - a single candidate, not a quota array, so no other model can be selected ahead of Opus 5.5 here. When an independent cross-family second opinion is genuinely needed, dispatch TENTH-MAN against the recommendation (GPT-6 Sol for Claude-authored work) rather than pairing a peer here. openai-codex/gpt-6-astra remains reserved for the separate ultra-exceptional rule below."
     },
     {
       "category": "ARCHITECTURE",
-      "when": "the same exceptional ARCHITECTURE work above, specifically on the rare occasion even the Opus 5.5/Sol exceptional pairing above is not enough: the decision is so consequential or so deeply contested that the strongest available independent reasoning is warranted regardless of cost. This is a separate, more specific rule within ARCHITECTURE, not a quota-resolved peer of either case above: pick it only when that ultra-exceptional condition genuinely applies, never by default and never merely because the exceptional rule already matched.",
+      "when": "the same very difficult ARCHITECTURE work above, specifically on the rare occasion even Opus 5.5 at xhigh above is not enough: the decision is so consequential or so deeply contested that the strongest available independent reasoning is warranted regardless of cost. This is a separate, more specific rule within ARCHITECTURE, not a quota-resolved peer of either case above: pick it only when that ultra-exceptional condition genuinely applies, never by default and never merely because the very-difficult rule already matched.",
       "use": [
         {
           "harness": "pi",
@@ -157,7 +164,7 @@
           "effort": "xhigh"
         }
       ],
-      "why": "openai-codex/gpt-6-astra on Pi at xhigh is reached for only on this narrowest, most consequential tier of architecture decision, once the Opus 5.5/Sol exceptional pairing above is not enough. Astra stays limited to this and this configuration's other genuinely exceptional lanes; it is never a routine architecture default."
+      "why": "openai-codex/gpt-6-astra on Pi at xhigh is reached for only on this narrowest, most consequential tier of architecture decision, once Opus 5.5 at xhigh above is not enough. Astra stays limited to this and this configuration's other genuinely exceptional lanes; it is never a routine architecture default."
     },
     {
       "category": "TENTH-MAN",
@@ -197,43 +204,19 @@
     },
     {
       "category": "IMPLEMENT",
-      "when": "ordinary bounded engineering: a feature, a bug fix, normal debugging, a normal refactor, or writing/repairing tests, with a blast radius you can hold in your head. This is the main coding lane and the unmarked default for real code changes. If the change is a one-file mechanical edit or a factual question, that is QUICK instead; if it spans many files or the design is not settled yet, that is IMPLEMENT-LARGE instead; if the change is primarily frontend/browser-visible behavior, that is UI/BROWSER instead. If the implementation itself is delicate - races, state machines, security-sensitive logic, or coordinated multi-file changes that must stay consistent - that is the complex-IMPLEMENT rule below instead.",
+      "when": "small or bounded engineering: a focused feature, a bug fix, normal debugging, a small refactor, or writing/repairing tests, contained in one coherent unit with a blast radius you can hold in your head. This is the main coding lane for bounded code changes. If the change is a one-file mechanical edit or a factual question, that is QUICK instead; if it spans many files or the design is not settled yet, that is IMPLEMENT-LARGE instead; if the change is primarily frontend/browser-visible behavior, that is UI/BROWSER instead. If the change is substantive - meaningful new behavior, a nontrivial refactor, work spanning multiple components, real cross-component regression risk, or delicate logic such as races, state machines, or security-sensitive code - that is the substantive-IMPLEMENT rule below instead.",
       "use": [
         {
           "harness": "omp",
           "model": "anthropic/claude-sonnet-5",
-          "effort": "medium"
+          "effort": "high"
         }
       ],
-      "why": "The everyday coding lane: OMP + Sonnet at medium effort. This is the default assumption for 'write code' work; only move to a neighboring category when one of its specific triggers actually applies, not because the request feels bigger or smaller than usual. Genuinely delicate implementation is a separate, more specific rule below (complex IMPLEMENT), never a quota-resolved peer of this ordinary case."
+      "why": "Sonnet 5 at high effort for small, bounded code changes: enough care for a clean, tested change without spending Opus 5.5 on work a careful Sonnet pass fully covers. Only move to a neighboring category when one of its specific triggers actually applies. Substantive implementation is a separate, more specific rule below, never a quota-resolved peer of this bounded case."
     },
     {
       "category": "IMPLEMENT",
-      "when": "the same ordinary bounded-engineering IMPLEMENT work above, specifically when the implementation itself is delicate: races and concurrency, state machines, security-sensitive logic, or coordinated multi-file changes that must stay consistent with each other. This is a separate, more specific rule within IMPLEMENT, not a quota-resolved peer of the ordinary case: pick it only when the delicacy condition genuinely applies, not by default.",
-      "use": [
-        {
-          "harness": "omp",
-          "model": "anthropic/claude-sonnet-5",
-          "effort": "high"
-        }
-      ],
-      "why": "High effort is the deliberate escalation once the implementation itself - not just its size - is delicate enough that medium effort risks a subtle mistake: races, state machines, security-sensitive logic, or coordinated multi-file consistency."
-    },
-    {
-      "category": "IMPLEMENT-LARGE",
-      "when": "broad multi-file or long-horizon implementation where the direction is mostly already known - more files than IMPLEMENT, but not an unsettled reasoning problem. If the change is small enough to hold in your head, that is IMPLEMENT instead; if the difficulty is in figuring out what is wrong or what is true rather than in the amount of settled work to do, that is DEEP instead.",
-      "use": [
-        {
-          "harness": "omp",
-          "model": "anthropic/claude-sonnet-5",
-          "effort": "high"
-        }
-      ],
-      "why": "Sonnet at high effort is the default for broad, mostly-settled execution."
-    },
-    {
-      "category": "IMPLEMENT-LARGE",
-      "when": "the same broad, mostly-settled IMPLEMENT-LARGE work above, specifically when the sheer sustained execution - not merely the file count - justifies a stronger model: a long autonomous run across many coordinated changes where Sonnet-high's throughput is genuinely the limiting factor. This is a separate, more specific rule, not a quota-resolved peer of the ordinary case; do not pick it, and never pick Astra, just because many files are touched.",
+      "when": "the same IMPLEMENT work above, specifically when the change is substantive: meaningful new behavior, a nontrivial refactor, work spanning multiple components, real cross-component regression risk, or delicate logic - races and concurrency, state machines, security-sensitive code, or coordinated multi-file changes that must stay consistent. This is a separate, more specific rule within IMPLEMENT, not a quota-resolved peer of the bounded case: pick it whenever that condition applies; if uncertain between this and bounded IMPLEMENT, prefer Opus 5.5.",
       "use": [
         {
           "harness": "omp",
@@ -241,7 +224,31 @@
           "effort": "high"
         }
       ],
-      "why": "Opus 5.5 here is difficult execution, not difficult reasoning - that is what separates this escalation from DEEP's Opus/Sol/Astra lanes. Opus 5.5 directly replaces Opus 5 in this lane. Escalate to xhigh, by explicit captain choice, only when even high effort is not enough."
+      "why": "Opus 5.5 at high effort is the Opus-biased route for substantive implementation - the same 'materially substantive' standard primary-policy.md section 7 uses to require independent review. Bounded work stays on Sonnet 5 above; broad multi-file execution is IMPLEMENT-LARGE."
+    },
+    {
+      "category": "IMPLEMENT-LARGE",
+      "when": "broad multi-file or long-horizon implementation where the direction is mostly already known - more files than IMPLEMENT, but not an unsettled reasoning problem. If the change is small enough to hold in your head, that is IMPLEMENT instead; if the difficulty is in figuring out what is wrong or what is true rather than in the amount of settled work to do, that is DEEP instead.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-opus-5-5",
+          "effort": "high"
+        }
+      ],
+      "why": "Opus 5.5 at high effort is the default for broad, mostly-settled execution: difficult execution, not difficult reasoning - that is what separates IMPLEMENT-LARGE from DEEP. Reasoning-heavy execution is the separate xhigh rule below."
+    },
+    {
+      "category": "IMPLEMENT-LARGE",
+      "when": "the same broad, mostly-settled IMPLEMENT-LARGE work above, specifically when the execution is reasoning-heavy: a long autonomous run whose many coordinated changes each demand careful judgment - interdependent invariants, intricate data transformations, or consistency that must hold across the whole change - even though the overall direction is settled. This is a separate, more specific rule, not a quota-resolved peer of the ordinary case: do not pick it just because many files are touched, and never pick Astra here; if the hard part is finding what is wrong rather than executing a settled plan, that is DEEP instead.",
+      "use": [
+        {
+          "harness": "omp",
+          "model": "anthropic/claude-opus-5-5",
+          "effort": "xhigh"
+        }
+      ],
+      "why": "Opus 5.5 at xhigh is reserved for large execution where per-step reasoning, not throughput, is the limiting factor; ordinary broad execution stays at high effort above."
     },
     {
       "category": "DEEP",
@@ -305,7 +312,7 @@
     },
     {
       "category": "UI/BROWSER",
-      "when": "frontend or browser-visible behavior: forms, validation, navigation, interactive components, browser-side state, or end-to-end user flows where automated tests can pass while real user behavior is wrong. If there is no browser-visible behavior at stake, that is IMPLEMENT instead. If the underlying change is deep code-plus-browser work whose implementation is itself delicate, that is the Opus-escalation rule below instead.",
+      "when": "frontend or browser-visible behavior: forms, validation, navigation, interactive components, browser-side state, or end-to-end user flows where automated tests can pass while real user behavior is wrong. If there is no browser-visible behavior at stake, that is IMPLEMENT instead. If the change is complex or cross-layer - delicate implementation, or frontend/backend changes that must stay consistent across layers - that is the complex-UI/BROWSER rule below instead.",
       "use": [
         {
           "harness": "omp",
@@ -313,11 +320,11 @@
           "effort": "high"
         }
       ],
-      "why": "OMP + Sonnet at high effort, paired with this configuration's existing browser/manual verification policy (primary-policy.md section 7). Browser-visible surface alone is never a reason to reach for Opus or Astra as a default. If the underlying bug is a genuinely hard reasoning problem rather than an ordinary UI change, route it to DEEP instead and still apply browser verification to confirm the fix. Deep code-plus-browser work is a separate, more specific rule below, not a quota-resolved peer of this ordinary case."
+      "why": "OMP + Sonnet at high effort, paired with this configuration's existing browser/manual verification policy (primary-policy.md section 7). Browser-visible surface alone is never a reason to reach for Opus or Astra as a default. If the underlying bug is a genuinely hard reasoning problem rather than an ordinary UI change, route it to DEEP instead and still apply browser verification to confirm the fix. Complex or cross-layer browser work is a separate, more specific rule below, not a quota-resolved peer of this ordinary case."
     },
     {
       "category": "UI/BROWSER",
-      "when": "the same browser-visible UI/BROWSER work above, specifically when the underlying change is deep code-plus-browser work: delicate implementation (races, state machines, security-sensitive logic, or coordinated multi-file consistency) that must also be verified through the browser. This is a separate, more specific rule within UI/BROWSER, not a quota-resolved peer of the ordinary case: pick it only when the implementation itself is genuinely delicate, not merely because a UI is involved.",
+      "when": "the same browser-visible UI/BROWSER work above, specifically when the change is complex or cross-layer: delicate implementation (races, state machines, security-sensitive logic) or coordinated frontend/backend or multi-file changes that must stay consistent across layers, all of which must also be verified through the browser. This is a separate, more specific rule within UI/BROWSER, not a quota-resolved peer of the normal case: pick it only when that condition genuinely applies, not merely because a UI is involved.",
       "use": [
         {
           "harness": "omp",
@@ -325,14 +332,14 @@
           "effort": "high"
         }
       ],
-      "why": "Opus 5.5 at high effort is reserved for UI/BROWSER work whose implementation is itself delicate enough to warrant it, still paired with this configuration's browser/manual verification policy (primary-policy.md section 7). Never a default for ordinary browser-visible changes."
+      "why": "Opus 5.5 at high effort is reserved for complex or cross-layer UI/BROWSER work, still paired with this configuration's browser/manual verification policy (primary-policy.md section 7). Never a default for ordinary browser-visible changes."
     }
   ],
   "default": [
     {
       "harness": "omp",
-      "model": "anthropic/claude-sonnet-5",
-      "effort": "medium"
+      "model": "anthropic/claude-opus-5-5",
+      "effort": "high"
     }
   ]
 }
