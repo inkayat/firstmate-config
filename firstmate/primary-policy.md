@@ -2,7 +2,70 @@
 
 Operating policy for the Firstmate captain on this fleet. It refines how the
 captain works; it never overrides `AGENTS.md`, and it never overrides a
-project's own instructions.
+project's own instructions. It is longer than one default read: page
+through to the end.
+
+## 0. Routing and skill trace (temporary, debugging period)
+
+Until the captain ends this debugging period, print a short trace in the
+Captain chat. It discloses decisions sections 3 and 5 already made - never
+reasoning or chain-of-thought, never pasted into the brief, never written
+to a file, board, or monitor.
+
+Before each delegation, one block per worker (implementer, reviewer,
+re-reviewer, tenth-man):
+
+    Routing: <CATEGORY> [#n] | role <role> | <harness> | <provider/model> | <effort> | why: <short reason>
+    Skills: <skill> - <short reason>; <skill> - <short reason>
+
+- `#n` is the matched rule's position within its category in
+  `config/crew-dispatch.json` (1-based; required when the category has
+  more than one rule, e.g. `REVIEW #3`), so the sub-lane shown is the rule
+  actually used. Print no free-text sub-lane label: nothing can verify it
+  against the rule, so a wrong one would mislead; the reason goes in
+  `why`. Harness, model, and effort are exactly what is passed to
+  `fm-spawn` for that worker - that rule's resolved candidate. An explicit
+  captain choice outside the rule says `captain override` in `why`.
+- `Skills` names exactly the project-local and shared worker skills
+  selected in that brief (section 2 steps 3-4): project-local ones by
+  their worktree-relative path, shared ones by name. Nothing else - no
+  installed-but-unselected skill, no official FirstMate internal skill.
+  `Skills: none` is valid.
+
+After a worker finishes:
+
+    Skill evidence:
+    - <skill>: <observation citing `verbatim excerpt`>
+    - <skill>: selected, but no strong application evidence observed
+
+- Print `Skill evidence:` after every worker, including one whose brief
+  selected no skills: after `Skills: none` write `Skill evidence: none
+  selected` and nothing under it. Never invent a line to fill it.
+- One line per selected skill, none for an unselected skill, at most two
+  observations each.
+- Each observation quotes a short verbatim excerpt from the worker's own
+  pane, transcript, report, or diff - a command it ran, output it saw, a
+  test it added. A skill's existence, its selection, or the worker saying
+  it applied the skill is not evidence; use the second form instead. Read
+  the excerpt in context first: text the worker only quoted, planned, or
+  denied doing is not evidence either.
+- Quote each excerpt in single backticks and separate two excerpts with
+  words or a space (`done` and `passed`, not `done`-`passed`). An excerpt
+  that itself contains backticks is quoted whole: `Exit code: `1``.
+
+Independent review stays separate from any automated pipeline:
+
+    Review: <role> | <harness> <model> <effort> | why: <reason> | skills: <...> | BLOCKER n, IMPORTANT n, OPTIONAL n
+    no-mistakes: <result>
+
+`tests/routing-trace.sh check` checks one captured block against the real
+spawn axes, the matched rule's route, the brief's selected skills, and the
+worker transcript; its offline suite also drives the real `fm-spawn.sh`
+seam with a fixture worker. A citation PASS is a lexical match only, so
+`check` prints each citation's transcript context for that reading. It
+does not prove the category or rule was chosen correctly or that a skill
+was applied. It is
+a diagnostic, never a gate.
 
 ## 1. Authority
 
@@ -159,7 +222,7 @@ wins over the table.
 | IMPLEMENT-LARGE | omp `anthropic/claude-opus-5-5` high; reasoning-heavy: xhigh | senior-fullstack |
 | DEEP | scout and ship: omp `anthropic/claude-opus-5-5` xhigh, with `openai-codex/gpt-6-sol` xhigh reached only through an explicit single-candidate escalation rule (pi for diagnosis, omp for implementation) and `openai-codex/gpt-6-astra` xhigh as the last escalation beyond that - never a quota peer | senior-fullstack |
 | UI/BROWSER | normal: omp `anthropic/claude-sonnet-5` high; complex/cross-layer: omp `anthropic/claude-opus-5-5` high | senior-fullstack |
-| DEFAULT | omp `anthropic/claude-opus-5-5` high (debugging period, section 8) | senior-fullstack |
+| DEFAULT | omp `anthropic/claude-opus-5-5` high (debugging period, section 0) | senior-fullstack |
 
 Sub-lanes are separate same-category rules, never new categories and never
 quota-array peers, so semantic escalation cannot be mistaken for quota
@@ -486,59 +549,3 @@ This policy and the selected verification skills are guidance, not a
 mechanical completion check. This configuration has no trusted verification
 runner or FirstMate completion hook; a passing fixture report cannot stand
 in for verification of the actual task changes.
-
-## 8. Routing and skill trace (temporary, debugging period)
-
-Until the captain ends this debugging period, print a short trace in the
-Captain chat. It discloses decisions sections 3 and 5 already made - never
-reasoning or chain-of-thought, never pasted into the brief, never written
-to a file, board, or monitor.
-
-Before each delegation, one block per worker (implementer, reviewer,
-re-reviewer, tenth-man):
-
-    Routing: <CATEGORY> [#n] | role <role> | <harness> | <provider/model> | <effort> | why: <short reason>
-    Skills: <skill> - <short reason>; <skill> - <short reason>
-
-- `#n` is the matched rule's position within its category in
-  `config/crew-dispatch.json` (1-based; required when the category has
-  more than one rule, e.g. `REVIEW #3`), so the sub-lane shown is the rule
-  actually used. Print no free-text sub-lane label: nothing can verify it
-  against the rule, so a wrong one would mislead; the reason goes in
-  `why`. Harness, model, and effort are exactly what is passed to
-  `fm-spawn` for that worker - that rule's resolved candidate. An explicit
-  captain choice outside the rule says `captain override` in `why`.
-- `Skills` names exactly the project-local and shared worker skills
-  selected in that brief (section 2 steps 3-4): project-local ones by
-  their worktree-relative path, shared ones by name. Nothing else - no
-  installed-but-unselected skill, no official FirstMate internal skill.
-  `Skills: none` is valid.
-
-After a worker finishes:
-
-    Skill evidence:
-    - <skill>: <observation citing `verbatim excerpt`>
-    - <skill>: selected, but no strong application evidence observed
-
-- One line per selected skill, none for an unselected skill, at most two
-  observations each.
-- Each observation quotes a short verbatim excerpt from the worker's own
-  pane, transcript, report, or diff - a command it ran, output it saw, a
-  test it added. A skill's existence, its selection, or the worker saying
-  it applied the skill is not evidence; use the second form instead. Read
-  the excerpt in context first: text the worker only quoted, planned, or
-  denied doing is not evidence either.
-
-Independent review stays separate from any automated pipeline:
-
-    Review: <role> | <harness> <model> <effort> | why: <reason> | skills: <...> | BLOCKER n, IMPORTANT n, OPTIONAL n
-    no-mistakes: <result>
-
-`tests/routing-trace.sh check` checks one captured block against the real
-spawn axes, the matched rule's route, the brief's selected skills, and the
-worker transcript; its offline suite also drives the real `fm-spawn.sh`
-seam with a fixture worker. A citation PASS is a lexical match only, so
-`check` prints each citation's transcript context for that reading. It
-does not prove the category or rule was chosen correctly or that a skill
-was applied. It is
-a diagnostic, never a gate.

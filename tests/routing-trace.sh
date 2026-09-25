@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # routing-trace.sh - offline acceptance, plus an externally usable `check`
 # CLI, for the temporary routing/skill trace the Captain prints during the
-# debugging period (firstmate/primary-policy.md section 8).
+# debugging period (firstmate/primary-policy.md section 0).
 #
 # Usage:
 #   tests/routing-trace.sh                     run the offline fixture suite
@@ -52,10 +52,56 @@ def skill_id(token):
     # Absolute (shared/core) skill paths normalize to the skill's name;
     # worktree-relative project-local paths stay distinct from a global
     # skill of the same name.
-    token = token.strip()
+    token = token.strip().strip("`")  # a Markdown-formatted name is the same skill
     if os.path.isabs(token) and token.endswith("/SKILL.md"):
         return os.path.basename(os.path.dirname(token))
     return token
+
+def citations(text):
+    # Backticked excerpts -> (excerpts, ambiguous). Supported quoting: an
+    # excerpt opens with one backtick; inside it, a backtick followed by
+    # text opens a nested quote and the next backtick followed by the end,
+    # whitespace, or punctuation closes the innermost open quote; a closing
+    # double backtick ends a nested quote and the excerpt together, as in the
+    # live `Exit code: `1``. So `Exit code: `1`, final` is cited whole, never
+    # as a prefix that a different exit code would also match. Anything
+    # else (a ``/``` opener, an unclosed quote) is reported ambiguous rather
+    # than guessed.
+    found, i, n = [], 0, len(text)
+    def run_at(k):
+        r = 0
+        while k + r < n and text[k + r] == "`":
+            r += 1
+        return r
+    def boundary(k):
+        return k >= n or text[k].isspace() or text[k] in ".,;:!?)]'\""
+    while True:
+        start = text.find("`", i)
+        if start < 0:
+            return found, False
+        if run_at(start) != 1:
+            return found, True
+        j, depth = start + 1, 0
+        while True:
+            k = text.find("`", j)
+            if k < 0:
+                return found, True
+            r = run_at(k)
+            after = k + r
+            if r == 1 and not boundary(after):
+                depth += 1
+            elif r == 1 and depth:
+                depth -= 1
+            elif r == 1:
+                found.append(text[start + 1:k])
+                break
+            elif r == 2 and depth == 1 and boundary(after):
+                found.append(text[start + 1:k + 1])
+                break
+            else:
+                return found, True
+            j = after
+        i = after
 
 lines = open(trace_path).read().splitlines()
 routing = [l for l in lines if l.startswith("Routing:")]
@@ -113,17 +159,24 @@ result(traced == selected, "Skills names exactly the selected skills %s (trace s
 
 if transcript_path is not None:
     transcript = open(transcript_path).read()
-    try:
-        start = lines.index("Skill evidence:")
-    except ValueError:
-        result(False, "a Skill evidence: block follows the worker's completion")
+    starts = [i for i, l in enumerate(lines) if l.startswith("Skill evidence:")]
+    if len(starts) != 1:
+        result(False, "exactly one Skill evidence: block follows the worker's completion (got %d)" % len(starts))
         sys.exit(1)
+    start = starts[0]
+    # With no selected skills the header may stand alone or say
+    # "none selected" inline, as a live Captain printed it; nothing else.
+    inline = lines[start][len("Skill evidence:"):].strip().rstrip(".").lower()
+    if inline not in ("", "none", "none selected"):
+        result(False, "Skill evidence: header carries nothing inline but 'none selected' (got %r)" % inline)
     entries = []
     for l in lines[start + 1:]:
         m = re.match(r"^- (\S+): (.+)$", l)
         if not m:
             break
         entries.append((skill_id(m.group(1)), m.group(2).strip()))
+    if inline in ("none", "none selected") and entries:
+        result(False, "Skill evidence: says none selected but lists %d skill line(s)" % len(entries))
     names = [name for name, _ in entries]
     result(len(names) == len(set(names)), "Skill evidence has one line per skill (got %s)" % names)
     result(set(names) == selected,
@@ -132,7 +185,9 @@ if transcript_path is not None:
         if text == NO_EVIDENCE:
             result(True, "%s: honestly reported without application evidence" % name)
             continue
-        cited = re.findall(r"`([^`]+)`", text)
+        cited, ambiguous = citations(text)
+        if ambiguous:
+            result(False, "%s: ambiguous backtick quoting in %r - quote each excerpt as `excerpt`, separated by words or a space" % (name, text))
         result(1 <= len(cited) <= 2, "%s: cites one or two observations (got %d)" % (name, len(cited)))
         for c in cited:
             at = transcript.find(c)
@@ -176,6 +231,15 @@ expect_shows() { # <label> <needle> <trace-check args...> - passes, and prints <
   case $out in
     *"$needle"*) [ "$rc" -eq 0 ] && pass "$label" || fail "$label (exit $rc)" ;;
     *) fail "$label (output never shows '$needle')" ;;
+  esac
+}
+expect_rejects() { # <label> <FAIL needle> <trace-check args...> - fails, and for the stated reason
+  local label=$1 needle=$2 out rc
+  shift 2
+  out=$(trace_check "$@" 2>&1); rc=$?
+  case $out in
+    *"$needle"*) [ "$rc" -eq 1 ] && pass "$label" || fail "$label (exit $rc)" ;;
+    *) fail "$label (no '$needle' in: $(printf '%s' "$out" | grep FAIL | tr '\n' ' '))" ;;
   esac
 }
 
@@ -334,6 +398,84 @@ Skill evidence:
 - $VBC: selected, but no strong application evidence observed")
 expect_shows 'a citation found only inside a denial surfaces that transcript line for human inspection' \
   'I did not run any tests' "$EVIDENCE_NEGATED" omp "$OPUS" high "$TDD,$VBC" "$NEGATED"
+
+# Forms a real Captain actually printed (live run on 134d70f plus the
+# section-0 relocation, 2026-09-25): an inline "none selected" when the
+# brief selected no skills, and a backticked skill name. Both are truthful
+# and must pass; the same shapes must still reject false or unselected
+# claims.
+LUNA=openai-codex/gpt-6-luna
+LIVE_NONE=$(t live-none.txt "Routing: EXPLORE #1 | role senior-fullstack | omp | $LUNA | low | why: measured viable capacity; Claude capacity unknown
+Skills: none
+Skill evidence: none selected.")
+expect 'live form: "Skill evidence: none selected." after "Skills: none" is accepted' pass \
+  "$LIVE_NONE" omp "$LUNA" low none "$TRANSCRIPT"
+expect 'inline "none selected" while a skill was selected is rejected' fail \
+  "$(t live-none-sel.txt "$(sed 's/^Skills: none$/Skills: verification-before-completion - fresh output/' "$LIVE_NONE")")" \
+  omp "$LUNA" low "$VBC" "$TRANSCRIPT"
+expect 'an inline Skill evidence remark other than "none selected" is rejected' fail \
+  "$(t live-none-other.txt "$(sed 's/none selected\./all skills applied./' "$LIVE_NONE")")" omp "$LUNA" low none "$TRANSCRIPT"
+LIVE_TRANSCRIPT=$(t live-transcript.txt '$ ./tests/routing-trace.sh check captured-trace.txt omp openai-codex/gpt-6-luna low verification-before-completion worker-transcript.txt
+FAIL - Skill evidence covers exactly the selected skills
+Exit code: `1`')
+LIVE_VBC=$(t live-vbc.txt "Routing: EXPLORE #1 | role senior-fullstack | omp | $LUNA | low | why: bounded in-repository diagnostic
+Skills: $VBC - require fresh command output before the pass/fail claim
+Skill evidence:
+- \`$VBC\`: the report records the decisive command, complete output, and \`Exit code: \`1\`\`.")
+expect 'live form: a backticked skill name with a grounded citation is accepted' pass \
+  "$LIVE_VBC" omp "$LUNA" low "$HOME/.agents/skills/$VBC/SKILL.md" "$LIVE_TRANSCRIPT"
+expect 'a backticked skill name still needs its citation in the transcript' fail \
+  "$LIVE_VBC" omp "$LUNA" low "$VBC" "$TRANSCRIPT"
+expect_rejects 'the nested live citation `Exit code: `1`` is rejected against a transcript showing exit 0' \
+  "FAIL - $VBC: cited \`Exit code: \`1\`\` occurs" \
+  "$LIVE_VBC" omp "$LUNA" low "$VBC" "$(t live-transcript-exit0.txt "$(sed 's/Exit code: `1`/Exit code: `0`/' "$LIVE_TRANSCRIPT")")"
+expect_shows 'the nested live citation is matched as the whole excerpt, not its prefix' 'cited `Exit code: `1``' \
+  "$LIVE_VBC" omp "$LUNA" low "$VBC" "$LIVE_TRANSCRIPT"
+# Nested quoting followed by punctuation (independent review): the inner
+# closing tick must not end the excerpt early, or `Exit code: `1`, final`
+# would be cut to a prefix that also matches `Exit code: `10``.
+NESTED_COMMA=$(t nested-comma.txt "Routing: EXPLORE #1 | role senior-fullstack | omp | $LUNA | low | why: bounded
+Skills: $VBC - fresh verification
+Skill evidence:
+- \`$VBC\`: saw \`Exit code: \`1\`, final\`")
+expect_rejects 'a nested citation followed by a comma is rejected against a transcript with a different exit code' \
+  "FAIL - $VBC: cited \`Exit code: \`1\`, final\` occurs" \
+  "$NESTED_COMMA" omp "$LUNA" low "$VBC" "$(t exit10.txt 'Exit code: `10`')"
+expect 'a nested citation followed by a comma passes when the whole excerpt is in the transcript' pass \
+  "$NESTED_COMMA" omp "$LUNA" low "$VBC" "$(t exit1-final.txt 'Exit code: `1`, final')"
+TWO_NESTED=$(t two-nested.txt "Routing: EXPLORE #1 | role senior-fullstack | omp | $LUNA | low | why: bounded
+Skills: $VBC - fresh verification
+Skill evidence:
+- \`$VBC\`: ran \`ran \`npm test\`, then resumed\` and saw \`passed\`")
+expect 'two observations, the first nested, are both cited whole and accepted' pass \
+  "$TWO_NESTED" omp "$LUNA" low "$VBC" "$(t resumed.txt 'The worker ran `npm test`, then resumed; passed')"
+# Supported quoting (policy section 0): excerpts separated by words or a
+# space. Punctuation-only adjacency such as `done`-`passed` is rejected as
+# ambiguous (never truncated or accepted on a guess); spaced forms pass.
+two_obs() { # <file> <evidence suffix>
+  t "$1" "Routing: EXPLORE #1 | role senior-fullstack | omp | $LUNA | low | why: bounded
+Skills: $VBC - fresh verification
+Skill evidence:
+- \`$VBC\`: $2"
+}
+DONE_PASSED=$(t done-passed.txt 'worker done; tests passed')
+expect_rejects 'two excerpts joined only by punctuation are rejected as ambiguous quoting' 'ambiguous backtick quoting' \
+  "$(two_obs dash.txt 'saw `done`-`passed`')" omp "$LUNA" low "$VBC" "$DONE_PASSED"
+expect 'two excerpts separated by words are accepted' pass \
+  "$(two_obs words.txt 'saw `done` and `passed`')" omp "$LUNA" low "$VBC" "$DONE_PASSED"
+expect 'two excerpts separated by a comma and space are accepted' pass \
+  "$(two_obs comma.txt 'saw `done`, `passed`')" omp "$LUNA" low "$VBC" "$DONE_PASSED"
+expect_rejects 'unbalanced backtick quoting is rejected as ambiguous, never guessed' 'ambiguous backtick quoting' \
+  "$(t ambiguous.txt "Routing: EXPLORE #1 | role senior-fullstack | omp | $LUNA | low | why: bounded
+Skills: $VBC - fresh verification
+Skill evidence:
+- \`$VBC\`: saw \`\`\`Exit code: 1\`")" omp "$LUNA" low "$VBC" "$(t exit1.txt 'Exit code: 1')"
+expect 'a backticked claim for an unselected skill is rejected' fail \
+  "$(t live-unsel.txt "$(cat "$LIVE_VBC")
+- \`systematic-debugging\`: saw \`FAIL - Skill evidence covers exactly the selected skills\`")" omp "$LUNA" low "$VBC" "$LIVE_TRANSCRIPT"
+expect 'a backticked duplicate of a skill line is rejected' fail \
+  "$(t live-dup.txt "$(cat "$LIVE_VBC")
+- $VBC: selected, but no strong application evidence observed")" omp "$LUNA" low "$VBC" "$LIVE_TRANSCRIPT"
 
 # --- 4. Real dispatch/brief/spawn seam --------------------------------------
 # The real, unmodified official bin/fm-spawn.sh launches one task on an

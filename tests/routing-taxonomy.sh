@@ -358,7 +358,7 @@ check_rule_use UI/BROWSER 2 2 omp anthropic/claude-opus-5-5 high
 check_lane_when UI/BROWSER 2 'cross-layer' 'UI/BROWSER rule 2: complex/cross-layer browser work is the Opus 5.5 sub-lane'
 
 # DEFAULT: Opus 5.5 high during the routing-trace debugging period
-# (primary-policy.md section 8).
+# (primary-policy.md section 0).
 default_line=$(default_tuple)
 check 'DEFAULT: catch-all route is omp/anthropic/claude-opus-5-5/high during the debugging period' "omp	anthropic/claude-opus-5-5	high" "$default_line"
 

@@ -40,7 +40,7 @@ policy chooses worker harness, model, effort, and role by task semantics.
   is the everyday cross-family challenger, with Astra limited to each
   lane's most extreme, exceptional escalation
 - Temporary routing/skill trace in the Captain chat during the debugging
-  period (`firstmate/primary-policy.md` section 8)
+  period (`firstmate/primary-policy.md` section 0)
 - Multi-project operation with per-task project resolution
 - Scoped `AGENTS.md` / `CLAUDE.md` context and project-local skills
 - Reproducibly installed shared worker skills and external pins
@@ -94,7 +94,7 @@ The complete conditions live in the tracked routing file and
 
 During the debugging period the Captain prints a short `Routing:` /
 `Skills:` block before each delegation and a `Skill evidence:` block after
-each worker finishes (primary-policy.md section 8).
+each worker finishes (primary-policy.md section 0).
 `tests/routing-trace.sh check` compares a captured block with the real
 spawn axes, the matched rule's route (`#n`), the brief's selected skills,
 and the worker transcript. Evidence citations are lexical matches only, so
