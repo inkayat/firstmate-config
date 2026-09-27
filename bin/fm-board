@@ -25,7 +25,10 @@ rewritten, so `updated_at` marks the last real transition.
 No step here calls an LLM. `list`/`show`/`summary`/`render`/`open` perform a
 bounded, deterministic reconcile against already-published Firstmate state;
 none of them invoke a model, a daemon, or a network service beyond the
-existing `fm-crew-state.sh` (itself LLM-free and already used by Firstmate).
+existing `fm-crew-state.sh` and `fm-tasks-axi.sh` (both LLM-free and already
+used by Firstmate). `render` also adds each Firstmate task's full backlog
+record, open decision, and landing links to board-data.js (never state.json)
+for the page's per-task detail view (`board.html#task/<id>`).
 `open` re-renders while the viewer it launched is running, and the page
 itself re-reads board-data.js every few seconds, so an open board follows
 transitions without a manual refresh; both stop as soon as the viewer exits.
@@ -113,6 +116,14 @@ def template_html_path() -> str:
     # bin/fm-board -> repo root -> board/board.html
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(repo_root, "board", "board.html")
+
+
+def home_summary_path() -> str:
+    return os.path.join(fm_home(), "state", "home-summary.json")
+
+
+def backlog_path() -> str:
+    return os.path.join(fm_home(), "data", "backlog.md")
 
 
 # --- state.json: locked read-modify-write, atomic replace --------------------
@@ -355,10 +366,40 @@ def cmd_summary(args: argparse.Namespace) -> None:
     print(f"  review: {total['review']}")
 
 
+def _read_ledger() -> dict:
+    try:
+        with open(home_summary_path(), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _task_details(task: dict, decisions: dict, landed: dict) -> dict:
+    """Per-task detail-view context, carried only in board-data.js and never
+    persisted in state.json. `backlog` is the task's full authoritative
+    backlog record, or None when there is none (a manual row, or a task the
+    backlog no longer has); `decision`/`landed` are its open captain call and
+    its landing PR/report, or None when it has neither."""
+    tid = task.get("id", "")
+    decision = decisions.get(tid)
+    land = landed.get(tid)
+    return {
+        "backlog": _backlog_record(tid) if task.get("source") == "firstmate" else None,
+        "decision": {k: decision.get(k) for k in ("verb", "summary", "reason")} if decision else None,
+        "landed": {k: land.get(k) for k in ("pr_url", "report_path", "local_note", "completion")}
+        if land else None,
+    }
+
+
 def render() -> None:
     reconcile_if_possible()
     data = read_state()
+    ledger = _read_ledger()
+    decisions = {d.get("id"): d for d in ledger.get("decisions_open", []) if d.get("id")}
+    landed = {e.get("id"): e for e in ledger.get("landed", []) if e.get("id")}
     tasks = sorted(data["tasks"].values(), key=lambda t: t.get("id", ""))
+    for t in tasks:
+        t["details"] = _task_details(t, decisions, landed)
     payload = {"generated_at": now_iso(), "schema": SCHEMA, "tasks": tasks}
     os.makedirs(board_dir(), exist_ok=True)
     js = "window.BOARD_DATA = " + json.dumps(payload, indent=2, sort_keys=True) + ";\n"
@@ -368,9 +409,14 @@ def render() -> None:
         with open(template, "r", encoding="utf-8") as f:
             html = f.read()
         # Materialize the static template verbatim; content never changes per
-        # render, only board-data.js does, so this is deterministic and
-        # produces byte-identical output across renders for the same source.
-        _atomic_write(board_html_path(), html)
+        # render, only board-data.js does. An unchanged copy is left alone:
+        # Lavish reloads its artifact whenever board.html changes on disk,
+        # which would drop the page's open detail view on every refresh.
+        current = None
+        with contextlib.suppress(OSError), open(board_html_path(), "r", encoding="utf-8") as f:
+            current = f.read()
+        if current != html:
+            _atomic_write(board_html_path(), html)
 
 
 def cmd_render(_args: argparse.Namespace) -> None:
@@ -386,18 +432,18 @@ OPEN_POLL_SECONDS = 1.0
 
 
 def _sources_stamp() -> tuple:
-    """Mtimes of everything reconcile() reads from $FM_HOME/state: the ledger
-    plus every task's .meta/.status. Never the board's own files, which
-    render itself rewrites (watching those would re-render forever)."""
+    """Mtimes of everything render() reads from Firstmate: the ledger and
+    every task's .meta/.status under $FM_HOME/state, plus the markdown
+    backlog the detail view's lookups read. Never the board's own files,
+    which render itself rewrites (watching those would re-render forever)."""
+    stamp: list = []
     state_dir = os.path.join(fm_home(), "state")
-    try:
-        with os.scandir(state_dir) as entries:
-            return tuple(sorted(
-                (e.name, e.stat().st_mtime_ns) for e in entries
-                if e.name == "home-summary.json" or e.name.endswith((".meta", ".status"))
-            ))
-    except OSError:
-        return ()
+    with contextlib.suppress(OSError), os.scandir(state_dir) as entries:
+        stamp = [(e.name, e.stat().st_mtime_ns) for e in entries
+                 if e.name == "home-summary.json" or e.name.endswith((".meta", ".status"))]
+    with contextlib.suppress(OSError):
+        stamp.append(("backlog.md", os.stat(backlog_path()).st_mtime_ns))
+    return tuple(sorted(stamp))
 
 
 def cmd_open(args: argparse.Namespace) -> None:
@@ -492,35 +538,49 @@ def _crew_state(task_id: str) -> tuple[str, str] | None:
     return m.group(1), detail
 
 
+# tasks-axi prints these for an unset field; they project to "" (known to be
+# empty), never None (not known at all).
+BACKLOG_EMPTY = ("-", "none")
+
+
+def _backlog_record(task_id: str) -> dict | None:
+    """One task's full authoritative backlog record, via the official,
+    LLM-free `fm-tasks-axi.sh show <id> --full` (which keeps archived tasks
+    too): {field: decoded text}, or None when the script is unavailable or
+    the backlog has no such task."""
+    script = os.path.join(firstmate_root(), "bin", "fm-tasks-axi.sh")
+    if not os.path.isfile(script):
+        return None
+    try:
+        out = subprocess.run(
+            [script, "show", task_id, "--full"], capture_output=True, text=True, timeout=15,
+            env={**os.environ, "FM_HOME": fm_home()},
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    record: dict = {}
+    for line in out.stdout.splitlines():
+        m = re.match(r"\s*([a-z_]+):\s*(\S.*)$", line)
+        if not m:
+            continue
+        key, value = m.group(1), m.group(2).strip()
+        if value.startswith('"'):
+            with contextlib.suppress(ValueError):
+                value = json.loads(value)
+        record[key] = "" if value in BACKLOG_EMPTY else value
+    return record if record.get("id") == task_id else None
+
+
 def _archived_identity(task_id: str) -> tuple[str | None, str | None]:
     """Fallback lookup for a task's durable project/title when neither the
     live Firstmate projection nor an existing board record has them: a
     `landed` entry never carries `repo`, and an `active_children`/`endpoints`
     entry (review-ready/running work) intentionally omits `repo` and `name`
     (minimal endpoint metadata). Consulted only when the board also has no
-    previously known identity for the id, via the official, LLM-free
-    `fm-tasks-axi.sh show <id>`, which retains `repo:`/`title:` for every
-    task it knows - one subprocess call recovers both fields at once."""
-    script = os.path.join(firstmate_root(), "bin", "fm-tasks-axi.sh")
-    if not os.path.isfile(script):
-        return None, None
-    try:
-        out = subprocess.run(
-            [script, "show", task_id], capture_output=True, text=True, timeout=15,
-            env={**os.environ, "FM_HOME": fm_home()},
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None, None
-    repo = title = None
-    for line in out.stdout.splitlines():
-        line = line.strip()
-        m = re.match(r"repo:\s*(\S+)", line)
-        if m:
-            repo = m.group(1)
-        m = re.match(r"title:\s*(.+)", line)
-        if m:
-            title = m.group(1).strip()
-    return repo, title
+    previously known identity for the id; one backlog lookup recovers both
+    fields at once."""
+    record = _backlog_record(task_id) or {}
+    return record.get("repo") or None, record.get("title") or None
 
 
 # Deterministic crew-state -> board-state projection for a task with a live
@@ -628,10 +688,9 @@ def _projection(tid: str, project: str | None, title: str | None, state: str,
 
 
 def reconcile(only_id: str | None = None) -> None:
-    summary_path = os.path.join(fm_home(), "state", "home-summary.json")
-    if not os.path.isfile(summary_path):
+    if not os.path.isfile(home_summary_path()):
         return
-    with open(summary_path, "r", encoding="utf-8") as f:
+    with open(home_summary_path(), "r", encoding="utf-8") as f:
         ledger = json.load(f)
 
     holds_by_id = {h.get("id"): h for h in ledger.get("holds", []) if h.get("id")}

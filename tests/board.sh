@@ -278,6 +278,12 @@ html_before=$(cat "$HOME4/data/board/board.html")
 run4 render >/dev/null
 html_after=$(cat "$HOME4/data/board/board.html")
 check '14 render: static HTML content is identical across re-renders' "$html_before" "$html_after"
+# Lavish reloads its artifact whenever board.html changes on disk, which drops
+# the page's open detail view; an unchanged template must not be rewritten.
+html_stamp=$(python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "$HOME4/data/board/board.html")
+sleep 0.05
+run4 render >/dev/null
+check '14 render: unchanged board.html is not rewritten' "$(python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "$HOME4/data/board/board.html")" "$html_stamp"
 
 # =============================================================================
 # Scenario 5: `fm board` dispatches through bin/fm into bin/fm-board open.
@@ -807,5 +813,101 @@ sleep 1
 run10 list >/dev/null; run10 render >/dev/null
 check '26 idempotent: unchanged ledger appends no event' "$(wc -l < "$HOME10/data/board/events.jsonl")" "$before_events"
 check '26 idempotent: unchanged ledger keeps updated_at' "$(run10 show done-wait-1 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["updated_at"])')" "$before_ts"
+
+# =============================================================================
+# Scenario 12: the rendered projection carries each task's own details for the
+# page's detail view: one full authoritative backlog lookup per FirstMate task
+# (decoded body/hold/dependency/link text, `-`/`none` sentinels become empty
+# strings), plus its open decision and landed PR/report context. A task with
+# no backlog record (pruned, or a manual row) has `backlog: null` - missing,
+# never an empty record. Raw worker .meta/.status content never reaches the
+# page, and details follow a backlog edit while the viewer is open.
+# =============================================================================
+HOME12="$TMP_ROOT/home12"; FIRSTMATE12="$TMP_ROOT/firstmate12"
+mkdir -p "$HOME12/state" "$HOME12/data" "$FIRSTMATE12/bin"
+TASKS_AXI_CALLS12="$TMP_ROOT/tasks-axi-calls12.log"
+printf '#!/usr/bin/env bash\nprintf "state: working . source: stub . harness busy\\n"\n' > "$FIRSTMATE12/bin/fm-crew-state.sh"
+printf 'Initial body\n' > "$HOME12/data/backlog.md"
+cat > "$FIRSTMATE12/bin/fm-tasks-axi.sh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$TASKS_AXI_CALLS12"
+case "\$1 \$2" in
+  "show d-queued-1") cat <<'OUT'
+task:
+  id: d-queued-1
+  title: Detailed queued task
+  state: queued
+  blocked: yes
+  blocked_by: d-landed-1
+  held: yes
+  hold_reason: "Waiting on \"captain\" call:\nline two"
+  hold_kind: captain
+  hold_until: "-"
+  kind: ship
+  repo: proj-d
+  priority: "-"
+  created: 2026-09-20
+  closed: "-"
+  deps: none
+  links: "report:data/d-queued-1/report.md"
+  body: "First line <b>not html</b>\n\nSecond paragraph"
+OUT
+  ;;
+  "show d-active-1") printf 'task:\n  id: d-active-1\n  title: Active task\n  repo: proj-d\n  deps: d-queued-1\n  body: "%s"\n' "\$(cat "\$FM_HOME/data/backlog.md")" ;;
+  *) printf 'error: "Task not found in this backlog"\ncode: NOT_FOUND\n'; exit 1 ;;
+esac
+SH
+chmod +x "$FIRSTMATE12/bin/"*
+cat > "$HOME12/state/home-summary.json" <<'JSON'
+{"valid": true, "omitted": [],
+ "queued": [{"id": "d-queued-1", "repo": "proj-d", "title": "Detailed queued task", "kind": "ship", "since": "2026-09-20", "hold_kind": "captain", "captain_actionable": true, "hold_reason": "Waiting on captain"},
+            {"id": "d-active-1", "repo": "proj-d", "title": "Active task", "kind": "ship", "since": "2026-09-21"}],
+ "active_children": [], "endpoints": [{"id": "d-active-1", "state": "parked"}],
+ "holds": [], "decisions_open": [{"id": "d-active-1", "verb": "needs-decision", "summary": "approve the commit", "reason": "verified locally"}],
+ "landed": [{"id": "d-landed-1", "repo": "proj-d", "title": "Landed task", "kind": "ship", "pr_url": "https://example.test/pr/1", "report_path": "data/d-landed-1/report.md", "local_note": null, "completion": {"verb": "merged", "date": "2026-09-22"}}]}
+JSON
+printf 'harness=omp\nmodel=anthropic/claude-opus-5-5\nworktree=/private/worktree/d-active-1\n' > "$HOME12/state/d-active-1.meta"
+printf 'working [at=1]: private status line d-active-1\n' > "$HOME12/state/d-active-1.status"
+run12() { FM_HOME="$HOME12" FIRSTMATE_ROOT="$FIRSTMATE12" PATH="/usr/bin:/bin" "$BOARD" "$@"; }
+run12 add --project proj-d --title "Manual row" --id d-manual-1 --note "manual note text" >/dev/null
+run12 render >/dev/null
+if python3 - "$HOME12/data/board/board-data.js" <<'PY'
+import json, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+tasks = {t["id"]: t for t in json.loads(text[text.index("{"):text.rindex("}") + 1])["tasks"]}
+q = tasks["d-queued-1"]["details"]["backlog"]
+assert q["body"] == "First line <b>not html</b>\n\nSecond paragraph", q
+assert q["hold_reason"] == 'Waiting on "captain" call:\nline two', q
+assert q["blocked_by"] == "d-landed-1" and q["links"] == "report:data/d-queued-1/report.md", q
+assert q["deps"] == "" and q["hold_until"] == "" and q["priority"] == "", q
+a = tasks["d-active-1"]["details"]
+assert a["backlog"]["body"] == "Initial body" and a["backlog"]["deps"] == "d-queued-1", a
+assert a["decision"] == {"verb": "needs-decision", "summary": "approve the commit", "reason": "verified locally"}, a
+assert a["landed"] is None, a
+l = tasks["d-landed-1"]["details"]
+assert l["backlog"] is None, l
+assert l["landed"]["pr_url"] == "https://example.test/pr/1" and l["landed"]["report_path"] == "data/d-landed-1/report.md", l
+assert l["landed"]["completion"] == {"verb": "merged", "date": "2026-09-22"}, l
+assert tasks["d-manual-1"]["details"]["backlog"] is None, tasks["d-manual-1"]
+assert tasks["d-manual-1"]["note"] == "manual note text", tasks["d-manual-1"]
+PY
+then pass '27 details: backlog record decoded, empty vs missing kept distinct, decision/landed context attached'; else fail '27 details: backlog record decoded, empty vs missing kept distinct, decision/landed context attached'; fi
+data12=$(cat "$HOME12/data/board/board-data.js")
+not_contains '27 details: raw .meta content never reaches the page' "$data12" '/private/worktree/d-active-1'
+not_contains '27 details: raw .status content never reaches the page' "$data12" 'private status line'
+not_contains '27 details: manual rows are never looked up in the backlog' "$(cat "$TASKS_AXI_CALLS12")" 'd-manual-1'
+
+VIEWER_GATE12="$TMP_ROOT/close-viewer12"
+BLOCK_BIN12="$TMP_ROOT/blocking-bin12"; mkdir -p "$BLOCK_BIN12"
+printf '#!/usr/bin/env bash\nwhile [ ! -e "%s" ]; do sleep 0.1; done\n' "$VIEWER_GATE12" > "$BLOCK_BIN12/terminal-browser"
+chmod +x "$BLOCK_BIN12/terminal-browser"
+FM_HOME="$HOME12" FIRSTMATE_ROOT="$FIRSTMATE12" PATH="$BLOCK_BIN12:/usr/bin:/bin" "$BOARD" open >/dev/null 2>&1 &
+OPEN_PID12=$!
+file_contains_within "$HOME12/data/board/board-data.js" "Initial body" 50 >/dev/null
+sleep 1.2
+printf 'Edited body\n' > "$HOME12/data/backlog.md"
+if file_contains_within "$HOME12/data/board/board-data.js" "Edited body" 50; then pass '28 details: a backlog edit reaches the open board'; else fail '28 details: a backlog edit reaches the open board'; fi
+touch "$VIEWER_GATE12"
+wait "$OPEN_PID12" 2>/dev/null
 
 [ "$failed" -eq 0 ] || exit 1
