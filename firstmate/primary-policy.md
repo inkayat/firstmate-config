@@ -30,7 +30,12 @@ re-reviewer, tenth-man):
   selected in that brief (section 2 steps 3-4): project-local ones by
   their worktree-relative path, shared ones by name. Nothing else - no
   installed-but-unselected skill, no official FirstMate internal skill.
-  `Skills: none` is valid.
+  `Skills: none` remains verbatim when no skill is selected. Add a
+  `No skill: <task-specific reason>` line immediately after it. Before
+  choosing none, inspect applicable project-local and shared worker skills
+  under section 5; explain why neither applies, never use a generic
+  "none needed", and select a fitting skill instead of rationalizing an
+  omission.
 
 After a worker finishes:
 
