@@ -151,7 +151,7 @@
     padding: 1px 6px;
     color: var(--muted);
   }
-  .card .review-badge {
+  .review-badge {
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
@@ -173,6 +173,59 @@
     text-align: center;
     color: var(--muted);
   }
+  .detail-link {
+    align-self: flex-start;
+    font-size: 12px;
+    color: var(--accent);
+  }
+  a:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #detail {
+    padding: 14px 18px 40px;
+    max-width: 960px;
+  }
+  #detail .back { display: inline-block; margin-bottom: 12px; color: var(--accent); }
+  #detail h2 { margin: 0 0 4px; font-size: 20px; }
+  #detail h2:focus { outline: none; }
+  #detail .id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  #detail .badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+  #detail .badge {
+    font-size: 11px;
+    background: #2c3040;
+    border-radius: 4px;
+    padding: 2px 8px;
+    color: var(--text);
+  }
+  #detail section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-top: 12px;
+  }
+  #detail h3 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  #detail dl {
+    display: grid;
+    grid-template-columns: minmax(110px, max-content) 1fr;
+    gap: 6px 14px;
+    margin: 0;
+  }
+  #detail dt { color: var(--muted); }
+  #detail dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #detail .notice { color: var(--muted); margin: 0 0 8px; }
+  #detail .missing { color: var(--muted); font-style: italic; }
+  #detail .none { color: var(--muted); }
+  #detail a { color: var(--accent); }
+  [hidden] { display: none !important; }
   @media (max-width: 720px) {
     main { flex-direction: column; overflow-x: visible; }
     .column { max-width: none; max-height: none; }
@@ -188,6 +241,7 @@
 </header>
 <main id="board"></main>
 <div id="empty-state" hidden>No tasks yet. Run <code>fm-board add</code> or wait for Firstmate to dispatch work.</div>
+<article id="detail" hidden></article>
 <script src="board-data.js"></script>
 <script>
 (function () {
@@ -199,6 +253,8 @@
     ["blocked", "Blocked"],
     ["done", "Completed"]
   ];
+  var STATE_LABELS = {};
+  COLUMNS.forEach(function (c) { STATE_LABELS[c[0]] = c[1]; });
   // The page is a static file:// snapshot; `fm-board open` keeps
   // board-data.js current while its viewer runs, and the page re-reads it on
   // this cadence so an open board follows transitions without a refresh.
@@ -226,15 +282,22 @@
     return node;
   }
 
+  // A project tab always shows the board, leaving any open detail view.
+  function selectProject(p) {
+    activeProject = p;
+    if (routeId() !== null) location.hash = "";
+    else render();
+  }
+
   function renderTabs() {
     var tabsEl = document.getElementById("tabs");
     tabsEl.textContent = "";
     var all = el("button", { className: "tab" + (activeProject === "__all__" ? " active" : ""), text: "All Projects" });
-    all.addEventListener("click", function () { activeProject = "__all__"; render(); });
+    all.addEventListener("click", function () { selectProject("__all__"); });
     tabsEl.appendChild(all);
     projects.forEach(function (p) {
       var btn = el("button", { className: "tab" + (activeProject === p ? " active" : ""), text: p });
-      btn.addEventListener("click", function () { activeProject = p; render(); });
+      btn.addEventListener("click", function () { selectProject(p); });
       tabsEl.appendChild(btn);
     });
   }
@@ -256,6 +319,11 @@
       meta.appendChild(el("span", { text: "hold: " + t.hold_reason }));
     }
     card.appendChild(meta);
+    var link = el("a", { className: "detail-link", text: "Details \u2192" });
+    link.href = "#task/" + encodeURIComponent(t.id || "");
+    link.setAttribute("data-id", t.id || "");
+    link.setAttribute("aria-label", "Details for " + (t.title || t.id || "task"));
+    card.appendChild(link);
     return card;
   }
 
@@ -291,11 +359,168 @@
     });
   }
 
-  render();
+  // Detail view: "#task/<id>" shows one task, an empty hash the board; plain
+  // links keep both keyboard- and back-button-navigable in any viewer.
+  function routeId() {
+    var m = /^#task\/(.+)$/.exec(location.hash);
+    if (!m) return null;
+    try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
+  }
+
+  // A value cell. null/undefined is information no source has (missing);
+  // "" is information its source reports as empty. Text is never parsed as
+  // markup; only http(s) URLs become links.
+  function value(v, missing) {
+    var dd = el("dd");
+    if (v === null || v === undefined) {
+      dd.appendChild(el("span", { className: "missing", text: missing || "Not recorded" }));
+      return dd;
+    }
+    if (v === "") {
+      dd.appendChild(el("span", { className: "none", text: "None" }));
+      return dd;
+    }
+    if (typeof v === "boolean") v = v ? "yes" : "no";
+    String(v).split(/(https?:\/\/[^\s"'<>]+)/).forEach(function (part, i) {
+      if (i % 2) {
+        var a = el("a", { text: part });
+        a.href = part;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        dd.appendChild(a);
+      } else if (part) {
+        dd.appendChild(document.createTextNode(part));
+      }
+    });
+    return dd;
+  }
+
+  function section(title, rows, notice) {
+    var s = el("section");
+    s.appendChild(el("h3", { text: title }));
+    if (notice) s.appendChild(el("p", { className: "notice", text: notice }));
+    var dl = el("dl");
+    rows.forEach(function (r) {
+      dl.appendChild(el("dt", { text: r[0] }));
+      dl.appendChild(value(r[1], r[2]));
+    });
+    s.appendChild(dl);
+    return s;
+  }
+
+  // Board-owned fields are always projected, so null there means empty.
+  function nz(v) { return v === null || v === undefined ? "" : v; }
+
+  function renderDetail(id) {
+    var view = document.getElementById("detail");
+    view.textContent = "";
+    var back = el("a", { className: "back", text: "\u2190 Back to board" });
+    back.href = "#";
+    view.appendChild(back);
+    var t = tasks.filter(function (x) { return x.id === id; })[0];
+    var heading = el("h2", { text: t ? (t.title || "(untitled)") : "Task not on the board" });
+    heading.tabIndex = -1;
+    view.appendChild(heading);
+    view.appendChild(el("div", { className: "id", text: id }));
+    if (!t) {
+      view.appendChild(el("p", { className: "notice", text: "FirstMate no longer tracks this task, so the board retired it." }));
+      return heading;
+    }
+    var d = t.details || {};
+    var b = d.backlog, dec = d.decision, land = d.landed;
+    var bv = b || {};
+    var bm = b ? undefined : (t.source === "manual" ? "Not tracked (manual board row)" : "Not available");
+    var badges = el("div", { className: "badges" });
+    badges.appendChild(el("span", { className: "badge", text: STATE_LABELS[t.state] || t.state || "?" }));
+    badges.appendChild(el("span", { className: "badge", text: t.project || "(unassigned)" }));
+    if (t.kind) badges.appendChild(el("span", { className: "badge", text: t.kind }));
+    if (t.captain_review) badges.appendChild(el("span", { className: "review-badge", text: "Captain review" }));
+    view.appendChild(badges);
+    view.appendChild(section("Description", [["Body", bv.body, bm]], b ? null : (t.source === "manual"
+      ? "Manual board row: FirstMate's backlog does not track it."
+      : "FirstMate's backlog has no record of this task, so its backlog fields are not available.")));
+    view.appendChild(section("Status", [
+      ["Board column", STATE_LABELS[t.state] || nz(t.state)],
+      ["Worker", nz(t.agent)],
+      ["Worker activity", nz(t.running)],
+      ["Captain review", !!t.captain_review],
+      ["Board hold", nz(t.hold_reason)],
+      ["Since", nz(t.since)],
+      ["Updated", nz(t.updated_at)]
+    ]));
+    view.appendChild(section("Hold and backlog state", [
+      ["Backlog state", bv.state, bm],
+      ["Held", bv.held, bm],
+      ["Hold kind", bv.hold_kind, bm],
+      ["Hold until", bv.hold_until, bm],
+      ["Hold reason", bv.hold_reason, bm],
+      ["Priority", bv.priority, bm],
+      ["Created", bv.created, bm],
+      ["Closed", bv.closed, bm]
+    ]));
+    view.appendChild(section("Dependencies", [
+      ["Depends on", bv.deps, bm],
+      ["Blocked", bv.blocked, bm],
+      ["Blocked by", bv.blocked_by, bm]
+    ]));
+    var completion = land && land.completion;
+    view.appendChild(section("Review and decisions", [
+      ["Open decision", dec ? [dec.verb, dec.summary].filter(Boolean).join(": ") : ""],
+      ["Decision reason", dec ? nz(dec.reason) : ""],
+      ["Landed", completion ? [completion.verb, completion.date].filter(Boolean).join(" ") : ""]
+    ]));
+    view.appendChild(section("Notes", [
+      ["Board note", nz(t.note)],
+      ["Landing note", land ? nz(land.local_note) : ""]
+    ]));
+    view.appendChild(section("Links", [
+      ["Backlog links", bv.links, bm],
+      ["Pull request", land ? nz(land.pr_url) : ""],
+      ["Report", land ? nz(land.report_path) : ""]
+    ]));
+    return heading;
+  }
+
+  // Render the view the hash names. `fromNav` moves focus with the
+  // navigation: to the detail heading, or back to the card's own link.
+  var lastDetailId = null;
+  function route(fromNav) {
+    var id = routeId();
+    var detail = document.getElementById("detail");
+    if (id !== null) {
+      renderTabs();
+      document.getElementById("board").hidden = true;
+      document.getElementById("empty-state").hidden = true;
+      detail.hidden = false;
+      var hadFocus = detail.contains(document.activeElement);
+      var heading = renderDetail(id);
+      lastDetailId = id;
+      if (fromNav) { window.scrollTo(0, 0); heading.focus(); }
+      else if (hadFocus) heading.focus({ preventScroll: true });
+      return;
+    }
+    detail.hidden = true;
+    document.getElementById("board").hidden = false;
+    render();
+    if (fromNav && lastDetailId !== null) {
+      var link = Array.prototype.filter.call(document.querySelectorAll("a.detail-link"), function (a) {
+        return a.getAttribute("data-id") === lastDetailId;
+      })[0];
+      if (link) link.focus();
+    }
+    lastDetailId = null;
+  }
+
+  window.addEventListener("hashchange", function () { route(true); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && routeId() !== null) location.hash = "";
+  });
+  route(false);
 
   // Re-read board-data.js by re-injecting its script tag (the one way a
   // file:// page can re-load a sibling file); re-render only on a new
-  // generation so the active project tab survives every refresh.
+  // generation so the active project tab and the open view survive every
+  // refresh.
   setInterval(function () {
     var s = document.createElement("script");
     s.src = "board-data.js?t=" + Date.now();
@@ -304,7 +529,7 @@
       var next = window.BOARD_DATA;
       if (next && next.generated_at !== data.generated_at) {
         load(next);
-        render();
+        route(false);
       }
     };
     document.head.appendChild(s);
