@@ -140,6 +140,13 @@ resolution already computed in section 1. Never hand a worker a generic
 "follow project instructions and use appropriate skills" sentence and call
 that sufficient.
 
+Before choosing shared worker skills for any delegation, list the entries in
+`~/.agents/skills`, including symlinked directories, and inspect the
+task-relevant `SKILL.md` files directly. Never conclude that no shared skills
+exist from a recursive `**/SKILL.md` search alone: symlinked skill directories
+may be omitted by glob traversal. Select only skills relevant to the task
+under section 5.
+
 For every delegated task, resolved against the worker's own isolated task
 worktree - its instructions and skills, never the primary checkout the task
 started from - make the following an explicit, compact part of that task's
