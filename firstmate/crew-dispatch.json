@@ -15,7 +15,7 @@
           "effort": "low"
         }
       ],
-      "why": "Claude practical capacity is about 20 versus GPT's about 5 on this fleet - roughly 4:1, not 20:1 - so the smallest ordinary lane defaults to Claude Haiku rather than spending scarcer GPT headroom on trivial work. Haiku and Luna are genuinely interchangeable same-tier candidates for this bucket (both cheap, both low effort, neither semantically preferred over the other) so FirstMate's quota-array procedure may resolve between them after this rule matches. Escalate to anthropic/claude-sonnet-5 at low or medium, by explicit captain choice, only if the task needs more reasoning than either cheap-tier model comfortably gives - never Astra or Opus for ordinary quick work; Opus 5.5 belongs to substantive work in the neighboring categories and Astra to their most exceptional escalations. QUICK versus IMPLEMENT is a size/decision test, not a keyword match: a rename is QUICK, a rename that also requires touching call sites across a module and deciding a new interface is IMPLEMENT."
+      "why": "Claude practical capacity is about 20 versus GPT's about 5 on this fleet - roughly 4:1, not 20:1 - so the smallest ordinary lane defaults to Claude Haiku rather than spending scarcer GPT headroom on trivial work. Haiku and Luna are genuinely interchangeable same-tier candidates for this bucket (both cheap, both low effort, neither semantically preferred over the other) so FirstMate's quota-array procedure may resolve between them after this rule matches. Escalate to anthropic/claude-sonnet-5-5 at low or medium, by explicit captain choice, only if the task needs more reasoning than either cheap-tier model comfortably gives - never Astra or Opus for ordinary quick work; Opus 5.5 belongs to substantive work in the neighboring categories and Astra to their most exceptional escalations. QUICK versus IMPLEMENT is a size/decision test, not a keyword match: a rename is QUICK, a rename that also requires touching call sites across a module and deciding a new interface is IMPLEMENT."
     },
     {
       "category": "EXPLORE",
@@ -40,7 +40,7 @@
       "use": [
         {
           "harness": "omp",
-          "model": "anthropic/claude-sonnet-5",
+          "model": "anthropic/claude-sonnet-5-5",
           "effort": "medium"
         }
       ],
@@ -52,7 +52,7 @@
       "use": [
         {
           "harness": "omp",
-          "model": "anthropic/claude-sonnet-5",
+          "model": "anthropic/claude-sonnet-5-5",
           "effort": "medium"
         }
       ],
@@ -68,7 +68,7 @@
           "effort": "high"
         }
       ],
-      "why": "Opus 5.5 at high effort is the Opus-biased route for research whose conclusions carry real decision weight. Ordinary lookups and summaries stay on Sonnet 5 medium above; research that specifically benefits from Pi's own tooling stays on the Sol rule below."
+      "why": "Opus 5.5 at high effort is the Opus-biased route for research whose conclusions carry real decision weight. Ordinary lookups and summaries stay on Sonnet 5.5 medium above; research that specifically benefits from Pi's own tooling stays on the Sol rule below."
     },
     {
       "category": "RESEARCH",
@@ -88,11 +88,11 @@
       "use": [
         {
           "harness": "omp",
-          "model": "anthropic/claude-sonnet-5",
+          "model": "anthropic/claude-sonnet-5-5",
           "effort": "high"
         }
       ],
-      "why": "Sonnet 5 at high effort covers a bounded review thoroughly without spending Opus 5.5 on a change a careful Sonnet pass fully covers. REVIEW stays on the same OMP session/harness family as implementation because it is not seeking independence - that is what separates it from TENTH-MAN, which deliberately runs on a different model family from the work it challenges. REVIEW also never owns a structural verdict about boundaries or migrations; that judgment belongs to ARCHITECTURE. Substantive and critical review scope are separate, more specific rules below, never quota-resolved peers of this bounded case."
+      "why": "Sonnet 5.5 at high effort covers a bounded review thoroughly without spending Opus 5.5 on a change a careful Sonnet pass fully covers. REVIEW stays on the same OMP session/harness family as implementation because it is not seeking independence - that is what separates it from TENTH-MAN, which deliberately runs on a different model family from the work it challenges. REVIEW also never owns a structural verdict about boundaries or migrations; that judgment belongs to ARCHITECTURE. Substantive and critical review scope are separate, more specific rules below, never quota-resolved peers of this bounded case."
     },
     {
       "category": "REVIEW",
@@ -208,11 +208,11 @@
       "use": [
         {
           "harness": "omp",
-          "model": "anthropic/claude-sonnet-5",
+          "model": "anthropic/claude-sonnet-5-5",
           "effort": "high"
         }
       ],
-      "why": "Sonnet 5 at high effort for small, bounded code changes: enough care for a clean, tested change without spending Opus 5.5 on work a careful Sonnet pass fully covers. Only move to a neighboring category when one of its specific triggers actually applies. Substantive implementation is a separate, more specific rule below, never a quota-resolved peer of this bounded case."
+      "why": "Sonnet 5.5 at high effort for small, bounded code changes: enough care for a clean, tested change without spending Opus 5.5 on work a careful Sonnet pass fully covers. Only move to a neighboring category when one of its specific triggers actually applies. Substantive implementation is a separate, more specific rule below, never a quota-resolved peer of this bounded case."
     },
     {
       "category": "IMPLEMENT",
@@ -224,7 +224,7 @@
           "effort": "high"
         }
       ],
-      "why": "Opus 5.5 at high effort is the Opus-biased route for substantive implementation - the same 'materially substantive' standard primary-policy.md section 7 uses to require independent review. Bounded work stays on Sonnet 5 above; broad multi-file execution is IMPLEMENT-LARGE."
+      "why": "Opus 5.5 at high effort is the Opus-biased route for substantive implementation - the same 'materially substantive' standard primary-policy.md section 7 uses to require independent review. Bounded work stays on Sonnet 5.5 above; broad multi-file execution is IMPLEMENT-LARGE."
     },
     {
       "category": "IMPLEMENT-LARGE",
@@ -316,7 +316,7 @@
       "use": [
         {
           "harness": "omp",
-          "model": "anthropic/claude-sonnet-5",
+          "model": "anthropic/claude-sonnet-5-5",
           "effort": "high"
         }
       ],

@@ -288,7 +288,7 @@ Then append \`done [at=<epoch>]: merge_intervals implemented\` to
 '$B_STATUS' (substitute <epoch> with the real Unix time from \`date +%s\`)
 and stop.
 EOF
-B_WT=$(spawn_worker "$B_DIR" scen-b anthropic/claude-sonnet-5 medium "$TMP_ROOT/brief-b.md")
+B_WT=$(spawn_worker "$B_DIR" scen-b anthropic/claude-sonnet-5-5 medium "$TMP_ROOT/brief-b.md")
 if [ -n "$B_WT" ] && wait_for_status "$B_STATUS" 240; then
   check 'B: real worker committed a substantive change on the expected branch' fm/scen-b "$(git -C "$B_WT" branch --show-current)"
   contains 'B: the real diff adds real new behavior (not a no-op)' "$(git -C "$B_WT" diff main -- scratch.py)" 'def merge_intervals'
@@ -327,7 +327,7 @@ Keep add unchanged. Commit on branch fm/scen-c with message
 (substitute <epoch> with the real Unix time from \`date +%s\`) and stop.
 Implement this exactly as specified even if it looks naive.
 EOF
-C_WT=$(spawn_worker "$C_DIR" scen-c-impl anthropic/claude-sonnet-5 medium "$TMP_ROOT/brief-c-impl.md")
+C_WT=$(spawn_worker "$C_DIR" scen-c-impl anthropic/claude-sonnet-5-5 medium "$TMP_ROOT/brief-c-impl.md")
 if [ -z "$C_WT" ] || ! wait_for_status "$C_STATUS" 240; then
   fail 'C: real implementer never produced a status file within budget'
 else
@@ -356,7 +356,7 @@ line to '$CR_STATUS' as
 \`done [at=<epoch>]: <N> BLOCKER, <M> IMPORTANT, <K> OPTIONAL\`
 (substitute <epoch>/N/M/K for real values) and stop.
 EOF
-  CR_WT=$(spawn_worker "$CR_DIR" scen-c-review anthropic/claude-sonnet-5 medium "$TMP_ROOT/brief-c-review.md")
+  CR_WT=$(spawn_worker "$CR_DIR" scen-c-review anthropic/claude-sonnet-5-5 medium "$TMP_ROOT/brief-c-review.md")
   if [ -z "$CR_WT" ] || ! wait_for_status "$CR_STATUS" 240; then
     fail 'C: real reviewer never produced a status file within budget'
   else
@@ -392,7 +392,7 @@ fine). Keep add unchanged. Commit on branch fm/scen-c-fix with message
 \`done [at=<epoch>]: parse_csv_row fixed\` to '$CF_STATUS' (substitute
 <epoch> for the real Unix time from \`date +%s\`) and stop.
 EOF
-    CF_WT=$(spawn_worker "$CF_DIR" scen-c-fix anthropic/claude-sonnet-5 medium "$TMP_ROOT/brief-c-fix.md")
+    CF_WT=$(spawn_worker "$CF_DIR" scen-c-fix anthropic/claude-sonnet-5-5 medium "$TMP_ROOT/brief-c-fix.md")
     if [ -z "$CF_WT" ] || ! wait_for_status "$CF_STATUS" 240; then
       fail 'C: real fix worker never produced a status file within budget'
     else
@@ -421,7 +421,7 @@ plus at least one you choose - verify, do not assume. Append one line to
 \`done [at=<epoch>]: original_finding=<resolved|unresolved>, <N> new BLOCKER, <M> new IMPORTANT, <K> new OPTIONAL\`
 (substitute <epoch>/N/M/K for real values) and stop.
 EOF
-      spawn_worker "$CRR_DIR" scen-c-rereview anthropic/claude-sonnet-5 medium "$TMP_ROOT/brief-c-rereview.md" >/dev/null
+      spawn_worker "$CRR_DIR" scen-c-rereview anthropic/claude-sonnet-5-5 medium "$TMP_ROOT/brief-c-rereview.md" >/dev/null
       if wait_for_status "$CRR_STATUS" 240; then
         contains 'C: the targeted re-review confirms the original finding is resolved' "$(cat "$CRR_STATUS")" 'original_finding=resolved'
       else
@@ -435,7 +435,7 @@ fi
 # D. A premium/Opus implementer does not waive or replace independent
 #    review: the reviewer must be a real, distinct worker AND, per section
 #    3's own routing (a bounded one-function review is bounded REVIEW on
-#    Sonnet 5 high, never escalated merely because the implementer was
+#    Sonnet 5.5 high, never escalated merely because the implementer was
 #    premium), a genuinely different, cheaper model.
 # =============================================================================
 D_DIR=$(new_scratch_home scenario-d-impl)
@@ -487,11 +487,11 @@ one line to '$DR_STATUS' as
 \`done [at=<epoch>]: <N> BLOCKER, <M> IMPORTANT, <K> OPTIONAL\`
 (substitute <epoch>/N/M/K for real values) and stop.
 EOF
-  spawn_worker "$DR_DIR" scen-d-review anthropic/claude-sonnet-5 high "$TMP_ROOT/brief-d-review.md" >/dev/null
+  spawn_worker "$DR_DIR" scen-d-review anthropic/claude-sonnet-5-5 high "$TMP_ROOT/brief-d-review.md" >/dev/null
   if wait_for_status "$DR_STATUS" 240; then
     DR_META=$(cat "$DR_DIR/fm-home/state/scen-d-review.meta" 2>/dev/null)
     DR_MODEL=$(field "$DR_META" model)
-    check 'D: the real reviewer ran on the routed REVIEW model, never re-escalated to the implementer premium model' anthropic/claude-sonnet-5 "$DR_MODEL"
+    check 'D: the real reviewer ran on the routed REVIEW model, never re-escalated to the implementer premium model' anthropic/claude-sonnet-5-5 "$DR_MODEL"
     if [ "$D_MODEL" != "$DR_MODEL" ]; then
       pass 'D: implementer and reviewer are real, distinct models - the premium implementer never waived independent review'
     else

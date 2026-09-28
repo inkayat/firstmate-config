@@ -260,7 +260,7 @@ trap cleanup EXIT
 t() { printf '%s\n' "$2" > "$TMP/$1"; printf '%s' "$TMP/$1"; }
 
 OPUS=anthropic/claude-opus-5-5
-SONNET=anthropic/claude-sonnet-5
+SONNET=anthropic/claude-sonnet-5-5
 SOL=openai-codex/gpt-6-sol
 TDD=test-driven-development
 VBC=verification-before-completion
@@ -283,7 +283,7 @@ expect 'trace harness differing from the actual spawn harness is rejected' fail 
 
 BOUNDED=$(t bounded.txt "Routing: IMPLEMENT #1 | role senior-fullstack | omp | $SONNET | high | why: one-function fix
 Skills: $TDD - bug fix")
-expect 'bounded IMPLEMENT on Sonnet 5 high is an allowed route' pass "$BOUNDED" omp "$SONNET" high "$TDD"
+expect 'bounded IMPLEMENT on Sonnet 5.5 high is an allowed route' pass "$BOUNDED" omp "$SONNET" high "$TDD"
 
 HAIKU_IMPL=$(t haiku-impl.txt "Routing: IMPLEMENT #1 | role senior-fullstack | omp | anthropic/claude-haiku-4-5 | low | why: cheap
 Skills: none")
@@ -316,13 +316,13 @@ Skills: none")
 expect 'a multi-rule category trace without its matched rule #n is rejected' fail "$REVIEW_NO_RULE" omp "$SONNET" high none
 REVIEW_CRIT_SONNET=$(t rev-crit-sonnet.txt "Routing: REVIEW #3 | role senior-fullstack | omp | $SONNET | high | why: release-critical security diff
 Skills: none")
-expect 'critical REVIEW (#3) displayed on Sonnet 5 high contradicts its Opus 5.5 xhigh route and is rejected' fail "$REVIEW_CRIT_SONNET" omp "$SONNET" high none
+expect 'critical REVIEW (#3) displayed on Sonnet 5.5 high contradicts its Opus 5.5 xhigh route and is rejected' fail "$REVIEW_CRIT_SONNET" omp "$SONNET" high none
 REVIEW_CRIT_OPUS=$(t rev-crit-opus.txt "Routing: REVIEW #3 | role senior-fullstack | omp | $OPUS | xhigh | why: release-critical security diff
 Skills: none")
 expect 'critical REVIEW (#3) on Opus 5.5 xhigh is accepted' pass "$REVIEW_CRIT_OPUS" omp "$OPUS" xhigh none
 REVIEW_BOUNDED=$(t rev-bounded.txt "Routing: REVIEW #1 | role senior-fullstack | omp | $SONNET | high | why: one-file diff
 Skills: none")
-expect 'bounded REVIEW (#1) on Sonnet 5 high is accepted' pass "$REVIEW_BOUNDED" omp "$SONNET" high none
+expect 'bounded REVIEW (#1) on Sonnet 5.5 high is accepted' pass "$REVIEW_BOUNDED" omp "$SONNET" high none
 REVIEW_CRIT_OVERRIDE=$(t rev-crit-override.txt "Routing: REVIEW #3 | role senior-fullstack | omp | $SONNET | high | why: captain override - captain chose Sonnet for this critical review
 Skills: none")
 expect_shows 'a named captain override of critical REVIEW is accepted and reported as an override' 'captain override' \
@@ -525,7 +525,7 @@ else
 [ "${1:-}" = --help ] && { printf 'usage: omp [options] [prompt]\n'; exit 0; }
 # fm-spawn validates --model against `omp models --json` before launch.
 if [ "${1:-}" = models ]; then
-  printf '{"models":[{"provider":"anthropic","id":"claude-opus-5-5","selector":"anthropic/claude-opus-5-5"},{"provider":"anthropic","id":"claude-sonnet-5","selector":"anthropic/claude-sonnet-5"}]}\n'
+  printf '{"models":[{"provider":"anthropic","id":"claude-opus-5-5","selector":"anthropic/claude-opus-5-5"},{"provider":"anthropic","id":"claude-sonnet-5-5","selector":"anthropic/claude-sonnet-5-5"}]}\n'
   exit 0
 fi
 printf '%s\n' "$@" > worker-argv.txt

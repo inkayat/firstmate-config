@@ -28,7 +28,7 @@ case ${1:-} in
       printf '{"provider":"openai-codex","id":"gpt-6-sol","selector":"openai-codex/gpt-6-sol","reasoning":true,"thinking":["%s"]},' "${SOL_EFFORT:-medium}"
     fi
     if [ "${CATALOG:-normal}" = sonnet ]; then
-      printf '{"provider":"anthropic","id":"claude-sonnet-5","selector":"anthropic/claude-sonnet-5","reasoning":true,"thinking":["high","xhigh"]},'
+      printf '{"provider":"anthropic","id":"claude-sonnet-5-5","selector":"anthropic/claude-sonnet-5-5","reasoning":true,"thinking":["high","xhigh"]},'
     fi
     printf '{"provider":"openai-codex","id":"gpt-6-astra","selector":"openai-codex/gpt-6-astra","reasoning":true,"thinking":["xhigh"]}]}\n'
     exit ;;
@@ -79,7 +79,7 @@ out=$(CATALOG=astra run --print-command 2>&1)
 check 'OMP skips absent Sol and the Pi-only Sonnet candidate without inventing replacement' openai-codex/gpt-6-astra "$(field "$out" SELECTED_MODEL)"
 check 'Astra effort is not downgraded' xhigh "$(field "$out" SELECTED_EFFORT)"
 out=$(CATALOG=sonnet run --print-command 2>&1)
-check 'OMP falls back to its own native Claude Sonnet candidate, never the Pi-only provider id' anthropic/claude-sonnet-5 "$(field "$out" SELECTED_MODEL)"
+check 'OMP falls back to its own native Claude Sonnet candidate, never the Pi-only provider id' anthropic/claude-sonnet-5-5 "$(field "$out" SELECTED_MODEL)"
 check 'OMP native Sonnet fallback keeps high effort' high "$(field "$out" SELECTED_EFFORT)"
 out=$(SOL_EFFORT=low run --print-command 2>&1)
 check 'unsupported exact effort skips candidate' openai-codex/gpt-6-astra "$(field "$out" SELECTED_MODEL)"

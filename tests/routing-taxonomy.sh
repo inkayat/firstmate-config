@@ -210,7 +210,7 @@ check 'rules carry only category/use/when/why - no rule-level skills or role fie
 #    harness/model/effort exactly as documented in primary-policy.md and
 #    README.md. Routing is Opus 5.5-biased: substantive work in RESEARCH, REVIEW, IMPLEMENT,
 #    IMPLEMENT-LARGE, UI/BROWSER, ARCHITECTURE, DEEP, and the DEFAULT
-#    catch-all lands on Opus 5.5, while bounded work may stay on Sonnet 5 and
+#    catch-all lands on Opus 5.5, while bounded work may stay on Sonnet 5.5 and
 #    trivial work on Haiku/Luna. Multi-candidate arrays are limited to the
 #    deliberate Haiku/Luna peer sets for QUICK and ordinary EXPLORE; every
 #    other lane escalates through separate single-candidate conditional
@@ -245,30 +245,30 @@ check_rule_use QUICK 1 2 omp openai-codex/gpt-6-luna low
 
 # EXPLORE: two separate rules (simple, with Haiku/Luna as interchangeable
 # peers - the same capacity-aware pairing QUICK uses - then a
-# harder-reasoning escalation to Sonnet 5 medium).
+# harder-reasoning escalation to Sonnet 5.5 medium).
 check_array_length EXPLORE 1 2
 check_array_length EXPLORE 2 1
 check_rule_use EXPLORE 1 1 omp anthropic/claude-haiku-4-5 low
 check_rule_use EXPLORE 1 2 omp openai-codex/gpt-6-luna low
-check_rule_use EXPLORE 2 3 omp anthropic/claude-sonnet-5 medium
+check_rule_use EXPLORE 2 3 omp anthropic/claude-sonnet-5-5 medium
 
-# RESEARCH: three separate rules (ordinary Sonnet 5 medium, substantial/
+# RESEARCH: three separate rules (ordinary Sonnet 5.5 medium, substantial/
 # decision-heavy Opus 5.5 high, then Pi-tooling-better Sol medium).
 check_array_length RESEARCH 1 1
 check_array_length RESEARCH 2 1
 check_array_length RESEARCH 3 1
-check_rule_use RESEARCH 1 1 omp anthropic/claude-sonnet-5 medium
+check_rule_use RESEARCH 1 1 omp anthropic/claude-sonnet-5-5 medium
 check_rule_use RESEARCH 2 2 omp anthropic/claude-opus-5-5 high
 check_rule_use RESEARCH 3 3 pi openai-codex/gpt-6-sol medium
 
-# REVIEW: four separate rules (bounded Sonnet 5 high, substantive/cross-
+# REVIEW: four separate rules (bounded Sonnet 5.5 high, substantive/cross-
 # component Opus 5.5 high, critical/high-consequence Opus 5.5 xhigh, then an
 # explicit cross-family second-reviewer escalation).
 check_array_length REVIEW 1 1
 check_array_length REVIEW 2 1
 check_array_length REVIEW 3 1
 check_array_length REVIEW 4 1
-check_rule_use REVIEW 1 1 omp anthropic/claude-sonnet-5 high
+check_rule_use REVIEW 1 1 omp anthropic/claude-sonnet-5-5 high
 check_rule_use REVIEW 2 2 omp anthropic/claude-opus-5-5 high
 check_rule_use REVIEW 3 3 omp anthropic/claude-opus-5-5 xhigh
 check_rule_use REVIEW 4 4 pi openai-codex/gpt-6-sol xhigh
@@ -304,11 +304,11 @@ case $tenthman_claude_challenger in
   *) pass "TENTH-MAN rule 1: challenger of Claude-authored work is cross-family ($tenthman_claude_challenger)" ;;
 esac
 
-# IMPLEMENT: two separate rules (small/bounded Sonnet 5 high, then
+# IMPLEMENT: two separate rules (small/bounded Sonnet 5.5 high, then
 # substantive Opus 5.5 high).
 check_array_length IMPLEMENT 1 1
 check_array_length IMPLEMENT 2 1
-check_rule_use IMPLEMENT 1 1 omp anthropic/claude-sonnet-5 high
+check_rule_use IMPLEMENT 1 1 omp anthropic/claude-sonnet-5-5 high
 check_rule_use IMPLEMENT 2 2 omp anthropic/claude-opus-5-5 high
 
 # IMPLEMENT-LARGE: two separate rules (broad Opus 5.5 high, then the
@@ -336,11 +336,11 @@ check_lane_when DEEP 2 'escalation' 'DEEP rule 2: Sol diagnosis is an explicit e
 check_lane_when DEEP 4 'unresolved' 'DEEP rule 4: Sol ship is an explicit second hypothesis, not a default'
 check_lane_when DEEP 5 'unresolved' 'DEEP rule 5: Astra exceptional is an explicit last escalation, not a default'
 
-# UI/BROWSER: normal Sonnet 5 high, then an explicit complex/cross-layer
+# UI/BROWSER: normal Sonnet 5.5 high, then an explicit complex/cross-layer
 # escalation to Opus 5.5 high - a real routing rule, not a prose override.
 check_array_length UI/BROWSER 1 1
 check_array_length UI/BROWSER 2 1
-check_rule_use UI/BROWSER 1 1 omp anthropic/claude-sonnet-5 high
+check_rule_use UI/BROWSER 1 1 omp anthropic/claude-sonnet-5-5 high
 check_rule_use UI/BROWSER 2 2 omp anthropic/claude-opus-5-5 high
 
 # DEFAULT: Opus 5.5 high during the routing-trace debugging period
@@ -348,16 +348,17 @@ check_rule_use UI/BROWSER 2 2 omp anthropic/claude-opus-5-5 high
 default_line=$(default_tuple)
 check 'DEFAULT: catch-all route is omp/anthropic/claude-opus-5-5/high during the debugging period' "omp	anthropic/claude-opus-5-5	high" "$default_line"
 
-# No active route names a superseded model (Opus 5, Fable 5.1, GPT-5.6
-# Luna/Sol, GPT-5.5): every configured model is one of the six adopted ids.
+# No active route names a superseded model (Sonnet 5, Opus 5, Fable 5.1,
+# GPT-5.6 Luna/Sol, GPT-5.5): every configured model is one of the six
+# adopted ids.
 if [ "$PARSE_METHOD" = jq ]; then
   configured_models=$(jq -r '[.rules[].use[].model, .default[].model] | unique | .[]' "$CREW_DISPATCH")
 else
   configured_models=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("\n".join(sorted({u["model"] for r in d["rules"] for u in r["use"]} | {u["model"] for u in d["default"]})))' "$CREW_DISPATCH")
 fi
-check 'every active route uses only the adopted Haiku 4.5/Sonnet 5/Opus 5.5/GPT-6 Luna/Sol/Astra ids' 'anthropic/claude-haiku-4-5
+check 'every active route uses only the adopted Haiku 4.5/Sonnet 5.5/Opus 5.5/GPT-6 Luna/Sol/Astra ids' 'anthropic/claude-haiku-4-5
 anthropic/claude-opus-5-5
-anthropic/claude-sonnet-5
+anthropic/claude-sonnet-5-5
 openai-codex/gpt-6-astra
 openai-codex/gpt-6-luna
 openai-codex/gpt-6-sol' "$configured_models"

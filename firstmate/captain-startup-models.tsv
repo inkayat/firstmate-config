@@ -2,10 +2,12 @@
 # Format: model<TAB>effort<TAB>harness (harness optional; blank applies to
 # every harness). The Claude Sonnet fallback step is harness-scoped because
 # the two harnesses expose it under different provider ids: OMP's own
-# native catalog carries anthropic/claude-sonnet-5, while Pi's Claude Code
+# native catalog carries anthropic/claude-sonnet-5-5, while Pi's Claude Code
 # provider extension carries pi-claude-code-provider/sonnet - not an OMP
-# model id, so it never belongs in the harness-agnostic candidate rows.
+# model id, so it never belongs in the harness-agnostic candidate rows. That
+# Pi id is an unversioned alias Claude Code resolves itself; the provider
+# offers no versioned Sonnet selector.
 openai-codex/gpt-6-sol	medium
-anthropic/claude-sonnet-5	high	omp
+anthropic/claude-sonnet-5-5	high	omp
 pi-claude-code-provider/sonnet	high	pi
 openai-codex/gpt-6-astra	xhigh
