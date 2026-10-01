@@ -13,7 +13,8 @@
 #   4. writes ~/.config/firstmate-config/env, the machine-local resolution
 #   5. selects the herdr runtime backend
 #   6. links the dispatch profiles and seeds the captain file
-#   7. links our skills and the pinned external packs into ~/.agents/skills
+#   7. links our skills and the pinned external packs into ~/.agents/skills,
+#      and our slash commands (commands/*.md) into ~/.agents/commands
 #   8. links the fm launcher onto PATH
 #   9. reconciles the Pi Ponytail package: a separate pinned checkout (never
 #      the shared skill cache from step 7), a skills filter in Pi's own
@@ -42,6 +43,7 @@ FM_HOME="${FM_HOME:-$HOME/.firstmate}"
 FM_BACKEND=herdr
 ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
 SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
+COMMANDS_ROOT="${FM_COMMANDS_ROOT:-$HOME/.agents/commands}"
 SKILL_CACHE="${FM_SKILL_CACHE:-$HOME/.local/share/firstmate-config/skills-src}"
 BIN_DIR="${FM_BIN_DIR:-$HOME/.local/bin}"
 # Every git probe below inspects a repository it must not silently write to
@@ -206,14 +208,21 @@ elif would 'seed data/captain.md from the template'; then
   fi
 fi
 
-# --- 7. global skills -------------------------------------------------------
-step '7. global skills'
+# --- 7. global skills and commands -----------------------------------------
+step '7. global skills and commands'
 mkdir -p "$SKILLS_ROOT" 2>/dev/null || true
 
 for skill_dir in "$CONFIG_ROOT"/skills/*/; do
   [ -f "$skill_dir/SKILL.md" ] || continue
   name=$(basename "$skill_dir")
   link_to "${skill_dir%/}" "$SKILLS_ROOT/$name"
+done
+
+# OMP's `agents` provider turns each ~/.agents/commands/<name>.md into
+# /<name> in every session, the same shared root convention as the skills.
+for command_file in "$CONFIG_ROOT"/commands/*.md; do
+  [ -f "$command_file" ] || continue
+  link_to "$command_file" "$COMMANDS_ROOT/$(basename "$command_file")"
 done
 
 lock="$CONFIG_ROOT/skills/external.lock"
