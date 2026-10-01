@@ -34,13 +34,15 @@ CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CREW_DISPATCH="$CONFIG_ROOT/firstmate/crew-dispatch.json"
 
 trace_check() { # <trace-file> <harness> <model> <effort> <skills|none> [<transcript>]
-  python3 - "$CREW_DISPATCH" "$@" <<'PY'
+  python3 - "$CREW_DISPATCH" "$CONFIG_ROOT/roles" "$@" <<'PY'
 import json, os, re, sys
 
-dispatch, trace_path, harness, model, effort, skills_arg = sys.argv[1:7]
-transcript_path = sys.argv[7] if len(sys.argv) > 7 else None
+dispatch, roles_dir, trace_path, harness, model, effort, skills_arg = sys.argv[1:8]
+transcript_path = sys.argv[8] if len(sys.argv) > 8 else None
 NO_EVIDENCE = "selected, but no strong application evidence observed"
-ROLES = {"ARCHITECTURE": "architecture", "TENTH-MAN": "tenth-man"}
+# primary-policy.md sections 3-4: two roles are fixed to their categories;
+# every other category takes senior-fullstack or any specialist role file.
+FIXED_ROLES = {"ARCHITECTURE": "architecture", "TENTH-MAN": "tenth-man"}
 failed = False
 
 def result(ok, label):
@@ -150,7 +152,12 @@ if where:
     else:
         result(False, "%s/%s/%s is %s (configured: %s)" % (tuple_ + (where, ", ".join(
             "%s/%s/%s" % (c["harness"], c["model"], c["effort"]) for c in candidates))))
-result(role == ROLES.get(category, "senior-fullstack"), "role %s matches category %s" % (role, category))
+if category in FIXED_ROLES:
+    result(role == FIXED_ROLES[category], "role %s matches category %s (requires %s)" % (role, category, FIXED_ROLES[category]))
+else:
+    result(role not in FIXED_ROLES.values() and re.fullmatch(r"[a-z0-9-]+", role) is not None
+           and os.path.isfile(os.path.join(roles_dir, role, "ROLE.md")),
+           "role %s is senior-fullstack or a specialist role file, valid for category %s" % (role, category))
 
 body = skills_lines[0][len("Skills:"):].strip()
 traced = set() if body == "none" else {skill_id(e.split(" - ")[0]) for e in body.split(";") if e.strip()}
@@ -302,6 +309,21 @@ expect 'TENTH-MAN against Claude output on Pi GPT-6 Sol xhigh is accepted' pass 
 ARCH_WRONG_ROLE=$(t arch-role.txt "Routing: ARCHITECTURE #1 | role senior-fullstack | omp | $OPUS | high | why: module boundary
 Skills: none")
 expect 'ARCHITECTURE trace must name role architecture' fail "$ARCH_WRONG_ROLE" omp "$OPUS" high none
+
+# Specialist roles (primary-policy.md section 4) ride any non-fixed category
+# as role files; architecture/tenth-man stay fixed to their own categories.
+SEC=$(t sec-role.txt "Routing: REVIEW #2 | role security-engineer | omp | $OPUS | high | why: authz audit of one service
+Skills: security-and-hardening - role default; $VBC - role default")
+expect 'a specialist role file on a non-fixed category is accepted' pass "$SEC" omp "$OPUS" high "security-and-hardening,$VBC"
+UNKNOWN_ROLE=$(t unknown-role.txt "Routing: REVIEW #2 | role pentester | omp | $OPUS | high | why: authz audit
+Skills: none")
+expect_rejects 'a role with no role file is rejected' 'FAIL - role pentester' "$UNKNOWN_ROLE" omp "$OPUS" high none
+ARCH_SPECIALIST=$(t arch-specialist.txt "Routing: ARCHITECTURE #1 | role refactorist | omp | $OPUS | high | why: module boundary
+Skills: none")
+expect_rejects 'a specialist role cannot replace the fixed ARCHITECTURE role' 'FAIL - role refactorist' "$ARCH_SPECIALIST" omp "$OPUS" high none
+FIXED_ELSEWHERE=$(t fixed-elsewhere.txt "Routing: IMPLEMENT #1 | role tenth-man | omp | $SONNET | high | why: one-function fix
+Skills: none")
+expect_rejects 'a fixed role is rejected outside its own category' 'FAIL - role tenth-man' "$FIXED_ELSEWHERE" omp "$SONNET" high none
 MISSING=$(t missing.txt "Skills: none")
 expect 'a block without a Routing line is rejected' fail "$MISSING" omp "$OPUS" high none
 

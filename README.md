@@ -43,6 +43,15 @@ policy chooses worker harness, model, effort, and role by task semantics.
   period (`firstmate/primary-policy.md` section 0)
 - Multi-project operation with per-task project resolution
 - Scoped `AGENTS.md` / `CLAUDE.md` context and project-local skills
+- Role files that double as OMP agent definitions and load their own default
+  skills (`autoloadSkills`):
+  - core roles;
+  - an open set of specialists (`security-engineer`, `code-reviewer`,
+    `refactorist`, `django-pro`, `frontend-master`);
+  - team roles (`team-lead`, `product-owner`, `backend-contract`, `qa`) for an
+    opt-in, single-task OMP team: planning, then parallel implementation,
+    QA, and review. These are not yet installed into OMP's agent
+    directories (`firstmate/primary-policy.md` sections 4-5)
 - Reproducibly installed shared worker skills and external pins
 - Browser/manual validation policy for user-visible work
 - Independent review before merge for substantive or risky Captain-dispatched

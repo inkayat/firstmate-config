@@ -171,9 +171,9 @@ cp "$CONFIG_ROOT/firstmate/fm-captain-lib.sh" "$DOC_CFG/firstmate/fm-captain-lib
 cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$DOC_CFG/firstmate/fm-stack-manifest.sh"
 cp "$CONFIG_ROOT/firstmate/captain-startup-models.tsv" "$DOC_CFG/firstmate/captain-startup-models.tsv"
 cp "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$DOC_CFG/firstmate/crew-dispatch.json"
-printf '# role\n' > "$DOC_CFG/roles/senior-fullstack/ROLE.md"
-printf '# role\n' > "$DOC_CFG/roles/architecture/ROLE.md"
-printf '# role\n' > "$DOC_CFG/roles/tenth-man/ROLE.md"
+for r in senior-fullstack architecture tenth-man; do
+  printf -- '---\nname: fm-%s\ndescription: fixture role\n---\n# role\n' "$r" > "$DOC_CFG/roles/$r/ROLE.md"
+done
 
 DOC_LAUNCHER_OK="$TMP_ROOT/doc-launcher-ok"
 mkdir -p "$DOC_LAUNCHER_OK"

@@ -365,6 +365,8 @@ contains 'healthy: FM_HOME is explicitly reported' "$out" "FM_HOME=$FAKE_FM_HOME
 contains 'healthy: an explicit heartbeat check is reported' "$out" 'runtime.heartbeat'
 contains 'healthy: roles all readable' "$out" 'PASS          roles.tenth-man'
 contains 'healthy: skills fully installed' "$out" 'PASS          skills.global_installation'
+contains 'healthy: every role default skill is a managed shared skill' "$out" 'PASS          skills.role_defaults'
+contains 'healthy: every team spawn allowlist entry resolves' "$out" 'PASS          roles.spawns'
 contains 'healthy: no official-internal skill leakage' "$out" 'PASS          skills.no_official_internal_leak'
 contains 'healthy: Opus 5.5 is an active available routing model' "$out" 'PASS          routing.model.omp.anthropic/claude-opus-5-5'
 contains 'healthy: Qwen/Ollama remain deferred' "$out" 'DEFERRED      routing.qwen_ollama_deferred'
@@ -453,10 +455,19 @@ cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$FAKE_CFG/firstmate/fm-stack-m
 cp "$CONFIG_ROOT/firstmate/stack-manifest.tsv" "$FAKE_CFG/firstmate/stack-manifest.tsv"
 cp "$CONFIG_ROOT/firstmate/captain-startup-models.tsv" "$FAKE_CFG/firstmate/captain-startup-models.tsv"
 cp "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$FAKE_CFG/firstmate/crew-dispatch.json"
-printf '# role\n' > "$FAKE_CFG/roles/senior-fullstack/ROLE.md"
-printf '# role\n' > "$FAKE_CFG/roles/architecture/ROLE.md"
+for r in senior-fullstack architecture; do
+  printf -- '---\nname: fm-%s\ndescription: fixture role\n---\n# role\n' "$r" > "$FAKE_CFG/roles/$r/ROLE.md"
+done
 # roles/tenth-man/ROLE.md deliberately absent.
 printf '# skill\n' > "$FAKE_CFG/skills/architecture-review/SKILL.md"
+# A specialist role is discovered, not listed; one of its frontmatter default
+# skills is managed (architecture-review), the other is not.
+mkdir -p "$FAKE_CFG/roles/refactorist" "$FAKE_CFG/roles/no-frontmatter" "$FAKE_CFG/roles/wrong-name" "$FAKE_CFG/roles/no-description"
+printf -- '---\nname: fm-refactorist\ndescription: fixture role\nautoloadSkills:\n  - architecture-review\n  - not-managed-skill\nspawns:\n  - fm-architecture\n  - fm-ghost\n  - scout\n---\n# role\n' > "$FAKE_CFG/roles/refactorist/ROLE.md"
+# Role files OMP itself would not load as fm-<role> agents.
+printf '# role\n' > "$FAKE_CFG/roles/no-frontmatter/ROLE.md"
+printf -- '---\nname: fm-something-else\ndescription: fixture role\n---\n# role\n' > "$FAKE_CFG/roles/wrong-name/ROLE.md"
+printf -- '---\nname: fm-no-description\n---\n# role\n' > "$FAKE_CFG/roles/no-description/ROLE.md"
 printf '%s\t%s\t%s\t%s\t%s\n' tenth-man:x some/repo deadbeef skills/tenth-man tenth-man > "$FAKE_CFG/skills/external.lock"
 FAKE_HOME7="$TMP_ROOT/home-missing-skill"
 mkdir -p "$FAKE_HOME7/.agents/skills/architecture-review"
@@ -469,6 +480,19 @@ check 'missing role/skill: exit code stays 0 (non-mandatory)' 0 "$code"
 contains 'missing role: tenth-man reported FAIL' "$out" 'FAIL          roles.tenth-man'
 contains 'missing skill: global installation reported FAIL' "$out" 'FAIL          skills.global_installation'
 contains 'missing skill: names the missing skill' "$out" 'tenth-man'
+contains 'specialist role: discovered without being listed' "$out" 'PASS          roles.refactorist'
+contains 'role default skills: an unmanaged default skill is reported FAIL' "$out" 'FAIL          skills.role_defaults'
+contains 'role default skills: names the role and the unmanaged skill' "$out" 'refactorist:not-managed-skill'
+not_contains 'role default skills: a managed default skill is not named' "$(printf '%s\n' "$out" | grep 'skills.role_defaults')" 'architecture-review'
+contains 'role frontmatter: a role file without agent frontmatter is reported FAIL' "$out" 'FAIL          roles.no-frontmatter'
+contains 'role frontmatter: a name other than fm-<role> is reported FAIL' "$out" "FAIL          roles.wrong-name"
+contains 'role frontmatter: the wrong name is shown' "$(printf '%s\n' "$out" | grep 'roles.wrong-name')" 'fm-something-else'
+contains 'role frontmatter: a missing description is reported FAIL' "$out" 'FAIL          roles.no-description'
+spawns_line=$(printf '%s\n' "$out" | grep 'roles.spawns')
+contains 'spawn allowlist: an entry naming no role or bundled agent is reported FAIL' "$out" 'FAIL          roles.spawns'
+contains 'spawn allowlist: names the role and the unknown entry' "$spawns_line" 'refactorist:fm-ghost'
+not_contains 'spawn allowlist: an existing fm-<role> entry is not named' "$spawns_line" 'fm-architecture'
+not_contains 'spawn allowlist: a bundled OMP agent entry is not named' "$spawns_line" 'scout'
 
 # =============================================================================
 # 8. Multi-project reporting: registry, confident current project, no leakage
@@ -904,9 +928,9 @@ cp "$CONFIG_ROOT/firstmate/fm-captain-lib.sh" "$FAKE_CFG_NOCHAIN/firstmate/fm-ca
 cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$FAKE_CFG_NOCHAIN/firstmate/fm-stack-manifest.sh"
 cp "$CONFIG_ROOT/firstmate/stack-manifest.tsv" "$FAKE_CFG_NOCHAIN/firstmate/stack-manifest.tsv"
 cp "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$FAKE_CFG_NOCHAIN/firstmate/crew-dispatch.json"
-printf '# role\n' > "$FAKE_CFG_NOCHAIN/roles/senior-fullstack/ROLE.md"
-printf '# role\n' > "$FAKE_CFG_NOCHAIN/roles/architecture/ROLE.md"
-printf '# role\n' > "$FAKE_CFG_NOCHAIN/roles/tenth-man/ROLE.md"
+for r in senior-fullstack architecture tenth-man; do
+  printf -- '---\nname: fm-%s\ndescription: fixture role\n---\n# role\n' "$r" > "$FAKE_CFG_NOCHAIN/roles/$r/ROLE.md"
+done
 # captain-startup-models.tsv deliberately never written.
 RUN_DOC="$FAKE_CFG_NOCHAIN/bin/fm-doctor"
 out=$(run_doctor); code=$?

@@ -34,3 +34,8 @@ addy:incremental	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc3
 addy:context	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/context-engineering	context-engineering
 addy:api-design	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/api-and-interface-design	api-and-interface-design
 addy:security	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/security-and-hardening	security-and-hardening
+addy:code-review	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/code-review-and-quality	code-review-and-quality
+addy:simplify	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/code-simplification	code-simplification
+addy:spec	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/spec-driven-development	spec-driven-development
+addy:browser-testing	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/browser-testing-with-devtools	browser-testing-with-devtools
+addy:frontend	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/frontend-ui-engineering	frontend-ui-engineering
