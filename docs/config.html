@@ -22,9 +22,10 @@
 <tr><td><code>firstmate/stack-manifest.tsv</code></td><td class="wrap">Validated FirstMate commit and Pi/OMP/Herdr versions.</td><td class="wrap"><code>install.sh</code>, <code>fm update</code>, <code>fm doctor</code>, <code>fm version</code></td></tr>
 <tr><td><code>firstmate/primary-policy.md</code></td><td class="wrap">The Captain's operating contract for delegation.</td><td class="wrap">The Captain, at session start</td></tr>
 <tr><td><code>firstmate/captain.md</code></td><td class="wrap">Template for the machine's Captain preferences.</td><td class="wrap"><code>install.sh</code> (seed only)</td></tr>
-<tr><td><code>roles/*/ROLE.md</code></td><td class="wrap">The three roles.</td><td class="wrap">Workers, by absolute path in the brief</td></tr>
+<tr><td><code>roles/*/ROLE.md</code></td><td class="wrap">The twelve roles, each also an OMP agent definition (<code>fm-&lt;role&gt;</code>).</td><td class="wrap">Workers, by absolute path in the brief; OMP, through the installed agent links; <code>fm doctor</code>; <code>fm bot</code> (role check)</td></tr>
 <tr><td><code>skills/*/SKILL.md</code></td><td class="wrap">Shared skills owned by this repository.</td><td class="wrap"><code>install.sh</code></td></tr>
 <tr><td><code>skills/external.lock</code></td><td class="wrap">Pinned external skills.</td><td class="wrap"><code>install.sh</code>, <code>ponytail-update</code></td></tr>
+<tr><td><code>commands/*.md</code></td><td class="wrap">Slash commands, such as <code>/bots</code>.</td><td class="wrap"><code>install.sh</code>, then OMP</td></tr>
 </tbody>
 </table>
 <p>Parsing and version comparison for the stack manifest live in one place, <code>firstmate/fm-stack-manifest.sh</code>. Captain harness selection and availability live in <code>firstmate/fm-captain-lib.sh</code>. Extend those instead of adding a second parser or detector.</p>
@@ -35,12 +36,14 @@
 <thead><tr><th>Path</th><th>What it is</th></tr></thead>
 <tbody>
 <tr><td><code>~/.config/firstmate-config/env</code></td><td class="wrap">Resolved paths, written by <code>install.sh</code>. Never commit it.</td></tr>
-<tr><td><code>$FM_HOME/state/</code></td><td class="wrap">Runtime and task state. Includes <code>.fm-launch</code>, the record of how the Captain was started.</td></tr>
-<tr><td><code>$FM_HOME/data/</code></td><td class="wrap">Captain preferences (<code>captain.md</code>), the project registry (<code>projects.md</code>), and board data under <code>board/</code>.</td></tr>
+<tr><td><code>$FM_HOME/state/</code></td><td class="wrap">Runtime and task state. Includes <code>.fm-launch</code>, the record of how the Captain was started, and <code>bots.check.sh</code> once <code>fm bot check-install</code> has run.</td></tr>
+<tr><td><code>$FM_HOME/data/</code></td><td class="wrap">Captain preferences (<code>captain.md</code>), the project registry (<code>projects.md</code>), board data under <code>board/</code>, and bot specs under <code>bots/</code> (with their filed markers in <code>bots/.filed/</code>).</td></tr>
 <tr><td><code>$FM_HOME/config/backend</code></td><td class="wrap">The runtime backend; the installer sets it to <code>herdr</code>.</td></tr>
 <tr><td><code>$FM_HOME/config/crew-dispatch.json</code></td><td class="wrap">Symlink to the tracked routing file.</td></tr>
 <tr><td><code>$FM_HOME/projects/</code></td><td class="wrap">The <code>projects/&lt;name&gt;</code> shorthand location for project checkouts, used by FirstMate's spawn script.</td></tr>
 <tr><td><code>~/.agents/skills/</code></td><td class="wrap">Symlinks to shared skills.</td></tr>
+<tr><td><code>~/.agents/commands/</code></td><td class="wrap">Symlinks to this repository's slash commands.</td></tr>
+<tr><td><code>~/.omp/agent/agents/fm-*.md</code></td><td class="wrap">Symlinks to the role files, one OMP agent per role. Other files there are yours and are left alone.</td></tr>
 <tr><td><code>~/.agents/references</code></td><td class="wrap">Symlink to the addyosmani references that its skills link to.</td></tr>
 <tr><td><code>~/.local/share/firstmate-config/skills-src/</code></td><td class="wrap">Cache with one clone per pinned skill repository.</td></tr>
 <tr><td><code>~/.local/bin/fm</code>, <code>~/.local/bin/ponytail-update</code></td><td class="wrap">Launcher symlinks.</td></tr>
@@ -61,6 +64,8 @@
 <tr><td><code>FM_OMP_BIN</code>, <code>FM_PI_BIN</code></td><td class="wrap"><code>omp</code>, <code>pi</code></td><td class="wrap">Harness executables.</td></tr>
 <tr><td><code>FM_PI_EXTENSIONS</code></td><td class="wrap"><code>auto</code></td><td class="wrap">Pi extension mode: <code>auto</code>, <code>explicit</code>, or <code>discover</code>. Ignored for OMP.</td></tr>
 <tr><td><code>FM_SKILLS_ROOT</code></td><td class="wrap"><code>~/.agents/skills</code></td><td class="wrap">Where <code>install.sh</code> links skills and where <code>fm doctor</code> looks.</td></tr>
+<tr><td><code>FM_COMMANDS_ROOT</code></td><td class="wrap"><code>~/.agents/commands</code></td><td class="wrap">Where <code>install.sh</code> links slash commands.</td></tr>
+<tr><td><code>FM_OMP_AGENTS_ROOT</code></td><td class="wrap"><code>~/.omp/agent/agents</code></td><td class="wrap">Where <code>install.sh</code> links role files as OMP agents.</td></tr>
 <tr><td><code>FM_SKILL_CACHE</code></td><td class="wrap"><code>~/.local/share/firstmate-config/skills-src</code></td><td class="wrap">Where pinned skill repositories are cloned.</td></tr>
 <tr><td><code>FM_BIN_DIR</code></td><td class="wrap"><code>~/.local/bin</code></td><td class="wrap">Where <code>install.sh</code> links launchers.</td></tr>
 <tr><td><code>FIRSTMATE_ORIGIN</code></td><td class="wrap"><code>firstmate_repo</code> from the manifest</td><td class="wrap">Clone source, used by <code>install.sh</code> only when the checkout is missing. <code>fm update</code> still requires <code>origin</code> to equal the manifest value.</td></tr>

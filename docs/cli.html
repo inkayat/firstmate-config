@@ -11,7 +11,7 @@
 <body>
 <main><article>
 <h1>CLI reference</h1>
-<p class="lede">Everything here exists in the repository's scripts. <code>fm</code> is the single entry point; it dispatches <code>doctor</code>, <code>version</code>, <code>update</code>, and <code>board</code> to their own scripts.</p>
+<p class="lede">Everything here exists in the repository's scripts. <code>fm</code> is the single entry point; it dispatches <code>doctor</code>, <code>version</code>, <code>update</code>, <code>board</code>, and <code>bot</code> to their own scripts.</p>
 
 <table>
 <thead><tr><th>Command</th><th>Purpose</th><th>Changes anything?</th></tr></thead>
@@ -21,6 +21,7 @@
 <tr><td><a href="#version"><code>fm version</code></a></td><td class="wrap">Compact stack identity.</td><td>No</td></tr>
 <tr><td><a href="#update"><code>fm update</code></a></td><td class="wrap">Fast-forward both checkouts, then reconcile.</td><td class="wrap">Yes: fast-forwards and runs <code>install.sh</code>.</td></tr>
 <tr><td><a href="#board"><code>fm board</code></a></td><td class="wrap">Open the Kanban board.</td><td class="wrap">Writes board data under <code>$FM_HOME/data/board/</code>.</td></tr>
+<tr><td><a href="#bot"><code>fm bot</code></a></td><td class="wrap">Manage bot specs; evaluate and file due bots.</td><td class="wrap"><code>create</code>, <code>pause</code>, <code>resume</code>, <code>remove</code> write specs under <code>$FM_HOME/data/bots/</code>; <code>file</code> adds a backlog row; <code>check-install</code> registers the watcher check. An evaluation only records an already-filed id in the bot's filed marker.</td></tr>
 <tr><td><a href="#ponytail-update"><code>ponytail-update</code></a></td><td class="wrap">Prepare a Ponytail pin update.</td><td class="wrap">Edits <code>skills/external.lock</code>; never commits.</td></tr>
 <tr><td><a href="#install"><code>./install.sh</code></a></td><td class="wrap">Reconcile this machine.</td><td class="wrap">Yes, unless <code>--verify</code>.</td></tr>
 </tbody>
@@ -107,6 +108,15 @@ Platform: Darwin arm64</code></pre>
 <pre data-label="usage"><code>fm board
 fm board --lavish</code></pre>
 <p>Opens the persistent Kanban board; it is shorthand for <code>fm-board open</code>. See <a href="board.html">Task board</a>.</p>
+
+<h2 id="bot">fm bot</h2>
+<pre data-label="usage"><code>fm bot create NAME ...   # see Bots for every flag
+fm bot list | show NAME
+fm bot pause NAME | resume NAME | remove NAME
+fm bot due [--check]
+fm bot file NAME-YYYYMMDD
+fm bot check-install</code></pre>
+<p>Shorthand for <code>bin/fm-bot</code>. It never spawns a worker or calls a model: <code>due</code> is a dry evaluation, and <code>file</code> files today's due id and prints the dispatch plan for the Captain. <code>check-install</code> activates the watcher check and is a separate, explicit step. Full options, levels, and the daily flow are on <a href="bots.html">Bots</a>.</p>
 
 <h2 id="ponytail-update">ponytail-update</h2>
 <pre data-label="usage"><code>ponytail-update</code></pre>

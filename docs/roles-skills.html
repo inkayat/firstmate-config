@@ -42,24 +42,62 @@
 <p>The standalone <a href="https://github.com/inkayat/agent-skill-vault"><code>agent-skill-vault</code></a> repository is a separate, manually curated collection. Promoting one of its skills into the shared set is a deliberate decision, not an automatic sync.</p>
 
 <h2 id="roles">Roles</h2>
-<p>A role describes <em>how to work</em> and never outranks the project. There are three, at <code>roles/&lt;name&gt;/ROLE.md</code>.</p>
+<p>A role describes <em>how to work</em> and never outranks the project. There are twelve, at <code>roles/&lt;name&gt;/ROLE.md</code>. Each file opens with OMP task-agent frontmatter - <code>name: fm-&lt;name&gt;</code>, a <code>description</code>, and optional <code>autoloadSkills</code>, <code>tools</code>, <code>spawns</code>, and <code>model</code> - so the same file is the role a brief points at and an OMP agent. <code>install.sh</code> links each one into <code>~/.omp/agent/agents/fm-&lt;name&gt;.md</code>, so every OMP session can spawn <code>fm-&lt;name&gt;</code>; an entry there that it did not create is left alone.</p>
+<h3>Core roles</h3>
 <table>
 <thead><tr><th>Role</th><th>Used for</th><th>Character</th></tr></thead>
 <tbody>
-<tr><td><code>senior-fullstack</code></td><td class="wrap">Ordinary delivery work in every category except the two below.</td><td class="wrap">Read before writing, make the smallest change that solves the problem, cut over cleanly, demonstrate the behavior by running it.</td></tr>
-<tr><td><code>architecture</code></td><td class="wrap">The ARCHITECTURE category only.</td><td class="wrap">Starts from constraints, offers at most three ranked options, prefers structure that is easy to delete, refuses speculative layers.</td></tr>
+<tr><td><code>senior-fullstack</code></td><td class="wrap">The default in every category except the two below.</td><td class="wrap">Read before writing, make the smallest change that solves the problem, cut over cleanly, demonstrate the behavior by running it.</td></tr>
+<tr><td><code>architecture</code></td><td class="wrap">The ARCHITECTURE category only, and the technical plan inside a team.</td><td class="wrap">Starts from constraints, offers at most three ranked options, prefers structure that is easy to delete, refuses speculative layers.</td></tr>
 <tr><td><code>tenth-man</code></td><td class="wrap">The TENTH-MAN category only.</td><td class="wrap">Attacks the claim, not the author; steelmans first; ranks failures by consequence. "No material objection" is a valid answer.</td></tr>
 </tbody>
 </table>
-<p>The dispatch category picks harness, model, and effort. It never picks a role, and a strong model never implies a special role.</p>
+<h3>Specialist roles</h3>
+<p>A starting set, not a closed list: adding one is a new role file plus its line in <code>primary-policy.md</code> section 4, never a new dispatch category.</p>
+<table>
+<thead><tr><th>Role</th><th>Used for</th><th>Default skills</th></tr></thead>
+<tbody>
+<tr><td><code>security-engineer</code></td><td class="wrap">Finds, evidences, and ranks security weaknesses in a named scope; report-only, never exploits.</td><td class="wrap"><code>security-and-hardening</code>, <code>verification-before-completion</code></td></tr>
+<tr><td><code>code-reviewer</code></td><td class="wrap">Read-only review of a handed diff with BLOCKER, IMPORTANT, and OPTIONAL findings, including the independent review before merge.</td><td class="wrap"><code>code-review-and-quality</code></td></tr>
+<tr><td><code>refactorist</code></td><td class="wrap">One small, behavior-preserving improvement per task, proven by tests before and after.</td><td class="wrap"><code>code-simplification</code>, <code>verification-before-completion</code></td></tr>
+<tr><td><code>django-pro</code></td><td class="wrap">Django and Django REST Framework backend work against a fixed API contract.</td><td class="wrap"><code>django-backend</code>, <code>verification-before-completion</code></td></tr>
+<tr><td><code>frontend-master</code></td><td class="wrap">Web UI against a fixed API contract, verified through the real client.</td><td class="wrap"><code>frontend-ui-engineering</code>, <code>browser-testing-with-devtools</code></td></tr>
+</tbody>
+</table>
+<p>The dispatch category picks harness, model, and effort. It never picks a role, and a strong model never implies a special role. Outside ARCHITECTURE and TENTH-MAN a task may use a specialist role when its work shape matches; the category and rule are chosen first and never change because of it.</p>
+<p>A role's <code>autoloadSkills</code> are its default skill selection, still inside the per-task budget below and still displaced by a project-local skill on the same ground. OMP injects them before a spawned agent's first prompt. <code>fm doctor</code> reports a default skill this repository does not manage and a role file whose frontmatter OMP would reject.</p>
+
+<h2 id="team">Team mode</h2>
+<p>Opt-in: a task runs as a team only when its brief names the <code>team-lead</code> role. The lead is an OMP worker (never Pi) that runs the task as a small team of OMP subagents inside its own worktree. It may spawn only the agents its <code>spawns</code> list names; OMP refuses any other with <code>Cannot spawn</code>.</p>
+<table>
+<thead><tr><th>Team role</th><th>Does</th></tr></thead>
+<tbody>
+<tr><td><code>team-lead</code></td><td class="wrap">Runs the phases below, owns integration, the rework loop, and the result. Never relabels a <code>scope</code> question.</td></tr>
+<tr><td><code>product-owner</code></td><td class="wrap">Requirements with acceptance criteria, the work split, stated assumptions, and open questions labeled <code>scope</code> or <code>technical</code> that it does not decide. Read-only.</td></tr>
+<tr><td><code>backend-contract</code></td><td class="wrap">The endpoint contract inside the technical plan's API boundaries, before implementation. Read-only.</td></tr>
+<tr><td><code>qa</code></td><td class="wrap">After integration, runs the tests and exercises each changed flow end to end; reports pass or fail with evidence and never fixes code.</td></tr>
+</tbody>
+</table>
+<ol class="flow">
+<li><strong>Requirements.</strong> <code>product-owner</code>. Any <code>scope</code> question stops the task with <code>needs-decision</code>; a <code>technical</code> one the lead may resolve with cited evidence and a recorded condition that would reopen it.</li>
+<li><strong>Technical plan.</strong> <code>architecture</code> writes the plan and API boundaries.</li>
+<li><strong>Contract.</strong> <code>backend-contract</code> writes the endpoint contract when the plan has an API seam.</li>
+<li><strong>Implementation.</strong> Implementers start together, in parallel: <code>django-pro</code> for a Django backend, <code>frontend-master</code> for web UI, <code>senior-fullstack</code> otherwise. Each reads the plan and contract before its first edit and touches only its owned paths.</li>
+<li><strong>Integration, QA, review.</strong> The lead integrates and runs the tests, then a fresh <code>qa</code>, then - only after QA passes - a fresh <code>code-reviewer</code>.</li>
+<li><strong>Rework.</strong> Each failure goes to the member who owns the path, for at most two rounds across QA and review; a third failure is <code>needs-decision</code>. The lead commits nothing unless its brief allows it.</li>
+</ol>
+<div class="callout note"><span class="t">Not a merge gate</span>
+<p>The in-team review does not replace the independent review before merge. The planning members and the reviewer are read-only; members report to the lead, and only the lead reports to FirstMate.</p></div>
 
 <h2 id="shipped-skills">Shared skills that ship</h2>
-<p>Twelve skills are installed under <code>~/.agents/skills</code>. Two live in this repository; ten are pinned by commit from three upstream repositories (all MIT-licensed, none vendored).</p>
+<p>Nineteen skills are installed under <code>~/.agents/skills</code>. Four live in this repository; fifteen are pinned by commit from three upstream repositories (all MIT-licensed, none vendored).</p>
 <table>
 <thead><tr><th>Skill</th><th>Source</th><th>Use it when</th></tr></thead>
 <tbody>
 <tr><td><code>architecture-review</code></td><td class="wrap">this repo</td><td class="wrap">Adopting a design, repeatedly touching the same seams, or someone proposes a new layer or service.</td></tr>
 <tr><td><code>tenth-man</code></td><td class="wrap">this repo</td><td class="wrap">An expensive or hard-to-reverse commitment, quick consensus, or a completion claim with no evidence.</td></tr>
+<tr><td><code>django-backend</code></td><td class="wrap">this repo</td><td class="wrap">Building or reviewing Django and Django REST Framework backends: models, migrations, querysets, serializers, views, permissions, tests.</td></tr>
+<tr><td><code>bot-builder</code></td><td class="wrap">this repo</td><td class="wrap">Creating, inspecting, pausing, resuming, or removing a bot; see <a href="bots.html">Bots</a>.</td></tr>
 <tr><td><code>systematic-debugging</code></td><td class="wrap">obra/superpowers</td><td class="wrap">Any bug, test failure, or unexpected behavior, before proposing a fix.</td></tr>
 <tr><td><code>test-driven-development</code></td><td class="wrap">obra/superpowers</td><td class="wrap">Implementing a feature or bugfix, before writing the implementation.</td></tr>
 <tr><td><code>verification-before-completion</code></td><td class="wrap">obra/superpowers</td><td class="wrap">Before claiming work is complete, fixed, or passing.</td></tr>
@@ -70,6 +108,11 @@
 <tr><td><code>context-engineering</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Starting a session, degraded output, switching tasks, configuring rules files.</td></tr>
 <tr><td><code>api-and-interface-design</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Designing APIs, module boundaries, or type contracts.</td></tr>
 <tr><td><code>security-and-hardening</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Handling user input, authentication, storage, or external integrations.</td></tr>
+<tr><td><code>spec-driven-development</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Starting a feature or significant change with no specification yet, or when requirements are unclear.</td></tr>
+<tr><td><code>code-review-and-quality</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Reviewing any change before it merges.</td></tr>
+<tr><td><code>code-simplification</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Refactoring for clarity without changing behavior.</td></tr>
+<tr><td><code>frontend-ui-engineering</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Building or changing accessible, responsive user interfaces.</td></tr>
+<tr><td><code>browser-testing-with-devtools</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Building or debugging anything that runs in a browser, verified in a real one.</td></tr>
 </tbody>
 </table>
 <p>Skills are installed as symlinks. The pinned repositories are cloned once into a machine-local cache, and the addyosmani skills' relative links to shared references are satisfied by an extra <code>~/.agents/references</code> link.</p>

@@ -364,9 +364,9 @@ openai-codex/gpt-6-luna
 openai-codex/gpt-6.1-sol' "$configured_models"
 
 # =============================================================================
-# 3. Roles referenced by name stay within the three that exist
-#    (senior-fullstack is the unmarked default and is never named in the
-#    JSON; architecture and tenth-man are named explicitly in their own
+# 3. Only the fixed roles are named in the JSON (senior-fullstack is the
+#    unmarked default and specialist roles are chosen by policy, so neither
+#    is named; architecture and tenth-man are named explicitly in their own
 #    category's "when" text, never elsewhere).
 # =============================================================================
 arch_when=$(category_field ARCHITECTURE when)

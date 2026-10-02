@@ -13,7 +13,10 @@
 #   4. writes ~/.config/firstmate-config/env, the machine-local resolution
 #   5. selects the herdr runtime backend
 #   6. links the dispatch profiles and seeds the captain file
-#   7. links our skills and the pinned external packs into ~/.agents/skills
+#   7. links our skills and the pinned external packs into ~/.agents/skills,
+#      our slash commands (commands/*.md) into ~/.agents/commands, and each
+#      role file (roles/<name>/ROLE.md) as OMP agent fm-<name> into
+#      ~/.omp/agent/agents
 #   8. links the fm launcher onto PATH
 #   9. reconciles the Pi Ponytail package: a separate pinned checkout (never
 #      the shared skill cache from step 7), a skills filter in Pi's own
@@ -42,6 +45,8 @@ FM_HOME="${FM_HOME:-$HOME/.firstmate}"
 FM_BACKEND=herdr
 ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
 SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
+COMMANDS_ROOT="${FM_COMMANDS_ROOT:-$HOME/.agents/commands}"
+AGENTS_ROOT="${FM_OMP_AGENTS_ROOT:-$HOME/.omp/agent/agents}"
 SKILL_CACHE="${FM_SKILL_CACHE:-$HOME/.local/share/firstmate-config/skills-src}"
 BIN_DIR="${FM_BIN_DIR:-$HOME/.local/bin}"
 # Every git probe below inspects a repository it must not silently write to
@@ -206,14 +211,38 @@ elif would 'seed data/captain.md from the template'; then
   fi
 fi
 
-# --- 7. global skills -------------------------------------------------------
-step '7. global skills'
+# --- 7. global skills, commands, and role agents ---------------------------
+step '7. global skills, commands, and role agents'
 mkdir -p "$SKILLS_ROOT" 2>/dev/null || true
 
 for skill_dir in "$CONFIG_ROOT"/skills/*/; do
   [ -f "$skill_dir/SKILL.md" ] || continue
   name=$(basename "$skill_dir")
   link_to "${skill_dir%/}" "$SKILLS_ROOT/$name"
+done
+
+# OMP's `agents` provider turns each ~/.agents/commands/<name>.md into
+# /<name> in every session, the same shared root convention as the skills.
+for command_file in "$CONFIG_ROOT"/commands/*.md; do
+  [ -f "$command_file" ] || continue
+  link_to "$command_file" "$COMMANDS_ROOT/$(basename "$command_file")"
+done
+
+# Each role file opens with OMP task-agent frontmatter (name: fm-<role>), so
+# linking it into OMP's user agent root makes fm-<role> spawnable from every
+# OMP session. A symlink already there is ours only when it points at a
+# roles/<role>/ROLE.md (this or another firstmate-config checkout); any other
+# entry under that name belongs to the user and is left alone.
+for role_file in "$CONFIG_ROOT"/roles/*/ROLE.md; do
+  [ -f "$role_file" ] || continue
+  agent_link="$AGENTS_ROOT/fm-$(basename "$(dirname "$role_file")").md"
+  if [ -L "$agent_link" ]; then
+    case $(readlink "$agent_link") in
+      */roles/*/ROLE.md) ;;
+      *) warn "$agent_link exists and is not one of ours; leaving it alone"; continue ;;
+    esac
+  fi
+  link_to "$role_file" "$agent_link"
 done
 
 lock="$CONFIG_ROOT/skills/external.lock"

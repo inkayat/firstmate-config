@@ -826,14 +826,94 @@ J_ROUTING=$(printf '{"crew_dispatch_path":%s,"valid":%s,"lane_count":%s,"parse_m
 # ROLES
 # =============================================================================
 
-for role in senior-fullstack architecture tenth-man; do
+# The core roles are always required: section 3 of primary-policy.md routes
+# every category through one of them. Specialist roles are an open set, so
+# every other roles/<name>/ directory is discovered rather than listed here.
+ROLE_NAMES=(senior-fullstack architecture tenth-man)
+for role_dir in "$CONFIG_ROOT"/roles/*/; do
+  [ -d "$role_dir" ] || continue
+  role=$(basename "$role_dir")
+  case " ${ROLE_NAMES[*]} " in *" $role "*) ;; *) ROLE_NAMES+=("$role") ;; esac
+done
+
+# One frontmatter value from a role file's leading "---" block: a scalar
+# prints once; a block list ("key:" then "  - item") or an inline list
+# ("key: [a, b]") prints one item per line. Surrounding quotes are dropped.
+# Role files double as OMP task-agent definitions (primary-policy.md
+# section 4), so this reads the same name/description/autoloadSkills
+# fields OMP itself reads.
+role_frontmatter() { # <ROLE.md> <key>
+  awk -v key="$2" '
+    function unq(s) {
+      if (s ~ /^".*"$/ || s ~ /^\047.*\047$/) s = substr(s, 2, length(s) - 2)
+      return s
+    }
+    NR == 1 { if ($0 != "---") exit; fm = 1; next }
+    fm && $0 == "---" { exit }
+    fm && inlist {
+      if (match($0, /^[[:space:]]+-[[:space:]]+/)) { print unq(substr($0, RLENGTH + 1)); next }
+      inlist = 0
+    }
+    fm && index($0, key ":") == 1 {
+      v = substr($0, length(key) + 2)
+      sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v)
+      if (v == "") { inlist = 1; next }
+      if (v ~ /^\[.*\]$/) {
+        n = split(substr(v, 2, length(v) - 2), items, ",")
+        for (i = 1; i <= n; i++) {
+          x = items[i]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", x)
+          if (x != "") print unq(x)
+        }
+        next
+      }
+      print unq(v)
+    }
+  ' "$1"
+}
+
+for role in "${ROLE_NAMES[@]}"; do
   rf="$CONFIG_ROOT/roles/$role/ROLE.md"
-  if [ -r "$rf" ]; then
-    add_check "roles.$role" PASS "readable" "$rf"
-  else
+  if [ ! -r "$rf" ]; then
     add_check "roles.$role" FAIL "missing or unreadable" "$rf"
+    continue
+  fi
+  fm_name=$(role_frontmatter "$rf" name)
+  fm_desc=$(role_frontmatter "$rf" description)
+  if [ -z "$fm_name" ] && [ -z "$fm_desc" ]; then
+    add_check "roles.$role" FAIL "no OMP agent frontmatter (expected name: fm-$role and a description)" "$rf"
+  elif [ "$fm_name" != "fm-$role" ]; then
+    add_check "roles.$role" FAIL "frontmatter name is '${fm_name}', expected 'fm-$role'" "$rf"
+  elif [ -z "$fm_desc" ]; then
+    add_check "roles.$role" FAIL "frontmatter description is missing; OMP skips an agent without one" "$rf"
+  else
+    add_check "roles.$role" PASS "readable; agent fm-$role" "$rf"
   fi
 done
+
+# A role's frontmatter `spawns` allowlist names the agents it may start as team
+# members. OMP refuses a name it cannot discover only when the spawn is
+# attempted, so check here that each one is another role (fm-<role>) or an
+# agent OMP bundles.
+ROLE_SPAWN_COUNT=0
+ROLE_SPAWN_UNKNOWN=()
+for role in "${ROLE_NAMES[@]}"; do
+  rf="$CONFIG_ROOT/roles/$role/ROLE.md"
+  [ -r "$rf" ] || continue
+  while IFS= read -r target; do
+    [ -n "$target" ] || continue
+    ROLE_SPAWN_COUNT=$((ROLE_SPAWN_COUNT + 1))
+    case $target in
+      scout|reviewer|security-reviewer|task|sonic) continue ;;
+      fm-*) [ -r "$CONFIG_ROOT/roles/${target#fm-}/ROLE.md" ] && continue ;;
+    esac
+    ROLE_SPAWN_UNKNOWN+=("$role:$target")
+  done < <(role_frontmatter "$rf" spawns)
+done
+if [ "${#ROLE_SPAWN_UNKNOWN[@]}" -eq 0 ]; then
+  add_check roles.spawns PASS "$ROLE_SPAWN_COUNT spawn allowlist entr(y/ies), all known roles or bundled OMP agents" "$CONFIG_ROOT/roles"
+else
+  add_check roles.spawns FAIL "spawn allowlist names no role file or bundled OMP agent: ${ROLE_SPAWN_UNKNOWN[*]}" "$CONFIG_ROOT/roles"
+fi
 
 # =============================================================================
 # SKILLS
@@ -851,6 +931,29 @@ if [ -f "$lock" ]; then
     [ -n "${name:-}" ] || continue
     SKILL_EXPECTED+=("$name")
   done < "$lock"
+fi
+
+# A role's default skills (frontmatter autoloadSkills, primary-policy.md
+# section 5) must be shared skills this repository manages, so install.sh
+# actually installs them; OMP silently ignores an unknown name.
+ROLE_SKILL_COUNT=0
+ROLE_SKILL_UNMANAGED=()
+for role in "${ROLE_NAMES[@]}"; do
+  rf="$CONFIG_ROOT/roles/$role/ROLE.md"
+  [ -r "$rf" ] || continue
+  while IFS= read -r skill; do
+    [ -n "$skill" ] || continue
+    ROLE_SKILL_COUNT=$((ROLE_SKILL_COUNT + 1))
+    case " ${SKILL_EXPECTED[*]:-} " in
+      *" $skill "*) ;;
+      *) ROLE_SKILL_UNMANAGED+=("$role:$skill") ;;
+    esac
+  done < <(role_frontmatter "$rf" autoloadSkills)
+done
+if [ "${#ROLE_SKILL_UNMANAGED[@]}" -eq 0 ]; then
+  add_check skills.role_defaults PASS "$ROLE_SKILL_COUNT role default skill(s), all managed by skills/ or skills/external.lock" "$CONFIG_ROOT/roles"
+else
+  add_check skills.role_defaults FAIL "role default skill(s) not managed by skills/ or skills/external.lock: ${ROLE_SKILL_UNMANAGED[*]}" "$CONFIG_ROOT/roles"
 fi
 
 SKILL_MISSING=()

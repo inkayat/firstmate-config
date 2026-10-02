@@ -222,7 +222,7 @@ the full "when"/"why" text for each in `config/crew-dispatch.json`, the
 authoritative source this table summarizes. An explicit captain choice always
 wins over the table.
 
-| Category | Sub-lanes (route) | Role |
+| Category | Sub-lanes (route) | Default role |
 | --- | --- | --- |
 | QUICK | omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-6-luna` low - genuinely interchangeable) | senior-fullstack |
 | EXPLORE | simple: omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-6-luna` low); hard: omp `anthropic/claude-sonnet-5-5` medium | senior-fullstack |
@@ -307,12 +307,14 @@ rule, DEEP's last escalation across both forms, and TENTH-MAN's
 critical/unresolved Claude-primary escalation.
 
 **Role stays separate from category.** The category table selects
-harness/model/effort; it never selects a role. Only three roles exist
-(section 4): `senior-fullstack` is the default for every category above
-except the two that name a different one. `architecture` and `tenth-man`
-are used only for their matching categories, and only because those
-categories are explicitly risk-triggered or structural, never because a
-category happens to route through a strong model.
+harness/model/effort; it never selects a role. `architecture` and
+`tenth-man` are fixed to their matching categories - always used there,
+never anywhere else - because those categories are explicitly structural
+or risk-triggered, never because a category happens to route through a
+strong model. Every other category defaults to `senior-fullstack` and may
+instead use a specialist role (section 4) when the task's work shape
+matches it. Category and rule are still chosen first, from the task's
+semantics; choosing a specialist role never changes them.
 
 **Scout or ship is chosen per task, not per category.** EXPLORE, RESEARCH,
 REVIEW, ARCHITECTURE, and TENTH-MAN are commonly read-only and commonly run
@@ -353,12 +355,67 @@ them from their own category's primary rule.
 
 ## 4. Roles
 
-Three generic roles, at `$FM_CONFIG_ROOT/roles/<name>/ROLE.md`:
+Roles live at `$FM_CONFIG_ROOT/roles/<name>/ROLE.md`. Each file opens with
+OMP task-agent frontmatter - `name: fm-<name>`, a `description`, and
+optional `autoloadSkills` - so the same file is both the role a brief points
+at and a valid OMP agent definition. `install.sh` links each one into OMP's
+user agent root as `~/.omp/agent/agents/fm-<name>.md`, so every OMP session
+can spawn `fm-<name>`; it never replaces an entry there that is not its own.
 
-- `senior-fullstack` - ordinary delivery work
+Core roles:
+
+- `senior-fullstack` - ordinary delivery work; the default role
 - `architecture` - structural decisions, not implementation ownership
 - `tenth-man` - deliberate adversarial challenge; risk-triggered or explicitly
   requested, never routine
+
+Specialist roles - a starting set, not a closed list. Adding one is a new
+role file plus its line here, never a new dispatch category:
+
+- `security-engineer` - finds, evidences, and ranks security weaknesses in a
+  named scope; report-only, never exploits
+- `code-reviewer` - read-only review of a handed diff, including section 7's
+  independent review pass
+- `refactorist` - one small, behavior-preserving improvement per task, proven
+  by tests
+- `django-pro` - Django and Django REST Framework backend implementation
+  against a fixed contract; default skill `django-backend`, which this
+  repository authors under `skills/`
+- `frontend-master` - web UI implementation against a fixed contract,
+  verified through the real client
+
+Team roles. A `team-lead` worker runs one task as a small team of OMP
+subagents (section 6's micro-orchestration). It may spawn only the agents its
+frontmatter `spawns` lists, and OMP refuses any other. The planning members
+run in order, read-only, before any implementer starts:
+
+- `team-lead` - an OMP worker only, never Pi. It runs the planning phases and
+  stops with `needs-decision` on any open question the product owner labels
+  `scope`. It may resolve a `technical` one with cited evidence and a recorded
+  conditional stop, but never relabels a `scope` question. It owns
+  integration, the rework loop, and the result
+- `product-owner` - requirements with acceptance criteria, the work split,
+  stated assumptions, and open questions labeled `scope` or `technical` that
+  it does not decide
+- `backend-contract` - the endpoint contract inside the technical plan's API
+  boundaries, before implementation
+- `qa` - after integration, runs the tests and exercises each changed flow
+  end to end; reports pass or fail with evidence and never fixes code
+
+Inside a team, `architecture` writes the technical plan and API boundaries.
+That is a member's work under the lead's task, not an ARCHITECTURE dispatch;
+section 3's fixed role-to-category rule governs macro dispatch only. After the
+planning phases:
+
+- implementers - `django-pro` for a Django backend, `frontend-master` for web
+  UI, `senior-fullstack` otherwise - work in
+  parallel against the fixed contract;
+- `qa` runs on the integrated change, then `code-reviewer` runs once QA
+  passes;
+- each failure goes back to the member who owns the path, for at most two
+  rework rounds before `needs-decision`.
+
+This in-team review does not replace section 7's merge-gate review.
 
 Name the role in the brief and point the worker at its file by absolute path.
 A role describes how to work. It never outranks the project.
@@ -370,6 +427,15 @@ Select them; do not dump them. Per task, at most two workflow or methodology
 skills and at most one reference skill, fewer by preference, and none at all
 when the task does not need one. A project-local skill always wins over a
 global skill covering the same ground.
+
+A role file's frontmatter `autoloadSkills` lists the shared worker skills
+that role works with. When that role is used they are the default selection
+- still named by exact path under section 2, still inside this budget,
+still displaced by a project-local skill covering the same ground. Dropping
+one or adding another takes the same one-line reason the `Skills:` trace
+already carries. A default skill must be a shared skill this repository
+manages (`skills/` or `skills/external.lock`); `fm doctor` reports one that
+is not, and a role file whose frontmatter OMP would reject.
 
 Official FirstMate internal skills (the official checkout's own
 `.agents/skills`) are never a global skill choice for a delegated task -
@@ -562,3 +628,27 @@ This policy and the selected verification skills are guidance, not a
 mechanical completion check. This configuration has no trusted verification
 runner or FirstMate completion hook; a passing fixture report cannot stand
 in for verification of the actual task changes.
+
+## 8. Bot wakes
+
+A `check:` wake from `state/bots.check.sh` carries one line per bot;
+`bin/fm-bot` owns the line formats and their meaning.
+
+- **`bot due: <id> …`** - run `fm bot file <id>`. It is the only way to file a
+  bot's dated task: it re-checks the spec at that moment, files the id,
+  records the marker that keeps the bot silent for the rest of the day, and
+  prints the dispatch plan. Never file a bot id with a raw
+  `fm-tasks-axi.sh add`, which skips that marker. `already-filed:` or a
+  refusal means dispatch nothing.
+- **Dispatch exactly the plan.** Its role file, route rule, kind and
+  delivery, scope, limits, excluded paths, access, notify, wall-clock limit,
+  and stop rule go into the brief as printed. Never widen the scope or raise
+  the level; a plan carrying `reason:` runs at the level it prints, and the
+  report says why.
+- **The level is never approval.** `local-proposal` is a scout report.
+  `local-commit` and `push` are ships that stop uncommitted with
+  `needs-decision [key=commit-approval]`; any commit, and any push, still
+  needs the captain's own approval for that commit.
+- **`bot invalid: <id> …`** - `fm bot file <id>` files and holds the id for
+  the captain; dispatch nothing. **`bot error: …`** - the check or the
+  backlog could not answer; investigate, dispatch nothing.
