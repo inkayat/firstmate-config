@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Safety and trust boundaries | firstmate-config guide</title>
+<meta name="description" content="What firstmate-config never touches, where it deliberately stays out of the way, and what it does not guarantee.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/site.js"></script>
+</head>
+<body>
+<main><article>
+<h1>Safety and trust boundaries</h1>
+<p class="lede">This configuration changes the behavior of every project on the machine, so it is built to be reviewable, pinned, and quiet. This page lists what it will and will not do, and where its guarantees stop.</p>
+
+<h2 id="boundaries">Boundaries by component</h2>
+<table>
+<thead><tr><th>Component</th><th>Boundary</th></tr></thead>
+<tbody>
+<tr><td class="wrap">Official FirstMate checkout</td><td class="wrap">Upstream-clean. Never modified, except by the fast-forward-only first stage of <code>fm update</code>. <code>install.sh</code> reports a modified checkout and leaves it alone.</td></tr>
+<tr><td class="wrap">Project repositories</td><td class="wrap">The installer never touches them. Project knowledge is never copied into this repository; it is resolved per task, in place.</td></tr>
+<tr><td class="wrap">Credentials</td><td class="wrap">Never stored. Authentication, sessions, and runtime records live outside the repository.</td></tr>
+<tr><td class="wrap">Existing files at link locations</td><td class="wrap">If a path where a symlink belongs already holds something this installer did not create, it warns and leaves it alone.</td></tr>
+<tr><td class="wrap"><code>$FM_HOME/data/captain.md</code></td><td class="wrap">Seeded once, then owned by the machine. Never overwritten.</td></tr>
+<tr><td class="wrap">Secondmates</td><td class="wrap">A secondmate home is refused as a Captain home, and <code>fm update</code> does not update secondmates.</td></tr>
+</tbody>
+</table>
+
+<h2 id="read-only">Read-only commands</h2>
+<p><code>fm doctor</code> and <code>fm version</code> never install, repair, or restart anything, never modify <code>FM_HOME</code>, projects, or the official checkout, and never make a paid model call. Their Git probes run with optional locks disabled so they cannot write an index refresh or ref lock into a repository they only inspect.
+<code>./install.sh --verify</code> likewise reports drift without changing anything.</p>
+<p>Availability checks answer "do credentials resolve?". They do not prove a key is valid right now or that quota remains.</p>
+
+<h2 id="update-safety">Update safety</h2>
+<ul>
+<li>The official checkout's <code>origin</code> must be exactly <code>firstmate_repo</code> from the manifest. A different URL, or an <code>insteadOf</code> rewrite, is refused <em>before</em> the remote is contacted.</li>
+<li>Only fast-forwards. Nothing is forced, stashed, reset, merged, rebased, discarded, or pushed.</li>
+<li>Both checkouts are checked before either changes. A refusal leaves both exactly as they were.</li>
+<li>Failures after the official fast-forward are reported as a <code>PARTIAL UPDATE</code>, never as success.</li>
+</ul>
+<p>Details and recovery are on <a href="update.html">Update and recovery</a>.</p>
+
+<h2 id="supply-chain">Pinned dependencies</h2>
+<ul>
+<li>External skills are pinned by full commit hash in <code>skills/external.lock</code>. A branch is never tracked, because that would change behavior on every project without a visible diff.</li>
+<li>Nothing is vendored, so upstream licenses stay with their sources.</li>
+<li>Pins move only through a visible edit. <code>ponytail-update</code> prepares one, shows the diff, runs the tests, and stops before committing.</li>
+<li>Pi's Ponytail package is a separate pinned checkout, so a later <code>pi update</code> cannot mutate the shared skills.</li>
+</ul>
+
+<h2 id="worker-isolation">Worker isolation</h2>
+<ul>
+<li>Each task runs in its own isolated worktree, never in the Captain's checkout, so what one task reads does not leak into another.</li>
+<li>Only FirstMate orchestrates across projects. A worker never switches to another registered project, creates an independent FirstMate task, or modifies a primary checkout outside its own task.</li>
+<li>With OMP, a worker may use the harness's own bounded task tool for a task-local helper. The helper stays inside the same task, project, and worktree and inherits the parent's boundary; the parent remains responsible for the result. Pi has no equivalent mechanism and does not spawn workers.</li>
+<li>The Captain's standing instruction asks it to confirm before anything destructive outside a task worktree.</li>
+</ul>
+
+<h2 id="project-wins">Project rules win</h2>
+<p>Project-native instructions and project-local skills outrank every role and every shared skill here. A shared skill that conflicts with a project rule loses. See <a href="roles-skills.html#precedence">Precedence</a>.</p>
+
+<h2 id="review">Independent review</h2>
+<p>Substantive or risky Captain-dispatched changes get an independent, read-only review in a fresh context before they are treated as merge-ready. Findings are <strong>BLOCKER</strong> (must fix), <strong>IMPORTANT</strong> (fix, or an explicit waiver from you), and <strong>OPTIONAL</strong>. A reviewer works from the diff and revisions it is given and never fetches, pulls, or updates a canonical checkout.</p>
+<p>This is advisory guidance distinct from the separate <code>no-mistakes</code> automated pipeline, which has its own gate.</p>
+
+<h2 id="limits">What is not guaranteed</h2>
+<div class="callout warn"><span class="t">Be precise about these</span>
+<ul>
+<li>Context and skill selection are policy and handoff mechanisms. They are not proof of read order, compliance, or task completion.</li>
+<li>There is no trusted verification runner or FirstMate completion hook in this configuration. A passing fixture report does not stand in for verifying the actual change.</li>
+<li>The routing and skill trace is a diagnostic. Its citation check is a lexical match and cannot prove the right category was chosen or that a skill was applied.</li>
+<li><code>fm update</code> has no multi-repository rollback.</li>
+<li>A running Captain is not notified of updates and keeps what it loaded at startup.</li>
+<li><code>fm doctor</code>'s runtime task-staleness check reports <code>UNKNOWN</code> when tasks are in flight, because no safe bulk read-only classifier exists. Use FirstMate's per-task state check for an authoritative answer.</li>
+</ul></div>
+</article></main>
+<noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Start at <a href="index.html">index.html</a>.</p></noscript>
+</body>
+</html>

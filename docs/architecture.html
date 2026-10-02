@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture and startup | firstmate-config guide</title>
+<meta name="description" content="How fm picks a harness and model, where the Captain runs, and how projects are resolved.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/site.js"></script>
+</head>
+<body>
+<main><article>
+<h1>Architecture and startup</h1>
+<p class="lede">Two decisions are kept apart on purpose: which harness and model the <em>Captain</em> runs on, and which harness and model each <em>worker</em> gets. The first is on this page. The second is <a href="dispatch.html">Dispatch routing</a>.</p>
+
+<h2 id="stack">The stack</h2>
+<pre data-nocopy data-label="layers"><code>fm
+ └─ OMP Captain
+     └─ FirstMate
+         └─ Herdr
+             ├─ Pi workers
+             └─ OMP workers</code></pre>
+<table>
+<thead><tr><th>Piece</th><th>Responsibility</th></tr></thead>
+<tbody>
+<tr><td><code>fm</code></td><td class="wrap">Resolves paths, picks harness and model, and starts the Captain. It owns no lifecycle logic: the fleet lock, watcher, heartbeat, wake queue, spawn, and teardown all stay in the official checkout.</td></tr>
+<tr><td>Captain</td><td class="wrap">An OMP session (or Pi, by explicit choice) that talks to you and delegates.</td></tr>
+<tr><td>FirstMate</td><td class="wrap">Task lifecycle and delegation.</td></tr>
+<tr><td>Herdr</td><td class="wrap">Runtime and sessions for the Captain and its workers.</td></tr>
+<tr><td>Workers</td><td class="wrap">Pi or OMP sessions in isolated task worktrees, chosen by the routing table.</td></tr>
+</tbody>
+</table>
+
+<h2 id="harness">Choosing the Captain harness</h2>
+<p>OMP is the default. Pi is an explicit fallback and is never selected automatically:</p>
+<pre data-label="shell"><code>fm                  # OMP Captain
+fm --harness omp    # same, spelled out
+fm --harness pi     # Pi Captain
+fm --harness pi doctor</code></pre>
+<p><code>--harness</code> goes before the subcommand and applies to <code>doctor</code> and <code>version</code> as well. Any other value is rejected with <code>expected omp or pi</code>.
+Overriding the harness executable is done with <code>FM_OMP_BIN</code> or <code>FM_PI_BIN</code>.</p>
+
+<h2 id="working-directory">Where the Captain runs</h2>
+<p>The harness runs <strong>inside the official FirstMate checkout</strong>, not in the directory you launched from. FirstMate's <code>AGENTS.md</code> is a working-directory context file, and a
+Captain that never loaded it would not be a FirstMate Captain. Two consequences:</p>
+<ul>
+<li>No project's <code>AGENTS.md</code>, <code>CLAUDE.md</code>, or project-local skills are preloaded as global authority. Each is resolved per task.</li>
+<li>Launching from inside a project never binds the session to it. Your shell's directory is untouched.</li>
+</ul>
+<p>The directory you launched from is passed on as <code>FM_FORK_ORIGIN_CWD</code>, with <code>FM_FORK_ORIGIN_IS_PROJECT</code> set to <code>true</code> only when it is itself a Git project. It is a hint for one task, never a lock.</p>
+
+<h2 id="which-project">Which project a task belongs to</h2>
+<p>Every delegated task names or implies exactly one project. The Captain resolves it per task, stopping at the first rule that answers:</p>
+<ol>
+<li>An explicit path or project name in your request.</li>
+<li>A name that matches an entry in FirstMate's registry, <code>data/projects.md</code>. No second project database or resolver is added.</li>
+<li><code>FM_FORK_ORIGIN_CWD</code> as a default-project hint, only when it is a Git project.</li>
+</ol>
+<p>If it is still ambiguous, the Captain asks one concise question. It does not guess silently. Concurrent tasks may target different projects, and each runs in its own isolated task worktree.</p>
+
+<h2 id="model-chain">The startup model chain</h2>
+<p><code>firstmate/captain-startup-models.tsv</code> is an ordered list of candidates, tab-separated as <code>model</code>, <code>effort</code>, and an optional <code>harness</code>. The launcher walks it top to bottom and takes the first candidate that is not <em>known</em> to be unavailable.</p>
+<table>
+<thead><tr><th>#</th><th>Model</th><th>Effort</th><th>Harness</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>openai-codex/gpt-6.1-sol</code></td><td>medium</td><td>both</td></tr>
+<tr><td>2</td><td><code>anthropic/claude-sonnet-5-5</code></td><td>high</td><td>OMP only</td></tr>
+<tr><td>2</td><td><code>pi-claude-code-provider/sonnet</code></td><td>high</td><td>Pi only</td></tr>
+<tr><td>3</td><td><code>openai-codex/gpt-6-astra</code></td><td>xhigh</td><td>both</td></tr>
+</tbody>
+</table>
+<p>So an OMP Captain tries Sol 6.1, then Claude Sonnet 5.5, then Astra; a Pi Captain tries Sol 6.1, then the Claude Code provider's Sonnet alias, then Astra.</p>
+<ul>
+<li>A row whose harness column does not match the active Captain harness is skipped entirely - never probed, never selected. An OMP Captain can never be launched with a Pi-only provider id.</li>
+<li>Probing is non-billable. Only an authoritative <code>UNAVAILABLE</code> skips a candidate; <code>AVAILABLE</code> and <code>UNKNOWN</code> both stay eligible.</li>
+<li>If nothing is eligible the launcher stops with <code>no configured captain startup model is available</code> and lists each candidate's reason.</li>
+<li>When the chosen model is not the first one, the launcher prints a <code>FirstMate Captain fallback:</code> line with the reasons.</li>
+</ul>
+
+<h3>How availability is probed</h3>
+<table>
+<thead><tr><th>Harness</th><th>Probe</th></tr></thead>
+<tbody>
+<tr><td>OMP</td><td class="wrap">The native catalog, <code>omp models --json --no-extensions</code>, run from the FirstMate checkout. A model absent from the catalog, or an unsupported effort, is <code>UNAVAILABLE</code>; an unreadable catalog is <code>UNKNOWN</code>. <code>--no-extensions</code> must stay, otherwise the call can overwrite live FirstMate markers.</td></tr>
+<tr><td>Pi</td><td class="wrap">Pi's own model listing and auth check. The one exception is <code>pi-claude-code-provider</code>: Pi's <code>auth check</code> does not load extension providers and misreports it, so it is checked with the provider's zero-inference <code>claude auth status</code> instead.</td></tr>
+</tbody>
+</table>
+<p>"Available" means credentials resolve. Live validity and quota are not probed.</p>
+
+<div class="callout note"><span class="t">Two ids for the same family</span>
+<p>OMP names Sonnet <code>anthropic/claude-sonnet-5-5</code>. Pi reaches it only through the Claude Code provider as the unversioned alias <code>sonnet</code>, which Claude Code resolves to its own current Sonnet. The alias moves when the installed Claude Code does; nothing here changes.</p></div>
+
+<p>The selected model and effort are passed to the harness as <code>--model</code> and <code>--thinking</code>, for this launch only.</p>
+
+<h2 id="extensions">Extensions</h2>
+<p>The Captain needs FirstMate's primary watcher and turn-end guard extensions from the official checkout. <code>fm --check</code> and <code>fm doctor</code> fail if they are missing.</p>
+<ul>
+<li><strong>OMP</strong> discovers them from <code>.omp/extensions</code> in the checkout. The launcher passes no <code>-e</code> flags and no worker overlay.</li>
+<li><strong>Pi</strong> has two modes, chosen by <code>FM_PI_EXTENSIONS</code>: <code>explicit</code> (the launcher passes both extensions), <code>discover</code>, or <code>auto</code> (the default). <code>auto</code> uses <code>discover</code> when <code>~/.pi/agent/trust.json</code> marks the FirstMate checkout as trusted, and <code>explicit</code> otherwise.</li>
+</ul>
+
+<h2 id="environment">Environment the Captain receives</h2>
+<ul>
+<li><code>FM_HOME</code>, <code>FM_BACKEND</code>, <code>FM_CONFIG_ROOT</code>, and the two <code>FM_FORK_ORIGIN_*</code> variables are exported.</li>
+<li>Harness identity markers that leak from the shell you launched in (<code>CLAUDECODE</code>, <code>OMPCODE</code>, <code>PI_CODING_AGENT</code>, <code>FM_PI_HARNESS</code>, <code>FM_OMP_HARNESS</code>, <code>CURSOR_AGENT</code>, <code>CURSOR_INVOKED_AS</code>, <code>GEMINI_CLI</code>, <code>GROK_AGENT</code>, and the removed <code>FM_SKILL_VAULT_ROOT</code>) are cleared, so a Captain started from another agent's pane does not misreport its own harness. Herdr pane identity is kept on purpose.</li>
+<li>The launcher writes <code>$FM_HOME/state/.fm-launch</code>: a record of what this Captain was actually started with. Nothing reads it to make a decision; it exists so you can confirm the launch afterwards.</li>
+</ul>
+
+<h2 id="captain-file">Captain preferences</h2>
+<p><code>install.sh</code> seeds <code>$FM_HOME/data/captain.md</code> once from <code>firstmate/captain.md</code> and never overwrites it. The template tells the Captain to read <code>firstmate/primary-policy.md</code> at session start and sets a working style: evidence over reassurance, short answers, and ask before anything destructive outside a task worktree. Edit your machine's copy freely; it survives every update.</p>
+</article></main>
+<noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Start at <a href="index.html">index.html</a>.</p></noscript>
+</body>
+</html>

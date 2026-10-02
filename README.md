@@ -52,6 +52,15 @@ policy chooses worker harness, model, effort, and role by task semantics.
 - Read-only `fm doctor` and `fm version` diagnostics
 - Fast-forward-only `fm update` (official FirstMate checkout, then this repository) and deterministic, idempotent installation
 
+## Documentation
+
+A small, navigable guide lives in [`docs/`](docs/index.html): installation and
+first run, update and recovery, architecture and startup, roles and skills,
+dispatch routing, safety boundaries, configuration, the CLI, and the task
+board. It is plain HTML with no build step; preview it locally by opening
+`docs/index.html` in a browser. This README and the files it links remain the
+source of truth.
+
 ## Routing
 
 [`firstmate/crew-dispatch.json`](firstmate/crew-dispatch.json) is the source of

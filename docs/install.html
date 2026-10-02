@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Installation and first run | firstmate-config guide</title>
+<meta name="description" content="Install firstmate-config, verify it, and start the Captain for the first time.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/site.js"></script>
+</head>
+<body>
+<main><article>
+<h1>Installation and first run</h1>
+<p class="lede">One clone, one idempotent script. Running <code>./install.sh</code> again is the normal way to reconcile a machine, not a special case.</p>
+
+<h2 id="requirements">Requirements</h2>
+<p>The installer checks the toolchain first and stops before changing anything if a required tool is missing.</p>
+<table>
+<thead><tr><th>Tool</th><th>Status</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td><code>git</code></td><td>required</td><td class="wrap">Clones, fast-forwards, and pins everything.</td></tr>
+<tr><td><code>omp</code></td><td>required</td><td class="wrap">Default Captain harness and the harness for most workers.</td></tr>
+<tr><td><code>pi</code></td><td>required</td><td class="wrap">Explicit Captain fallback and the harness for Pi-routed workers.</td></tr>
+<tr><td><code>herdr</code></td><td>required</td><td class="wrap">The runtime backend. The launcher also refuses to start without it while <code>FM_BACKEND=herdr</code>.</td></tr>
+<tr><td><code>jq</code>, <code>treehouse</code>, <code>gh</code>, <code>bun</code></td><td>recommended</td><td class="wrap">Missing tools only print a <code>warn</code> line; they are needed for full fleet behavior.</td></tr>
+<tr><td><code>python3</code></td><td>conditional</td><td class="wrap">Needed only to reconcile Pi's Ponytail package settings (step 9).</td></tr>
+</tbody>
+</table>
+<p>Minimum and tested versions of Pi, OMP, and Herdr live in
+<a href="https://github.com/inkayat/firstmate-config/blob/main/firstmate/stack-manifest.tsv"><code>firstmate/stack-manifest.tsv</code></a>.
+<code>fm doctor</code> compares your installed versions with it; a newer tool is a <span class="badge warning">WARNING</span>, a
+tool below the minimum is a <span class="badge fail">FAIL</span>.</p>
+
+<h2 id="install">Install</h2>
+<pre data-label="shell"><code>git clone https://github.com/inkayat/firstmate-config.git
+cd firstmate-config
+./install.sh</code></pre>
+<div class="callout warn"><span class="t">Run it from the clone you intend to keep</span>
+<p>The installer points <code>fm</code>, the dispatch file, and the skill links at the checkout it runs from. Do not run it from a throwaway worktree.</p></div>
+
+<p>It works through nine numbered steps. Every step states a desired end state and changes only what differs:</p>
+<ol class="flow">
+<li><strong>Toolchain</strong> - the checks above.</li>
+<li><strong>Official FirstMate checkout</strong> - cloned to <code>FIRSTMATE_ROOT</code> and pinned to the validated commit <em>only if it is missing</em>. An existing checkout is reported against the baseline (<code>ok</code>, or a <code>warn</code> if ahead, behind, or diverged) and never modified.</li>
+<li><strong>Operational home</strong> - creates <code>state</code>, <code>data</code>, <code>config</code>, and <code>projects</code> under <code>FM_HOME</code>.</li>
+<li><strong>Environment file</strong> - writes <code>~/.config/firstmate-config/env</code> with the resolved paths.</li>
+<li><strong>Runtime backend</strong> - sets <code>$FM_HOME/config/backend</code> to <code>herdr</code>.</li>
+<li><strong>Dispatch and Captain file</strong> - symlinks <code>crew-dispatch.json</code> into <code>$FM_HOME/config/</code> and seeds <code>$FM_HOME/data/captain.md</code> once; an existing copy is never overwritten.</li>
+<li><strong>Global skills</strong> - links this repository's skills and the pinned external skills into <code>~/.agents/skills</code>.</li>
+<li><strong>Launchers</strong> - links <code>fm</code> and <code>ponytail-update</code> into <code>~/.local/bin</code> and warns if that directory is not on <code>PATH</code>.</li>
+<li><strong>Pi Ponytail package</strong> - a separate pinned checkout for Pi, with a skills filter so its bundled duplicates never shadow the shared ones.</li>
+</ol>
+<p>A trimmed run on a settled machine looks like this:</p>
+<pre class="out" data-label="output, trimmed"><code>1. toolchain
+  ok      git present
+  ok      omp present
+  ...
+2. official FirstMate checkout
+  ok      present at ~/Developer/tools/firstmate
+  ok      matches the validated baseline commit <sha>
+...
+7. global skills
+  ok      ~/.agents/skills/systematic-debugging
+  ...
+8. command launchers
+  ok      ~/.local/bin is on PATH
+
+install: 0 change(s), 0 failure(s)</code></pre>
+<p>Lines are prefixed <code>ok</code>, <code>changed</code>, <code>warn</code>, <code>DRIFT</code> (only with <code>--verify</code>), or <code>FAIL</code>. A <code>FAIL</code> makes the script exit nonzero.</p>
+
+<h2 id="verify">Verify</h2>
+<pre data-label="shell"><code>./install.sh --verify   # read-only drift check
+fm version              # compact identity of the installed stack
+fm doctor               # read-only diagnostics</code></pre>
+<p><code>--verify</code> changes nothing and ends with <code>verify: N drift item(s), M failure(s)</code>. A clean machine reports
+<code>verify: 0 drift item(s), 0 failure(s)</code>.</p>
+<p><code>fm doctor</code> exits <code>0</code> when the mandatory architecture is healthy - warnings do not change that - and <code>1</code> on a genuine break
+such as a missing Captain executable, an unreachable Herdr server, or another <code>fm</code> earlier on your <code>PATH</code>.
+See the <a href="cli.html#doctor">CLI reference</a> for the full list.</p>
+
+<h2 id="first-run">First run</h2>
+<p>Preview what the launcher will do without starting anything:</p>
+<pre data-label="shell"><code>fm --check</code></pre>
+<pre class="out" data-label="output, trimmed"><code>CONFIG_ROOT=~/src/firstmate-config
+FIRSTMATE_ROOT=~/Developer/tools/firstmate
+FM_HOME=~/.firstmate
+FM_BACKEND=herdr
+FM_FORK_ORIGIN_CWD=~/src/my-project
+FM_FORK_ORIGIN_IS_PROJECT=true
+CAPTAIN_HARNESS=omp
+CAPTAIN_CWD=~/Developer/tools/firstmate
+CAPTAIN_BIN=omp
+CAPTAIN_EXTENSIONS=discover
+PREFERRED_MODEL=openai-codex/gpt-6.1-sol
+PREFERRED_EFFORT=medium
+SELECTED_MODEL=openai-codex/gpt-6.1-sol
+SELECTED_EFFORT=medium
+SELECTED_AVAILABILITY=AVAILABLE
+...
+PREFLIGHT=ok</code></pre>
+<p>Three fields matter on a first run:</p>
+<ul>
+<li><code>SELECTED_MODEL</code> - the first startup candidate that is not known to be unavailable. If it differs from <code>PREFERRED_MODEL</code>, a <code>FALLBACK_REASON</code> line says why.</li>
+<li><code>CAPTAIN_CWD</code> - always the official FirstMate checkout, wherever you ran <code>fm</code> from.</li>
+<li><code>FM_FORK_ORIGIN_IS_PROJECT</code> - whether your launch directory is a Git project. It is used only as a default-project <em>hint</em>.</li>
+</ul>
+<p><code>fm --print-command</code> prints the same resolution plus the exact harness command line. Then start the Captain:</p>
+<pre data-label="shell"><code>cd ~/src/my-project   # optional: becomes the default-project hint
+fm</code></pre>
+<p>The launcher prints the harness, the preferred and selected model, and availability, then replaces itself with the harness process.</p>
+<p>To use the Pi fallback instead, pass the harness before any subcommand: <code>fm --harness pi</code>. It is explicit and never automatic.</p>
+
+<h2 id="projects">Projects</h2>
+<p>Project registration and the task lifecycle belong to upstream FirstMate. This configuration only reads them: a task's project is resolved
+by an explicit path or name, then FirstMate's registry (<code>data/projects.md</code>), then your launch directory as a hint. The full order is on
+<a href="architecture.html#which-project">Architecture and startup</a>. Nothing about a project is copied into this repository.</p>
+
+<h2 id="never">What the installer never does</h2>
+<ul>
+<li>Store a credential.</li>
+<li>Touch a project repository.</li>
+<li>Modify the official FirstMate checkout after it exists.</li>
+<li>Overwrite a file at a link location that it does not own - it prints <code>warn ... leaving it alone</code> instead.</li>
+</ul>
+<p>There is no uninstall command. Removing the symlinks the installer created and the files it wrote
+(listed on <a href="config.html">Configuration and files</a>) is a manual step.</p>
+</article></main>
+<noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Start at <a href="index.html">index.html</a>.</p></noscript>
+</body>
+</html>

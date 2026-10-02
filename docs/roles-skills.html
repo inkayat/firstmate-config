@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roles and skills | firstmate-config guide</title>
+<meta name="description" content="How project instructions, project-local skills, roles, and shared skills are layered and handed to workers.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/site.js"></script>
+</head>
+<body>
+<main><article>
+<h1>Roles and skills</h1>
+<p class="lede">A project's own <code>AGENTS.md</code> and <code>CLAUDE.md</code> always win. Shared skills and roles add expertise underneath them; they never override a project rule.</p>
+
+<h2 id="precedence">Precedence</h2>
+<pre data-nocopy data-label="highest to lowest"><code>project-native instructions
+  &gt; project-local skills
+    &gt; role / task policy
+      &gt; shared worker skills</code></pre>
+<p>A later tier never overrides an earlier one. Where a shared skill and a project rule disagree, the project wins, and the Captain spends one sentence in the brief saying so, so the worker does not rediscover the conflict.</p>
+
+<h3>How a project's instructions are resolved</h3>
+<p>Resolved per task, in this order, stopping at the first rule that answers:</p>
+<ol>
+<li>A precedence or resolution rule the project documents for itself.</li>
+<li>A more specific subtree over a broader one: the nearest instruction file to the code being changed wins.</li>
+<li>Within one scope: <code>AGENTS.override.md</code>, then <code>AGENTS.md</code>, then <code>CLAUDE.md</code>.</li>
+<li>Project-local skills: <code>.claude/skills</code>, <code>.agents/skills</code>, <code>.agent/skills</code>.</li>
+</ol>
+<p>If two top-tier project rules genuinely contradict each other and nothing resolves it, the Captain stops and asks.</p>
+
+<h2 id="populations">Three kinds of skill</h2>
+<table>
+<thead><tr><th>Kind</th><th>Lives in</th><th>Owned by</th><th>Used by</th></tr></thead>
+<tbody>
+<tr><td>Official FirstMate internal</td><td class="wrap"><code>$FIRSTMATE_ROOT/.agents/skills</code></td><td class="wrap">Upstream FirstMate</td><td class="wrap">The Captain only. Never given to a worker, and doctor checks no installed shared skill resolves into this directory.</td></tr>
+<tr><td>Shared worker skills</td><td class="wrap"><code>~/.agents/skills</code></td><td class="wrap">This repository (installed by <code>install.sh</code>)</td><td class="wrap">Workers on Pi and OMP, selected per task.</td></tr>
+<tr><td>Project-local skills</td><td class="wrap">The project's own tracked directories</td><td class="wrap">The project</td><td class="wrap">Workers in that project. Always preferred over a shared skill covering the same ground.</td></tr>
+</tbody>
+</table>
+<p>The standalone <a href="https://github.com/inkayat/agent-skill-vault"><code>agent-skill-vault</code></a> repository is a separate, manually curated collection. Promoting one of its skills into the shared set is a deliberate decision, not an automatic sync.</p>
+
+<h2 id="roles">Roles</h2>
+<p>A role describes <em>how to work</em> and never outranks the project. There are three, at <code>roles/&lt;name&gt;/ROLE.md</code>.</p>
+<table>
+<thead><tr><th>Role</th><th>Used for</th><th>Character</th></tr></thead>
+<tbody>
+<tr><td><code>senior-fullstack</code></td><td class="wrap">Ordinary delivery work in every category except the two below.</td><td class="wrap">Read before writing, make the smallest change that solves the problem, cut over cleanly, demonstrate the behavior by running it.</td></tr>
+<tr><td><code>architecture</code></td><td class="wrap">The ARCHITECTURE category only.</td><td class="wrap">Starts from constraints, offers at most three ranked options, prefers structure that is easy to delete, refuses speculative layers.</td></tr>
+<tr><td><code>tenth-man</code></td><td class="wrap">The TENTH-MAN category only.</td><td class="wrap">Attacks the claim, not the author; steelmans first; ranks failures by consequence. "No material objection" is a valid answer.</td></tr>
+</tbody>
+</table>
+<p>The dispatch category picks harness, model, and effort. It never picks a role, and a strong model never implies a special role.</p>
+
+<h2 id="shipped-skills">Shared skills that ship</h2>
+<p>Twelve skills are installed under <code>~/.agents/skills</code>. Two live in this repository; ten are pinned by commit from three upstream repositories (all MIT-licensed, none vendored).</p>
+<table>
+<thead><tr><th>Skill</th><th>Source</th><th>Use it when</th></tr></thead>
+<tbody>
+<tr><td><code>architecture-review</code></td><td class="wrap">this repo</td><td class="wrap">Adopting a design, repeatedly touching the same seams, or someone proposes a new layer or service.</td></tr>
+<tr><td><code>tenth-man</code></td><td class="wrap">this repo</td><td class="wrap">An expensive or hard-to-reverse commitment, quick consensus, or a completion claim with no evidence.</td></tr>
+<tr><td><code>systematic-debugging</code></td><td class="wrap">obra/superpowers</td><td class="wrap">Any bug, test failure, or unexpected behavior, before proposing a fix.</td></tr>
+<tr><td><code>test-driven-development</code></td><td class="wrap">obra/superpowers</td><td class="wrap">Implementing a feature or bugfix, before writing the implementation.</td></tr>
+<tr><td><code>verification-before-completion</code></td><td class="wrap">obra/superpowers</td><td class="wrap">Before claiming work is complete, fixed, or passing.</td></tr>
+<tr><td><code>ponytail</code></td><td class="wrap">DietrichGebert/ponytail</td><td class="wrap">Keeping an implementation to the simplest thing that works.</td></tr>
+<tr><td><code>ponytail-review</code></td><td class="wrap">DietrichGebert/ponytail</td><td class="wrap">Reviewing specifically for over-engineering: what to delete.</td></tr>
+<tr><td><code>planning-and-task-breakdown</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Splitting a spec into ordered, implementable tasks.</td></tr>
+<tr><td><code>incremental-implementation</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">A change that touches more than one file; deliver thin verifiable slices.</td></tr>
+<tr><td><code>context-engineering</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Starting a session, degraded output, switching tasks, configuring rules files.</td></tr>
+<tr><td><code>api-and-interface-design</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Designing APIs, module boundaries, or type contracts.</td></tr>
+<tr><td><code>security-and-hardening</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Handling user input, authentication, storage, or external integrations.</td></tr>
+</tbody>
+</table>
+<p>Skills are installed as symlinks. The pinned repositories are cloned once into a machine-local cache, and the addyosmani skills' relative links to shared references are satisfied by an extra <code>~/.agents/references</code> link.</p>
+
+<h2 id="selection">How skills are selected</h2>
+<p>Skills load on demand and are selected, not dumped. Per task the Captain picks at most two workflow or methodology skills and at most one reference skill, fewer by preference, and none when the task does not need one.</p>
+<ul>
+<li>Before choosing, the Captain lists <code>~/.agents/skills</code> and reads the relevant <code>SKILL.md</code> files directly. A recursive <code>**/SKILL.md</code> search is not enough, because symlinked skill directories can be skipped by glob traversal.</li>
+<li>Choosing no skill requires a task-specific reason, not a generic "none needed".</li>
+<li>A project-local skill always wins over a shared one on the same ground.</li>
+</ul>
+
+<h2 id="handoff">What a worker is told</h2>
+<p>"The harness discovers project instructions natively" is not enough: Pi and OMP differ in their search roots, override support, and skill precedence. So each delegated task carries an explicit, compact handoff, resolved against the worker's <em>own</em> isolated worktree:</p>
+<ol>
+<li>The selected project and subtree.</li>
+<li>The applicable instruction paths, relative to the worktree root, and which one wins at each scope.</li>
+<li>Each required project-local skill as a bare, worktree-relative path with a read-and-apply requirement.</li>
+<li>Each selected shared skill by name, with a read-and-apply requirement - never a pasted body.</li>
+<li>A pre-work check that <code>pwd -P</code> equals <code>git rev-parse --show-toplevel</code>, then reading every named path and reporting any that is missing or conflicting.</li>
+<li>A reminder to repeat steps 1-4 when the work moves into a new subtree.</li>
+</ol>
+<div class="callout warn"><span class="t">Guidance, not a gate</span>
+<p>This is a handoff contract. It does not prove read order, skill application, or completion, and no configured runner enforces it. Worker reports can describe discovery; they cannot independently prove it.</p></div>
+
+<h2 id="trace">The routing and skill trace</h2>
+<p>During the current debugging period the Captain prints a short block in chat before each delegation, and one after each worker finishes:</p>
+<pre class="out" data-label="shape"><code>Routing: &lt;CATEGORY&gt; [#n] | role &lt;role&gt; | &lt;harness&gt; | &lt;provider/model&gt; | &lt;effort&gt; | why: &lt;reason&gt;
+Skills: &lt;skill&gt; - &lt;reason&gt;; &lt;skill&gt; - &lt;reason&gt;
+
+Skill evidence:
+- &lt;skill&gt;: &lt;observation citing `verbatim excerpt`&gt;</code></pre>
+<p>It discloses decisions already made; it is not reasoning, and it is never written to a file or into the brief. <code>tests/routing-trace.sh check</code> compares a captured block with the real spawn and transcript, but a citation match is lexical only: it cannot prove the category was right or that a skill was applied.</p>
+
+<h2 id="manage">Add or change a shared skill</h2>
+<h3>A skill owned by this repository</h3>
+<p>Create <code>skills/&lt;name&gt;/SKILL.md</code> with <code>name</code> and <code>description</code> frontmatter. <code>install.sh</code> links every directory under <code>skills/</code> that contains a <code>SKILL.md</code>.</p>
+<h3>A skill from another repository</h3>
+<p>Add a tab-separated line to <code>skills/external.lock</code>:</p>
+<pre data-label="skills/external.lock"><code># &lt;our-id&gt;  &lt;repo&gt;  &lt;commit&gt;  &lt;path-in-repo&gt;  &lt;installed-skill-name&gt;</code></pre>
+<p>Always pin a full commit hash, never a branch: an unpinned global skill changes behavior on every project on the machine without a diff. To move a pin, change the hash, run <code>./install.sh</code>, and commit. For Ponytail, <code>ponytail-update</code> does this for you; see <a href="update.html#pins">Update and recovery</a>.</p>
+<p>Then confirm with <code>./install.sh --verify</code> and <code>fm doctor</code> (the <code>skills.global_installation</code> check reports how many expected skills are installed).</p>
+</article></main>
+<noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Start at <a href="index.html">index.html</a>.</p></noscript>
+</body>
+</html>
