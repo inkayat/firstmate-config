@@ -50,7 +50,7 @@ policy chooses worker harness, model, effort, and role by task semantics.
   pipeline gate (see `firstmate/primary-policy.md` "Independent review
   before merge")
 - Read-only `fm doctor` and `fm version` diagnostics
-- Fast-forward-only `fm update` and deterministic, idempotent installation
+- Fast-forward-only `fm update` (official FirstMate checkout, then this repository) and deterministic, idempotent installation
 
 ## Routing
 
@@ -190,7 +190,7 @@ Read-only drift check:
 | `fm --harness pi` | Start the Captain with the explicit Pi fallback |
 | `fm doctor` | Run read-only architecture, compatibility, routing, and installation diagnostics |
 | `fm version` | Print compact stack identity and version information |
-| `fm update` | Fast-forward the `firstmate-config` checkout, then reconcile and verify this machine via its own `install.sh`; refuse dirty or diverged state |
+| `fm update` | Fast-forward the official FirstMate checkout (`FIRSTMATE_ROOT`), then the `firstmate-config` checkout, then reconcile and verify this machine via its own `install.sh`; check both checkouts before changing either, refuse anything that is not a clean, plain fast-forward, and report a failure after the official stage as a partial update |
 | `fm board` / `fm board --lavish` | Open the persistent Kanban board (terminal-browser by default, Lavish with `--lavish`); render a deterministically refreshed, LLM-free data projection with the same static template, keep re-rendering it while the viewer is open, and let the page re-read it every few seconds so transitions appear without a manual refresh |
 | `ponytail-update` | Prepare and validate a local Ponytail pin update without committing or pushing |
 
@@ -222,18 +222,60 @@ host-specific paths, runtime records, and project data are not tracked here.
 
 ## Updating
 
-Update the tracked configuration and reconcile installed state:
+Update the official FirstMate checkout and the tracked configuration, then
+reconcile installed state:
 
 ```sh
 fm update
 ```
 
-`fm update` fast-forwards the checkout to its remote tip (refusing a dirty or
-diverged checkout, exactly as before) and then runs that checkout's own
-`./install.sh` followed by `./install.sh --verify`, so machine-local state
-never lags behind the tracked repository. A separate manual `./install.sh` is
-no longer required after a successful `fm update`; run it directly only when
+`fm update` runs in this order:
+
+1. Check both checkouts before changing either: local state first, then
+   origin's default branch for the official checkout and a fetch of both
+   remotes (only remote-tracking refs move; the official side fetches only its
+   default branch and never prunes). Each checkout must equal, or be a plain
+   fast-forward behind, its upstream.
+2. Fast-forward the official FirstMate checkout (`FIRSTMATE_ROOT`) with
+   `git merge --ff-only`.
+3. Fast-forward the `firstmate-config` checkout to its remote tip.
+4. Run that checkout's own `./install.sh`, then `./install.sh --verify`.
+
+It refuses in step 1, changing neither working tree, when:
+
+- `FIRSTMATE_ROOT` is missing, is not the root of a Git checkout, or has no
+  `AGENTS.md`
+- the official checkout's `origin` has a configured or effective
+  (`insteadOf`-rewritten) URL that is not exactly `firstmate_repo` from
+  `firstmate/stack-manifest.tsv`
+- the official checkout is detached, on a branch other than origin's default
+  branch, or that branch does not track `origin/<default>`; or origin's
+  default branch cannot be determined or fetched as a fast-forward
+- the official checkout has uncommitted or untracked changes, an unfinished
+  merge, rebase, cherry-pick, revert, or bisect, or local commits not on
+  `origin/<default>` (ahead or diverged)
+- the `firstmate-config` checkout is dirty, diverged, detached, has no
+  upstream, or cannot be fetched
+
+After step 2 has moved the official checkout, any later failure (fast-forward,
+`install.sh`, `install.sh --verify` failure or drift) exits nonzero with a
+`PARTIAL UPDATE` line naming the official commits that landed; there is no
+multi-repository rollback, so fix the reported error and re-run `fm update`.
+Only a run that ends with `fm update complete` updated everything.
+
+Nothing is forced, stashed, reset, merged, rebased, or pushed, and no branch
+or file is deleted (the only pruning is `fm update`'s existing `fetch --prune`
+of stale `firstmate-config` remote-tracking refs). Secondmates and projects
+are never updated. A separate manual `./install.sh`
+is not required after a successful `fm update`; run it directly only when
 diagnosing installed state without pulling.
+
+A running Captain keeps the instructions, skills, and launch-time wiring it
+loaded at startup and is not restarted or notified: to adopt an official
+update, restart it through the official procedure (end the Captain session,
+then run `fm` again). Once the official checkout moves past the validated
+baseline commit, `fm doctor` and `install.sh` report it as ahead of that
+baseline (`WARNING`, not drift) until `firstmate/stack-manifest.tsv` is moved.
 
 Prepare a Ponytail dependency update:
 
