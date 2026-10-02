@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configuration and files | firstmate-config guide</title>
+<meta name="description" content="Tracked configuration files, machine-local files, and environment variables.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/site.js"></script>
+</head>
+<body>
+<main><article>
+<h1>Configuration and files</h1>
+<p class="lede">Tracked configuration lives in this repository. Everything operational - state, credentials, sessions, the project registry - stays outside it.</p>
+
+<h2 id="tracked">Tracked files</h2>
+<table>
+<thead><tr><th>File</th><th>Purpose</th><th>Read by</th></tr></thead>
+<tbody>
+<tr><td><code>firstmate/crew-dispatch.json</code></td><td class="wrap">Routing rules per dispatch category. See <a href="dispatch.html">Dispatch routing</a>.</td><td class="wrap">FirstMate (through a symlink), <code>fm doctor</code></td></tr>
+<tr><td><code>firstmate/captain-startup-models.tsv</code></td><td class="wrap">Ordered Captain startup candidates.</td><td class="wrap"><code>fm</code>, <code>fm doctor</code></td></tr>
+<tr><td><code>firstmate/stack-manifest.tsv</code></td><td class="wrap">Validated FirstMate commit and Pi/OMP/Herdr versions.</td><td class="wrap"><code>install.sh</code>, <code>fm update</code>, <code>fm doctor</code>, <code>fm version</code></td></tr>
+<tr><td><code>firstmate/primary-policy.md</code></td><td class="wrap">The Captain's operating contract for delegation.</td><td class="wrap">The Captain, at session start</td></tr>
+<tr><td><code>firstmate/captain.md</code></td><td class="wrap">Template for the machine's Captain preferences.</td><td class="wrap"><code>install.sh</code> (seed only)</td></tr>
+<tr><td><code>roles/*/ROLE.md</code></td><td class="wrap">The three roles.</td><td class="wrap">Workers, by absolute path in the brief</td></tr>
+<tr><td><code>skills/*/SKILL.md</code></td><td class="wrap">Shared skills owned by this repository.</td><td class="wrap"><code>install.sh</code></td></tr>
+<tr><td><code>skills/external.lock</code></td><td class="wrap">Pinned external skills.</td><td class="wrap"><code>install.sh</code>, <code>ponytail-update</code></td></tr>
+</tbody>
+</table>
+<p>Parsing and version comparison for the stack manifest live in one place, <code>firstmate/fm-stack-manifest.sh</code>. Captain harness selection and availability live in <code>firstmate/fm-captain-lib.sh</code>. Extend those instead of adding a second parser or detector.</p>
+
+<h2 id="machine-local">Machine-local files</h2>
+<p>Nothing below is tracked. The installer creates what it owns; the rest belongs to FirstMate or to you.</p>
+<table>
+<thead><tr><th>Path</th><th>What it is</th></tr></thead>
+<tbody>
+<tr><td><code>~/.config/firstmate-config/env</code></td><td class="wrap">Resolved paths, written by <code>install.sh</code>. Never commit it.</td></tr>
+<tr><td><code>$FM_HOME/state/</code></td><td class="wrap">Runtime and task state. Includes <code>.fm-launch</code>, the record of how the Captain was started.</td></tr>
+<tr><td><code>$FM_HOME/data/</code></td><td class="wrap">Captain preferences (<code>captain.md</code>), the project registry (<code>projects.md</code>), and board data under <code>board/</code>.</td></tr>
+<tr><td><code>$FM_HOME/config/backend</code></td><td class="wrap">The runtime backend; the installer sets it to <code>herdr</code>.</td></tr>
+<tr><td><code>$FM_HOME/config/crew-dispatch.json</code></td><td class="wrap">Symlink to the tracked routing file.</td></tr>
+<tr><td><code>$FM_HOME/projects/</code></td><td class="wrap">The <code>projects/&lt;name&gt;</code> shorthand location for project checkouts, used by FirstMate's spawn script.</td></tr>
+<tr><td><code>~/.agents/skills/</code></td><td class="wrap">Symlinks to shared skills.</td></tr>
+<tr><td><code>~/.agents/references</code></td><td class="wrap">Symlink to the addyosmani references that its skills link to.</td></tr>
+<tr><td><code>~/.local/share/firstmate-config/skills-src/</code></td><td class="wrap">Cache with one clone per pinned skill repository.</td></tr>
+<tr><td><code>~/.local/bin/fm</code>, <code>~/.local/bin/ponytail-update</code></td><td class="wrap">Launcher symlinks.</td></tr>
+<tr><td><code>~/.pi/agent/git/github.com/DietrichGebert/ponytail</code></td><td class="wrap">Pi's own pinned Ponytail checkout, kept separate from the shared skill cache.</td></tr>
+</tbody>
+</table>
+<p><code>$FM_HOME</code> must not be a secondmate home. The installer and the launcher both refuse a directory carrying the <code>.fm-secondmate-home</code> marker.</p>
+
+<h2 id="variables">Environment variables</h2>
+<table>
+<thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>FIRSTMATE_ROOT</code></td><td class="wrap"><code>~/Developer/tools/firstmate</code></td><td class="wrap">The official FirstMate checkout.</td></tr>
+<tr><td><code>FM_HOME</code></td><td class="wrap"><code>~/.firstmate</code></td><td class="wrap">The operational home.</td></tr>
+<tr><td><code>FM_BACKEND</code></td><td class="wrap"><code>herdr</code></td><td class="wrap">Runtime backend. The installer always records <code>herdr</code>.</td></tr>
+<tr><td><code>FM_CONFIG_ROOT</code></td><td class="wrap">the checkout containing the running <code>fm</code></td><td class="wrap">Exported by the launcher so the Captain can find the policy and roles.</td></tr>
+<tr><td><code>FM_CONFIG_ENV</code></td><td class="wrap"><code>~/.config/firstmate-config/env</code></td><td class="wrap">Path of the env file to source. Useful for a one-off alternate resolution.</td></tr>
+<tr><td><code>FM_OMP_BIN</code>, <code>FM_PI_BIN</code></td><td class="wrap"><code>omp</code>, <code>pi</code></td><td class="wrap">Harness executables.</td></tr>
+<tr><td><code>FM_PI_EXTENSIONS</code></td><td class="wrap"><code>auto</code></td><td class="wrap">Pi extension mode: <code>auto</code>, <code>explicit</code>, or <code>discover</code>. Ignored for OMP.</td></tr>
+<tr><td><code>FM_SKILLS_ROOT</code></td><td class="wrap"><code>~/.agents/skills</code></td><td class="wrap">Where <code>install.sh</code> links skills and where <code>fm doctor</code> looks.</td></tr>
+<tr><td><code>FM_SKILL_CACHE</code></td><td class="wrap"><code>~/.local/share/firstmate-config/skills-src</code></td><td class="wrap">Where pinned skill repositories are cloned.</td></tr>
+<tr><td><code>FM_BIN_DIR</code></td><td class="wrap"><code>~/.local/bin</code></td><td class="wrap">Where <code>install.sh</code> links launchers.</td></tr>
+<tr><td><code>FIRSTMATE_ORIGIN</code></td><td class="wrap"><code>firstmate_repo</code> from the manifest</td><td class="wrap">Clone source, used by <code>install.sh</code> only when the checkout is missing. <code>fm update</code> still requires <code>origin</code> to equal the manifest value.</td></tr>
+</tbody>
+</table>
+<div class="callout warn"><span class="t">The env file wins</span>
+<p>The launcher sources the env file first, and the file assigns <code>FIRSTMATE_ROOT</code>, <code>FM_HOME</code>, and <code>FM_BACKEND</code> unconditionally. A value you exported in your shell is therefore overridden by the file. To use different paths for one run, point <code>FM_CONFIG_ENV</code> at another file.</p></div>
+
+<h3>The env file</h3>
+<pre data-label="~/.config/firstmate-config/env"><code># Written by firstmate-config/install.sh. Machine-local: never commit this.
+FIRSTMATE_ROOT="/path/to/firstmate"
+FM_CONFIG_ROOT="/path/to/firstmate-config"
+FM_HOME="/path/to/.firstmate"
+FM_BACKEND="herdr"
+export FIRSTMATE_ROOT FM_CONFIG_ROOT FM_HOME FM_BACKEND</code></pre>
+<p>If its content differs from what the installer would write, <code>install.sh --verify</code> reports <code>DRIFT</code> and <code>install.sh</code> rewrites it.</p>
+
+<h2 id="stack-manifest">stack-manifest.tsv</h2>
+<p>Tab-separated <code>key</code> and <code>value</code>. It is the single source for stack compatibility, and nothing else should hardcode these values.</p>
+<table>
+<thead><tr><th>Key</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>schema_version</code></td><td class="wrap">Manifest format version.</td></tr>
+<tr><td><code>firstmate_repo</code></td><td class="wrap">The only <code>origin</code> URL <code>fm update</code> accepts for the official checkout.</td></tr>
+<tr><td><code>firstmate_validated_commit</code></td><td class="wrap">Full hash of the FirstMate commit this configuration was validated against.</td></tr>
+<tr><td><code>pi_min_version</code>, <code>pi_tested_version</code></td><td class="wrap">Pi hard minimum and tested version.</td></tr>
+<tr><td><code>omp_min_version</code>, <code>omp_tested_version</code></td><td class="wrap">OMP hard minimum and tested version.</td></tr>
+<tr><td><code>herdr_min_version</code>, <code>herdr_tested_version</code></td><td class="wrap">Herdr hard minimum and tested version.</td></tr>
+</tbody>
+</table>
+<p>Below the minimum is a <code>FAIL</code>; above the tested version is a <code>WARNING</code>. Auth, credentials, machine paths, the project registry, runtime task state, and Captain model routing are deliberately <em>not</em> in this file. To move a pin, verify the new values against a real installation, edit the file, and commit.</p>
+
+<h2 id="startup-models">captain-startup-models.tsv</h2>
+<p>Tab-separated <code>model</code>, <code>effort</code>, and an optional <code>harness</code> (<code>omp</code>, <code>pi</code>, or blank for both). Blank lines and lines starting with <code>#</code> are ignored. Order is preference. The behavior is described on <a href="architecture.html#model-chain">Architecture and startup</a>.</p>
+
+<h2 id="external-lock">skills/external.lock</h2>
+<p>Tab-separated <code>our-id</code>, <code>repo</code>, <code>commit</code>, <code>path-in-repo</code>, and <code>installed-skill-name</code>. Always a full commit, never a branch. See <a href="roles-skills.html#manage">Roles and skills</a>.</p>
+</article></main>
+<noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Start at <a href="index.html">index.html</a>.</p></noscript>
+</body>
+</html>

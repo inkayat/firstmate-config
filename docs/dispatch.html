@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dispatch routing | firstmate-config guide</title>
+<meta name="description" content="The eleven dispatch categories, how a rule is matched, and how to read crew-dispatch.json.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/site.js"></script>
+</head>
+<body>
+<main><article>
+<h1>Dispatch routing</h1>
+<p class="lede">Every delegated task maps to one dispatch category by what the work <em>is</em>, not by how big it looks. The category selects the worker's harness, model, and effort. <code>firstmate/crew-dispatch.json</code> is the source of truth.</p>
+
+<h2 id="decisions">Five separate decisions</h2>
+<p>The Captain keeps these apart so that one never drags the others along. A hard task does not automatically mean the strongest model, and a strong model does not automatically mean maximum effort.</p>
+<table>
+<thead><tr><th>Decision</th><th>Chosen by</th></tr></thead>
+<tbody>
+<tr><td>Category</td><td class="wrap">Semantic fit, read from each rule's <code>when</code> text.</td></tr>
+<tr><td>Harness, model, effort</td><td class="wrap">The matched rule's <code>use</code> candidate.</td></tr>
+<tr><td>Role</td><td class="wrap"><code>senior-fullstack</code> by default; <code>architecture</code> and <code>tenth-man</code> only for their matching categories.</td></tr>
+<tr><td>Skills</td><td class="wrap">Selected per task; see <a href="roles-skills.html#selection">Roles and skills</a>.</td></tr>
+<tr><td>Scout or ship</td><td class="wrap">Judged per task. EXPLORE, RESEARCH, REVIEW, ARCHITECTURE, and TENTH-MAN are usually read-only; the rest usually mutate. Neither mapping is fixed.</td></tr>
+</tbody>
+</table>
+<p>An explicit choice from you always wins over the table. The trace line then says <code>captain override</code>.</p>
+
+<h2 id="categories">Categories</h2>
+<p>There are 27 rules in ten categories, plus the untagged <code>default</code> for DEFAULT. Routes below are shown as <em>harness · model effort</em>.</p>
+<table>
+<thead><tr><th>Category</th><th>Rules</th><th>Routes</th><th>For</th></tr></thead>
+<tbody>
+<tr><td><code>QUICK</code></td><td>1</td><td class="wrap">OMP · Haiku 4.5 low, or OMP · GPT-6 Luna low</td><td class="wrap">Tiny edits in a known place, mechanical cleanup, quick factual questions.</td></tr>
+<tr><td><code>EXPLORE</code></td><td>2</td><td class="wrap">Simple: OMP · Haiku 4.5 low or Luna low. Hard: OMP · Sonnet 5.5 medium</td><td class="wrap">Read-only reconnaissance inside the repository.</td></tr>
+<tr><td><code>RESEARCH</code></td><td>3</td><td class="wrap">Ordinary: OMP · Sonnet 5.5 medium. Substantial or decision-heavy: OMP · Opus 5.5 high. Pi-tooling advantage: Pi · GPT-6.1 Sol medium</td><td class="wrap">External docs, APIs, standards, upstream source.</td></tr>
+<tr><td><code>REVIEW</code></td><td>4</td><td class="wrap">Bounded: OMP · Sonnet 5.5 high. Substantive: OMP · Opus 5.5 high. Critical: OMP · Opus 5.5 xhigh. Optional cross-family second reviewer: Pi · GPT-6.1 Sol xhigh</td><td class="wrap">Correctness and maintainability review.</td></tr>
+<tr><td><code>ARCHITECTURE</code></td><td>3</td><td class="wrap">OMP · Opus 5.5 high; very difficult: xhigh; Pi · GPT-6 Astra xhigh only when ultra-exceptional</td><td class="wrap">Boundaries, data models, migrations, structural decisions. Role: <code>architecture</code>.</td></tr>
+<tr><td><code>TENTH-MAN</code></td><td>3</td><td class="wrap">Claude-authored work: Pi · GPT-6.1 Sol xhigh (Astra xhigh only if critical and unresolved after Sol). Astra- or OpenAI-authored work: OMP · Opus 5.5 xhigh</td><td class="wrap">Independent adversarial challenge. Role: <code>tenth-man</code>.</td></tr>
+<tr><td><code>IMPLEMENT</code></td><td>2</td><td class="wrap">Small or bounded: OMP · Sonnet 5.5 high. Substantive: OMP · Opus 5.5 high</td><td class="wrap">Features, fixes, refactors, tests.</td></tr>
+<tr><td><code>IMPLEMENT-LARGE</code></td><td>2</td><td class="wrap">OMP · Opus 5.5 high; reasoning-heavy: xhigh</td><td class="wrap">Broad, mostly settled implementation.</td></tr>
+<tr><td><code>DEEP</code></td><td>5</td><td class="wrap">Scout or ship: OMP · Opus 5.5 xhigh. Explicit escalation: GPT-6.1 Sol xhigh (Pi to diagnose, OMP to implement). Last escalation: Pi · GPT-6 Astra xhigh</td><td class="wrap">Hard root-cause work and reasoning-heavy implementation.</td></tr>
+<tr><td><code>UI/BROWSER</code></td><td>2</td><td class="wrap">Normal: OMP · Sonnet 5.5 high. Complex or cross-layer: OMP · Opus 5.5 high</td><td class="wrap">Browser-visible behavior and end-to-end flows.</td></tr>
+<tr><td><code>DEFAULT</code></td><td>default</td><td class="wrap">OMP · Opus 5.5 high (debugging period)</td><td class="wrap">Work that fits no more specific category.</td></tr>
+</tbody>
+</table>
+
+<h2 id="philosophy">Routing philosophy</h2>
+<ul>
+<li><strong>Substantive work goes to Opus 5.5.</strong> That means meaningful new behavior, a nontrivial refactor, multi-component work, or real cross-component regression risk. When unsure between Sonnet 5.5 and Opus 5.5 for substantive work, choose Opus 5.5.</li>
+<li><strong>Bounded work may stay on Sonnet 5.5</strong>, and trivial work on Haiku 4.5 or GPT-6 Luna.</li>
+<li><strong>GPT-6.1 Sol is the everyday cross-family route</strong>: RESEARCH's Pi-tooling rule, REVIEW's second reviewer, TENTH-MAN's default for Claude-authored work, and DEEP's escalations.</li>
+<li><strong>GPT-6 Astra is confined to Pi and to each category's narrowest escalation</strong>: ARCHITECTURE's ultra-exceptional rule, DEEP's last escalation, and TENTH-MAN's critical case.</li>
+<li><strong>TENTH-MAN enforces model-family diversity.</strong> It never shares a family with the work it challenges.</li>
+<li><strong>Effort is not negotiable downward.</strong> Where the table says xhigh and the lane cannot run xhigh, the task is reported blocked and waits for a decision; it does not run at reduced effort.</li>
+<li>Provider availability and capacity break ties <em>inside</em> a rule's own candidates. They never override the category or the rule.</li>
+</ul>
+<p>Sonnet 5, Opus 5, Fable 5.1, GPT-5.5, GPT-5.6 Luna and Sol, and GPT-6 Sol are retired from worker routing. The local Qwen/Ollama lane is intentionally absent; <code>fm doctor</code> reports it as <span class="badge">DEFERRED</span>.</p>
+
+<h2 id="reading-a-rule">Reading a rule</h2>
+<p><code>crew-dispatch.json</code> has two top-level keys, <code>rules</code> (a list) and <code>default</code>. Each rule has exactly <code>category</code>, <code>when</code>, <code>use</code>, and <code>why</code>:</p>
+<pre data-label="firstmate/crew-dispatch.json (shape)"><code>{
+  "rules": [
+    {
+      "category": "IMPLEMENT",
+      "when": "natural-language test for when this rule applies",
+      "use": [
+        { "harness": "omp", "model": "anthropic/claude-sonnet-5-5", "effort": "high" }
+      ],
+      "why": "why this route fits"
+    }
+  ],
+  "default": [
+    { "harness": "omp", "model": "anthropic/claude-opus-5-5", "effort": "high" }
+  ]
+}</code></pre>
+<ul>
+<li><code>default</code> is a bare candidate list used when no rule matches.</li>
+<li>Several rules can share one <code>category</code>. The extra ones are <em>sub-lanes</em> with a narrower trigger. The Captain shows the matched rule as <code>#n</code>, its 1-based position within its category.</li>
+<li>A <code>use</code> array is resolved by FirstMate's quota procedure, so it contains only genuine peers. Only QUICK and simple EXPLORE pair two models (Haiku and Luna). Every other rule has one candidate, so nothing can be picked by quota ahead of an Opus 5.5 primary.</li>
+<li>Each primary rule's <code>when</code> text names the neighboring category it could be confused with and states the test that separates them (for example QUICK against IMPLEMENT, or REVIEW against TENTH-MAN). Read those before changing a category.</li>
+</ul>
+
+<h2 id="change-routing">Change the routing</h2>
+<p><code>install.sh</code> links this file into <code>$FM_HOME/config/crew-dispatch.json</code>, which is the path FirstMate reads, so editing the tracked file edits the live routing source. Validate afterwards:</p>
+<pre data-label="shell"><code>fm doctor | grep -E 'routing\.'</code></pre>
+<p><code>routing.crew_dispatch_valid</code> checks the file's structure, and a <code>routing.model.&lt;harness&gt;.&lt;model&gt;</code> line per route reports whether that model and effort resolve under that harness.</p>
+<p>Sub-lanes are added as separate same-category rules, never as new categories. <code>tests/routing-taxonomy.sh</code> pins the exact candidate tuples, so a route change is a deliberate edit to the JSON and that test, with <code>firstmate/primary-policy.md</code> kept aligned.</p>
+</article></main>
+<noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Start at <a href="index.html">index.html</a>.</p></noscript>
+</body>
+</html>

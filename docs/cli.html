@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI reference | firstmate-config guide</title>
+<meta name="description" content="Every command, option, output, and exit status of fm, fm doctor, fm version, fm update, fm board, ponytail-update, and install.sh.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/site.js"></script>
+</head>
+<body>
+<main><article>
+<h1>CLI reference</h1>
+<p class="lede">Everything here exists in the repository's scripts. <code>fm</code> is the single entry point; it dispatches <code>doctor</code>, <code>version</code>, <code>update</code>, and <code>board</code> to their own scripts.</p>
+
+<table>
+<thead><tr><th>Command</th><th>Purpose</th><th>Changes anything?</th></tr></thead>
+<tbody>
+<tr><td><a href="#fm"><code>fm</code></a></td><td class="wrap">Start the Captain.</td><td class="wrap">Writes <code>$FM_HOME/state/.fm-launch</code>; creates missing <code>FM_HOME</code> subdirectories.</td></tr>
+<tr><td><a href="#doctor"><code>fm doctor</code></a></td><td class="wrap">Read-only architecture diagnostics.</td><td>No</td></tr>
+<tr><td><a href="#version"><code>fm version</code></a></td><td class="wrap">Compact stack identity.</td><td>No</td></tr>
+<tr><td><a href="#update"><code>fm update</code></a></td><td class="wrap">Fast-forward both checkouts, then reconcile.</td><td class="wrap">Yes: fast-forwards and runs <code>install.sh</code>.</td></tr>
+<tr><td><a href="#board"><code>fm board</code></a></td><td class="wrap">Open the Kanban board.</td><td class="wrap">Writes board data under <code>$FM_HOME/data/board/</code>.</td></tr>
+<tr><td><a href="#ponytail-update"><code>ponytail-update</code></a></td><td class="wrap">Prepare a Ponytail pin update.</td><td class="wrap">Edits <code>skills/external.lock</code>; never commits.</td></tr>
+<tr><td><a href="#install"><code>./install.sh</code></a></td><td class="wrap">Reconcile this machine.</td><td class="wrap">Yes, unless <code>--verify</code>.</td></tr>
+</tbody>
+</table>
+
+<h2 id="fm">fm</h2>
+<pre data-label="usage"><code>fm [--harness omp|pi]
+fm [--harness omp|pi] --check
+fm [--harness omp|pi] --print-command
+fm --help</code></pre>
+<p>Starts the Captain on OMP by default. Before the harness starts it runs a preflight; it stops with an <code>fm:</code> error if the FirstMate checkout has no <code>AGENTS.md</code>, a primary extension or the startup model file is missing, the harness executable is not on <code>PATH</code>, the <code>herdr</code> CLI is missing while the backend is Herdr, or <code>FM_HOME</code> is a secondmate home.</p>
+<table>
+<thead><tr><th>Option</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>--harness omp|pi</code></td><td class="wrap">Select the Captain harness. Must come first. Also valid before <code>doctor</code> and <code>version</code>.</td></tr>
+<tr><td><code>--check</code></td><td class="wrap">Run the preflight and model resolution, print the resolution as <code>KEY=value</code> lines, end with <code>PREFLIGHT=ok</code>, and exit without starting anything.</td></tr>
+<tr><td><code>--print-command</code></td><td class="wrap">Same as <code>--check</code>, plus a <code>COMMAND=</code> line with the exact harness command.</td></tr>
+<tr><td><code>--help</code>, <code>-h</code></td><td class="wrap">Print the launcher's header documentation.</td></tr>
+</tbody>
+</table>
+<p>Any other argument is rejected: <code>unknown argument '...'; see fm --help</code>. A normal launch prints the harness, the preferred and selected model, and availability, then <code>exec</code>s the harness.</p>
+
+<h2 id="doctor">fm doctor</h2>
+<pre data-label="usage"><code>fm doctor
+fm doctor --json
+fm --harness pi doctor</code></pre>
+<p>A read-only report across the whole stack. It never installs, repairs, or restarts anything and never makes a paid inference call. Output is grouped into sections: <code>SYSTEM</code>, <code>LAUNCHER/PATH</code>, <code>CAPTAIN</code>, <code>RUNTIME</code>, <code>HARNESSES</code>, <code>ROUTING</code>, <code>ROLES</code>, <code>SKILLS</code>, <code>PROJECTS</code>, and <code>OTHER</code>. Each line is a status, a check id, and a summary:</p>
+<pre class="out" data-label="output, trimmed"><code>CAPTAIN
+  PASS          captain.harness                  selected Captain harness: omp
+  PASS          captain.selection                selected preferred candidate openai-codex/gpt-6.1-sol (medium)
+
+RUNTIME
+  PASS          runtime.herdr_server             herdr server running (version X, client X)
+  WARNING       runtime.herdr_version            herdr server X is newer than the tested baseline Y; unvalidated
+
+DOCTOR PASS exit=0</code></pre>
+<table>
+<thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><span class="badge pass">PASS</span></td><td class="wrap">Healthy.</td></tr>
+<tr><td><span class="badge warning">WARNING</span></td><td class="wrap">Worth reading; does not break the architecture. Examples: a tool newer than the tested version, or an unavailable startup candidate while another one is selected.</td></tr>
+<tr><td><span class="badge fail">FAIL</span></td><td class="wrap">A failed check. Only some failures are mandatory and change the exit code.</td></tr>
+<tr><td><span class="badge">UNKNOWN</span></td><td class="wrap">The probe ran but could not decide. Doctor does not guess.</td></tr>
+<tr><td><span class="badge">DEFERRED</span></td><td class="wrap">Intentionally absent for now (the Qwen/Ollama lane).</td></tr>
+<tr><td><span class="badge">NOT_APPLICABLE</span></td><td class="wrap">Nothing to check, for example no confident current project.</td></tr>
+</tbody>
+</table>
+<h3>Exit status</h3>
+<p><code>0</code> when the mandatory architecture is healthy, even with <code>WARNING</code>, <code>UNKNOWN</code>, or <code>DEFERRED</code> present. <code>1</code> on a genuine mandatory break:</p>
+<ul>
+<li>the official FirstMate checkout is missing or broken, or at a known-incompatible commit (behind the validated baseline, or diverged);</li>
+<li>the stack manifest, <code>captain-startup-models.tsv</code>, or <code>crew-dispatch.json</code> is missing or invalid;</li>
+<li>there is no usable Captain: missing executable or primary extensions, an empty chain, or every candidate unavailable;</li>
+<li>the Herdr CLI is missing, its server is unreachable, incompatible, or not running;</li>
+<li>Pi, OMP, or Herdr is below the manifest's hard minimum;</li>
+<li>an expected <code>fm</code> is shadowed on <code>PATH</code> by a different executable earlier in <code>PATH</code>.</li>
+</ul>
+<h3>JSON</h3>
+<p><code>--json</code> prints one object. Top-level keys: <code>schema_version</code>, <code>status</code> (the worst check status), <code>exit_code</code>, <code>timestamp</code>, <code>system</code>, <code>firstmate</code>, <code>launcher</code>, <code>captain</code>, <code>runtime</code>, <code>harnesses</code>, <code>routing</code>, <code>roles</code>, <code>skills</code>, <code>projects</code>, and <code>checks</code>. Each entry of <code>checks</code> has an <code>id</code>, a <code>status</code>, and a <code>summary</code>, plus a <code>detail</code> when there is one.</p>
+<pre data-label="shell"><code>fm doctor --json | jq -r '.checks[] | select(.status != "PASS") | "\(.status)\t\(.id)"'</code></pre>
+
+<h2 id="version">fm version</h2>
+<pre data-label="usage"><code>fm version
+fm version --json
+fm --harness pi version</code></pre>
+<p>A fast identity summary - not a health check, and it makes no availability probes. Use <code>fm doctor</code> for a verdict.</p>
+<pre class="out" data-label="output"><code>firstmate-config: v0.3.1 (5c9252f, clean) ~/src/firstmate-config
+official FirstMate: ~/Developer/tools/firstmate (a774c448, clean)
+Captain harness: omp
+Pi: 0.99.1
+OMP: omp/18.4.9
+Herdr: herdr 0.9.0
+Validated FirstMate baseline: &lt;full commit hash&gt; (stack manifest schema 1)
+FM_HOME: ~/.firstmate
+Platform: Darwin arm64</code></pre>
+<p>The versions shown are examples. <code>--json</code> returns the same facts as one object with <code>firstmate_config</code>, <code>firstmate</code>, <code>components</code>, <code>captain_harness</code>, <code>stack_manifest</code>, <code>fm_home</code>, <code>platform</code>, and <code>architecture</code>. Version strings read <code>unknown</code> when a tool is missing.</p>
+
+<h2 id="update">fm update</h2>
+<pre data-label="usage"><code>fm update</code></pre>
+<p>Takes no options other than <code>--help</code>. Fast-forwards the official FirstMate checkout, then this repository, then runs <code>./install.sh</code> and <code>./install.sh --verify</code>. Exits nonzero on a refusal or failure. The full behavior, the refusal table, and recovery are on <a href="update.html">Update and recovery</a>.</p>
+
+<h2 id="board">fm board</h2>
+<pre data-label="usage"><code>fm board
+fm board --lavish</code></pre>
+<p>Opens the persistent Kanban board; it is shorthand for <code>fm-board open</code>. See <a href="board.html">Task board</a>.</p>
+
+<h2 id="ponytail-update">ponytail-update</h2>
+<pre data-label="usage"><code>ponytail-update</code></pre>
+<p>Takes no arguments. Requires the firstmate-config checkout to be on a clean <code>main</code> that can fast-forward with <code>origin/main</code>. It pulls fast-forward only, checks the latest stable Ponytail release, and, if one is newer, updates <code>skills/external.lock</code>, prints the diff, runs <code>tests/update-ponytail.sh</code> and <code>tests/pi-ponytail-package.sh</code>, applies the pin with <code>./install.sh</code>, verifies, and checks again. It never commits, merges, pushes, creates branches, or tags. If already current, it reports <code>UPDATE_APPLIED: false</code> and stops.</p>
+
+<h2 id="install">install.sh</h2>
+<pre data-label="usage"><code>./install.sh            # reconcile
+./install.sh --verify   # report drift, change nothing</code></pre>
+<p>Exits nonzero if any step reports <code>FAIL</code>. The final line is <code>install: N change(s), M failure(s)</code>, or with <code>--verify</code>, <code>verify: N drift item(s), M failure(s)</code>. See <a href="install.html">Installation and first run</a> for the steps.</p>
+</article></main>
+<noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Start at <a href="index.html">index.html</a>.</p></noscript>
+</body>
+</html>

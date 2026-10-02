@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Update and recovery | firstmate-config guide</title>
+<meta name="description" content="What fm update does, when it refuses, and how to recover from a refusal or a partial update.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/site.js"></script>
+</head>
+<body>
+<main><article>
+<h1>Update and recovery</h1>
+<p class="lede"><code>fm update</code> moves the official FirstMate checkout and this repository to their remote tips, then reconciles the machine. It only ever fast-forwards, and it refuses anything else without changing a file.</p>
+
+<h2 id="run">Run an update</h2>
+<pre data-label="shell"><code>fm update</code></pre>
+<p>It takes no options. In order:</p>
+<ol class="flow">
+<li><strong>Check both checkouts first.</strong> Local state is inspected before any network call. Then the official default branch is resolved and both remotes are fetched - only remote-tracking refs move. Each checkout must equal, or be a plain fast-forward behind, its upstream.</li>
+<li><strong>Fast-forward the official FirstMate checkout</strong> (<code>FIRSTMATE_ROOT</code>) with <code>git merge --ff-only</code>.</li>
+<li><strong>Fast-forward the firstmate-config checkout</strong> to its upstream.</li>
+<li><strong>Reconcile.</strong> Run that checkout's own <code>./install.sh</code>, then <code>./install.sh --verify</code>. The run only counts as complete if verify reports <code>0 drift item(s), 0 failure(s)</code>.</li>
+</ol>
+<p>On success the last lines name what happened:</p>
+<pre class="out" data-label="output, trimmed"><code>Checking default branch of official FirstMate (https://github.com/kunchenguid/firstmate.git)...
+Fetching official FirstMate origin...
+Fetching firstmate-config origin...
+Updated official FirstMate main: a1b2c3d -> e4f5a6b (3 commits from origin/main)
+...
+Reconciling machine state (updated to 9c8d7e6)...
+...
+fm update complete: official FirstMate a1b2c3d -> e4f5a6b; firstmate-config 5c9252f -> 9c8d7e6; machine reconciled and verified.
+A running Captain keeps the instructions it loaded at startup and was not restarted or notified.
+To adopt the official update, restart it through the official procedure: end the Captain session, then run fm again.
+Secondmates and projects were not updated.</code></pre>
+<p>When both checkouts are already current you get <code>Official FirstMate already up to date</code> and <code>Already up to date</code> lines, and the reconcile and verify steps still run. A separate manual <code>./install.sh</code> is not needed after a successful update.</p>
+
+<div class="callout note"><span class="t">The Captain does not hot-reload</span>
+<p>A running Captain keeps the instructions, skills, and launch-time wiring it loaded. To adopt an update, end the Captain session and run <code>fm</code> again.</p></div>
+
+<h2 id="never-does">What it never does</h2>
+<ul>
+<li>Force, stash, reset, merge, rebase, discard, or push anything.</li>
+<li>Delete a branch or file. The only pruning is <code>git fetch --prune</code> of stale remote-tracking refs in the firstmate-config checkout.</li>
+<li>Update secondmates or projects.</li>
+<li>Restart or notify a running Captain.</li>
+</ul>
+
+<h2 id="refusals">Refusals</h2>
+<p>These stop the run in step 1. Neither working tree has changed when you see them. Refusals about the official checkout end with <code>nothing was changed</code>.</p>
+<table>
+<thead><tr><th>Condition</th><th>What to do</th></tr></thead>
+<tbody>
+<tr><td class="wrap"><code>FIRSTMATE_ROOT</code> is missing, is not the root of a Git checkout, or has no <code>AGENTS.md</code></td><td class="wrap">Point <code>FIRSTMATE_ROOT</code> at the real checkout, or run <code>./install.sh</code> to clone it.</td></tr>
+<tr><td class="wrap">Official <code>origin</code> is not exactly the <code>firstmate_repo</code> value in <code>stack-manifest.tsv</code>, including an <code>insteadOf</code> rewrite</td><td class="wrap">Fix the remote or the rewrite. The URL is checked on purpose so an update cannot pull from an unexpected place.</td></tr>
+<tr><td class="wrap">Official checkout is detached, on a branch other than origin's default, or the branch does not track <code>origin/&lt;default&gt;</code></td><td class="wrap">Check out the default branch, or set tracking with <code>git -C &lt;FIRSTMATE_ROOT&gt; branch -u origin/&lt;default&gt;</code>.</td></tr>
+<tr><td class="wrap">Official checkout has uncommitted or untracked changes, or an unfinished merge, rebase, cherry-pick, revert, or bisect</td><td class="wrap">Resolve or remove them yourself, then re-run.</td></tr>
+<tr><td class="wrap">Official checkout has local commits that are not on <code>origin/&lt;default&gt;</code>, or has diverged</td><td class="wrap">That is unlanded work. Land it or move it to a branch, then re-run.</td></tr>
+<tr><td class="wrap">firstmate-config checkout is dirty</td><td class="wrap">Commit or stash it yourself, then re-run. The command lists the dirty paths first.</td></tr>
+<tr><td class="wrap">firstmate-config checkout is detached</td><td class="wrap">Check out a branch (normally <code>main</code>).</td></tr>
+<tr><td class="wrap">firstmate-config branch has diverged from its upstream</td><td class="wrap">Resolve the divergence manually.</td></tr>
+<tr><td class="wrap">firstmate-config branch has no upstream, or the fetch fails</td><td class="wrap">Set one with <code>git branch -u origin/&lt;branch&gt;</code>, or fix connectivity.</td></tr>
+</tbody>
+</table>
+
+<h2 id="partial">Partial updates</h2>
+<p>Step 2 can succeed and a later step can still fail. There is no multi-repository rollback, so that state is reported honestly instead of as success:</p>
+<pre class="out" data-label="stderr, trimmed"><code>fm-update: install.sh failed after update; repository is at 9c8d7e6 but machine state was not reconciled
+fm-update: PARTIAL UPDATE: official FirstMate was fast-forwarded (a1b2c3d -> e4f5a6b), but the firstmate-config update did not complete; fix the error above and re-run fm update</code></pre>
+<p>The exit status is nonzero. Recovery is the same each time:</p>
+<ol>
+<li>Read the error above the <code>PARTIAL UPDATE</code> line. It comes from the failing step: the fast-forward, <code>install.sh</code>, or <code>install.sh --verify</code>.</li>
+<li>Fix that cause - a missing tool, a link location that is not ours, a dirty checkout.</li>
+<li>Re-run <code>fm update</code>. Already-applied fast-forwards are reported as up to date and the reconcile runs again.</li>
+<li>Only a run that ends with <code>fm update complete</code> updated everything.</li>
+</ol>
+<p>To inspect installed state without pulling, run <code>./install.sh --verify</code> (read-only) or <code>fm doctor</code> from the primary checkout.</p>
+
+<h2 id="baseline">Ahead of the validated baseline</h2>
+<p>This configuration records the official FirstMate commit it was validated against in <code>firstmate/stack-manifest.tsv</code>. Once the official checkout moves past it,
+<code>fm doctor</code> and <code>install.sh</code> report it as ahead (<span class="badge warning">WARNING</span>, not drift) until the manifest is moved by a reviewed change.
+A checkout <em>behind</em> the baseline, or diverged from it, is a <span class="badge fail">FAIL</span> in <code>fm doctor</code>.</p>
+
+<h2 id="doctor-after">Diagnose after an update</h2>
+<pre data-label="shell"><code>fm version
+fm doctor</code></pre>
+<table>
+<thead><tr><th>Finding</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td class="wrap"><code>launcher.resolution</code> FAIL</td><td class="wrap">Another <code>fm</code> is earlier on <code>PATH</code> than the one this configuration expects. Fix <code>PATH</code> order or remove the other one.</td></tr>
+<tr><td class="wrap"><code>captain.selection</code> FAIL</td><td class="wrap">No configured startup model is available. Authenticate a provider; see <a href="architecture.html#model-chain">the startup chain</a>.</td></tr>
+<tr><td class="wrap"><code>runtime.herdr_server</code> FAIL</td><td class="wrap">The Herdr server is unreachable, incompatible, or reports not running.</td></tr>
+<tr><td class="wrap"><code>firstmate.commit_compat</code> WARNING</td><td class="wrap">Official FirstMate is ahead of the validated baseline - expected after an official update.</td></tr>
+<tr><td class="wrap"><code>runtime.herdr_version</code>, <code>harnesses.*_version</code> WARNING</td><td class="wrap">A tool is newer than the version this configuration was tested with. Unvalidated, not broken.</td></tr>
+</tbody>
+</table>
+
+<h2 id="pins">Updating a pinned dependency</h2>
+<p>Shared skills from other repositories are pinned by commit in <code>skills/external.lock</code>; <code>fm update</code> never moves a pin. For the Ponytail skills there is a dedicated helper:</p>
+<pre data-label="shell"><code>ponytail-update
+git diff -- skills/external.lock</code></pre>
+<p><code>ponytail-update</code> requires a clean <code>main</code> that can fast-forward with <code>origin/main</code>. It checks the latest stable Ponytail release; if one is newer it rewrites the pin, runs the Ponytail test suites, applies it with <code>./install.sh</code>, verifies, and checks again.
+It does not commit, merge, push, create branches, or tag. Review the diff and commit it through your normal workflow; other machines then converge with <code>fm update</code>.</p>
+</article></main>
+<noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Start at <a href="index.html">index.html</a>.</p></noscript>
+</body>
+</html>

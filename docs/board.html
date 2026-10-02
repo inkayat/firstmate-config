@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task board | firstmate-config guide</title>
+<meta name="description" content="The fm board Kanban projection: what the columns mean, how it refreshes, and its CLI.">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/site.js"></script>
+</head>
+<body>
+<main><article>
+<h1>Task board</h1>
+<p class="lede"><code>fm board</code> shows live FirstMate work as a Kanban board. It is a deterministic projection of FirstMate's own records, not a second task database: nothing on the board is decided by a model, and no daemon runs behind it.</p>
+
+<h2 id="open">Open it</h2>
+<pre data-label="shell"><code>fm board            # terminal-browser viewer
+fm board --lavish   # the same static page through Lavish</code></pre>
+<p>Each open refreshes the data first. While the viewer it launched is running, <code>fm board</code> keeps re-rendering, and the page re-reads its data file every few seconds, so a status change appears without a manual reload. The selected tab is preserved.</p>
+
+<h2 id="columns">Columns</h2>
+<p>Columns come from FirstMate's structured state fields only, never from the prose of a hold or note.</p>
+<table>
+<thead><tr><th>Column</th><th>Contains</th></tr></thead>
+<tbody>
+<tr><td><code>todo</code> Todo</td><td class="wrap">Queued or deferred work: plain queued rows, dated or aged Captain deferrals, and non-Captain holds.</td></tr>
+<tr><td><code>in_progress</code> In Progress</td><td class="wrap">A live child that is working.</td></tr>
+<tr><td><code>waiting_review</code> Waiting Review</td><td class="wrap">A finished worker awaiting review or landing, a gate or needs-decision that is parked, or a live Captain call.</td></tr>
+<tr><td><code>blocked</code> Blocked</td><td class="wrap">An unresolved dependency, or a child that is blocked, paused, failed, or unknown.</td></tr>
+<tr><td><code>done</code> Completed</td><td class="wrap">Only a landed backlog row.</td></tr>
+</tbody>
+</table>
+<p>A finished worker is therefore <em>Waiting Review</em>, not Completed, until its work has landed.</p>
+
+<h2 id="details">Task details</h2>
+<p>Every card has a keyboard-reachable <strong>Details</strong> link (<code>board.html#task/&lt;id&gt;</code>) to that task's own view in the same page. <strong>Back to board</strong> or Escape returns to the board with focus on the card.</p>
+<p>At render time one lookup per FirstMate task adds its body, notes, status and hold, dependencies, review context, worker summary, and links to the page's data file. A field its source reports as unset reads <strong>None</strong>; a field no source has reads as not available. Raw <code>.meta</code> and <code>.status</code> content is never shown.</p>
+
+<h2 id="data">Data files</h2>
+<table>
+<thead><tr><th>File</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td><code>$FM_HOME/data/board/state.json</code></td><td class="wrap">Current board state with stable task ids. Never regenerated from scratch.</td></tr>
+<tr><td><code>$FM_HOME/data/board/events.jsonl</code></td><td class="wrap">Append-only debugging history. Rendering never replays it, and an unchanged projection is neither rewritten nor logged.</td></tr>
+<tr><td><code>$FM_HOME/data/board/board-data.js</code></td><td class="wrap">Generated data the static page reads.</td></tr>
+</tbody>
+</table>
+<p>FirstMate's backlog and execution records (<code>data/backlog.md</code>, <code>state/home-summary.json</code>) stay authoritative. Cards for finished FirstMate work are retired when FirstMate stops publishing them, but only when its summary surfaces are provably complete. Cards you added by hand are never retired.</p>
+
+<h2 id="fm-board">fm-board commands</h2>
+<p>The board script has more subcommands than <code>fm board</code> exposes. <code>fm board [--lavish]</code> runs <code>fm-board open</code>. The script lives in the firstmate-config checkout at <code>bin/fm-board</code> and is not linked onto <code>PATH</code> by the installer, so call it by path.</p>
+<pre data-label="shell"><code>bin/fm-board list --state blocked
+bin/fm-board show &lt;id&gt; --json
+bin/fm-board summary
+bin/fm-board add --project my-project --title "Check release notes" --id notes-1
+bin/fm-board move notes-1 in_progress</code></pre>
+<table>
+<thead><tr><th>Subcommand</th><th>Options</th></tr></thead>
+<tbody>
+<tr><td><code>list</code></td><td class="wrap"><code>--project</code>, <code>--state</code>, <code>--json</code></td></tr>
+<tr><td><code>show</code></td><td class="wrap"><code>&lt;id&gt;</code>, <code>--json</code></td></tr>
+<tr><td><code>summary</code></td><td class="wrap"><code>--project</code>, <code>--json</code>; counts per state</td></tr>
+<tr><td><code>add</code></td><td class="wrap"><code>--project</code>, <code>--title</code>, and <code>--id</code> required; <code>--agent</code>, <code>--note</code> optional. New cards start in <code>todo</code>.</td></tr>
+<tr><td><code>update</code></td><td class="wrap"><code>&lt;id&gt;</code> with <code>--project</code>, <code>--title</code>, <code>--agent</code>, <code>--note</code></td></tr>
+<tr><td><code>move</code></td><td class="wrap"><code>&lt;id&gt; &lt;state&gt;</code>, where state is one of <code>todo</code>, <code>in_progress</code>, <code>waiting_review</code>, <code>blocked</code>, <code>done</code></td></tr>
+<tr><td><code>render</code></td><td class="wrap">Regenerate the page data without opening a viewer.</td></tr>
+<tr><td><code>open</code></td><td class="wrap"><code>--lavish</code></td></tr>
+</tbody>
+</table>
+<p>Task ids are explicit and never generated: lowercase letters, digits, and hyphens, starting with a letter or digit. Cards added with <code>add</code> are manual rows, never retired by a reconcile.</p>
+</article></main>
+<noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Start at <a href="index.html">index.html</a>.</p></noscript>
+</body>
+</html>
