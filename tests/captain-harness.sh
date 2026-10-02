@@ -25,7 +25,7 @@ case ${1:-} in
     esac
     printf '{"models":['
     if [ "${CATALOG:-normal}" != astra ] && [ "${CATALOG:-normal}" != sonnet ]; then
-      printf '{"provider":"openai-codex","id":"gpt-6-sol","selector":"openai-codex/gpt-6-sol","reasoning":true,"thinking":["%s"]},' "${SOL_EFFORT:-medium}"
+      printf '{"provider":"openai-codex","id":"gpt-6.1-sol","selector":"openai-codex/gpt-6.1-sol","reasoning":true,"thinking":["%s"]},' "${SOL_EFFORT:-medium}"
     fi
     if [ "${CATALOG:-normal}" = sonnet ]; then
       printf '{"provider":"anthropic","id":"claude-sonnet-5-5","selector":"anthropic/claude-sonnet-5-5","reasoning":true,"thinking":["high","xhigh"]},'
@@ -43,7 +43,7 @@ cat > "$TMP/bin/pi" <<'SH'
 #!/usr/bin/env bash
 case ${1:-} in
   --version) echo 'pi 0.85.1' ;;
-  --list-models) printf 'openai-codex gpt-6-sol 1K 1K yes no\n' ;;
+  --list-models) printf 'openai-codex gpt-6.1-sol 1K 1K yes no\n' ;;
   auth) printf '{"status":"ready"}\n' ;;
   list) echo 'No packages installed.' ;;
   *)
@@ -69,12 +69,12 @@ check() { if [ "$2" = "$3" ]; then printf 'ok   - %s\n' "$1"; else printf 'FAIL 
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 run() { (cd "$TMP/origin" && "$ROOT/bin/fm" "$@"); }
 out=$(run --print-command 2>&1)
-check 'default invokes OMP without explicit extensions or overlay' "$FM_OMP_BIN --model openai-codex/gpt-6-sol --thinking medium" "$(field "$out" COMMAND)"
+check 'default invokes OMP without explicit extensions or overlay' "$FM_OMP_BIN --model openai-codex/gpt-6.1-sol --thinking medium" "$(field "$out" COMMAND)"
 check 'default Captain cwd is official, not origin' "$FIRSTMATE_ROOT" "$(field "$out" CAPTAIN_CWD)"
 out=$(run --harness omp --print-command 2>&1)
-check 'explicit OMP uses native command' "$FM_OMP_BIN --model openai-codex/gpt-6-sol --thinking medium" "$(field "$out" COMMAND)"
+check 'explicit OMP uses native command' "$FM_OMP_BIN --model openai-codex/gpt-6.1-sol --thinking medium" "$(field "$out" COMMAND)"
 out=$(run --harness pi --print-command 2>&1)
-check 'explicit Pi preserves trust-free extensions' "$FM_PI_BIN --model openai-codex/gpt-6-sol --thinking medium -e $FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts -e $FIRSTMATE_ROOT/.pi/extensions/fm-primary-pi-watch.ts" "$(field "$out" COMMAND)"
+check 'explicit Pi preserves trust-free extensions' "$FM_PI_BIN --model openai-codex/gpt-6.1-sol --thinking medium -e $FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts -e $FIRSTMATE_ROOT/.pi/extensions/fm-primary-pi-watch.ts" "$(field "$out" COMMAND)"
 out=$(CATALOG=astra run --print-command 2>&1)
 check 'OMP skips absent Sol and the Pi-only Sonnet candidate without inventing replacement' openai-codex/gpt-6-astra "$(field "$out" SELECTED_MODEL)"
 check 'Astra effort is not downgraded' xhigh "$(field "$out" SELECTED_EFFORT)"
@@ -123,7 +123,7 @@ for harness in omp pi; do
   out=$(CATALOG=astra run --harness "$harness" doctor --json 2>/dev/null)
   actual=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["captain"]["selected_model"])' 2>/dev/null)
   expected=openai-codex/gpt-6-astra
-  [ "$harness" != pi ] || expected=openai-codex/gpt-6-sol
+  [ "$harness" != pi ] || expected=openai-codex/gpt-6.1-sol
   check "doctor uses the same $harness candidate detector as launch" "$expected" "$actual"
 done
 printf '\nCAPTAIN HARNESS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"

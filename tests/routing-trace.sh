@@ -261,7 +261,7 @@ t() { printf '%s\n' "$2" > "$TMP/$1"; printf '%s' "$TMP/$1"; }
 
 OPUS=anthropic/claude-opus-5-5
 SONNET=anthropic/claude-sonnet-5-5
-SOL=openai-codex/gpt-6-sol
+SOL=openai-codex/gpt-6.1-sol
 TDD=test-driven-development
 VBC=verification-before-completion
 
@@ -298,7 +298,7 @@ expect 'DEFAULT trace on Opus 5.5 high matches the debug-period catch-all' pass 
 
 TENTH=$(t tenth.txt "Routing: TENTH-MAN #1 | role tenth-man | pi | $SOL | xhigh | why: challenge Claude-authored completion claim
 Skills: none")
-expect 'TENTH-MAN against Claude output on Pi GPT-6 Sol xhigh is accepted' pass "$TENTH" pi "$SOL" xhigh none
+expect 'TENTH-MAN against Claude output on Pi GPT-6.1 Sol xhigh is accepted' pass "$TENTH" pi "$SOL" xhigh none
 ARCH_WRONG_ROLE=$(t arch-role.txt "Routing: ARCHITECTURE #1 | role senior-fullstack | omp | $OPUS | high | why: module boundary
 Skills: none")
 expect 'ARCHITECTURE trace must name role architecture' fail "$ARCH_WRONG_ROLE" omp "$OPUS" high none
