@@ -7,7 +7,7 @@
 # model id, so it never belongs in the harness-agnostic candidate rows. That
 # Pi id is an unversioned alias Claude Code resolves itself; the provider
 # offers no versioned Sonnet selector.
-openai-codex/gpt-6-sol	medium
+openai-codex/gpt-6.1-sol	medium
 anthropic/claude-sonnet-5-5	high	omp
 pi-claude-code-provider/sonnet	high	pi
 openai-codex/gpt-6-astra	xhigh

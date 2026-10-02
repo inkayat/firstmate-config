@@ -259,7 +259,7 @@ check_array_length RESEARCH 2 1
 check_array_length RESEARCH 3 1
 check_rule_use RESEARCH 1 1 omp anthropic/claude-sonnet-5-5 medium
 check_rule_use RESEARCH 2 2 omp anthropic/claude-opus-5-5 high
-check_rule_use RESEARCH 3 3 pi openai-codex/gpt-6-sol medium
+check_rule_use RESEARCH 3 3 pi openai-codex/gpt-6.1-sol medium
 
 # REVIEW: four separate rules (bounded Sonnet 5.5 high, substantive/cross-
 # component Opus 5.5 high, critical/high-consequence Opus 5.5 xhigh, then an
@@ -271,7 +271,7 @@ check_array_length REVIEW 4 1
 check_rule_use REVIEW 1 1 omp anthropic/claude-sonnet-5-5 high
 check_rule_use REVIEW 2 2 omp anthropic/claude-opus-5-5 high
 check_rule_use REVIEW 3 3 omp anthropic/claude-opus-5-5 xhigh
-check_rule_use REVIEW 4 4 pi openai-codex/gpt-6-sol xhigh
+check_rule_use REVIEW 4 4 pi openai-codex/gpt-6.1-sol xhigh
 check_lane_when REVIEW 4 'not by default' 'REVIEW rule 4: cross-family second review is an explicit escalation, not a default'
 
 # ARCHITECTURE: ordinary rule (Opus 5.5 high), a very-difficult rule (Opus
@@ -292,7 +292,7 @@ check_lane_when ARCHITECTURE 3 'ultra-exceptional' 'ARCHITECTURE rule 3: Astra u
 check_array_length TENTH-MAN 1 1
 check_array_length TENTH-MAN 2 1
 check_array_length TENTH-MAN 3 1
-check_rule_use TENTH-MAN 1 1 pi openai-codex/gpt-6-sol xhigh
+check_rule_use TENTH-MAN 1 1 pi openai-codex/gpt-6.1-sol xhigh
 check_rule_use TENTH-MAN 2 2 pi openai-codex/gpt-6-astra xhigh
 check_rule_use TENTH-MAN 3 3 omp anthropic/claude-opus-5-5 xhigh
 check_lane_when TENTH-MAN 1 'Claude' 'TENTH-MAN rule 1: when-text names Claude as the triggering author family (text only, no classifier runs this)'
@@ -328,9 +328,9 @@ check_array_length DEEP 3 1
 check_array_length DEEP 4 1
 check_array_length DEEP 5 1
 check_rule_use DEEP 1 1 omp anthropic/claude-opus-5-5 xhigh
-check_rule_use DEEP 2 2 pi openai-codex/gpt-6-sol xhigh
+check_rule_use DEEP 2 2 pi openai-codex/gpt-6.1-sol xhigh
 check_rule_use DEEP 3 3 omp anthropic/claude-opus-5-5 xhigh
-check_rule_use DEEP 4 4 omp openai-codex/gpt-6-sol xhigh
+check_rule_use DEEP 4 4 omp openai-codex/gpt-6.1-sol xhigh
 check_rule_use DEEP 5 5 pi openai-codex/gpt-6-astra xhigh
 check_lane_when DEEP 2 'escalation' 'DEEP rule 2: Sol diagnosis is an explicit escalation, not a default'
 check_lane_when DEEP 4 'unresolved' 'DEEP rule 4: Sol ship is an explicit second hypothesis, not a default'
@@ -349,19 +349,19 @@ default_line=$(default_tuple)
 check 'DEFAULT: catch-all route is omp/anthropic/claude-opus-5-5/high during the debugging period' "omp	anthropic/claude-opus-5-5	high" "$default_line"
 
 # No active route names a superseded model (Sonnet 5, Opus 5, Fable 5.1,
-# GPT-5.6 Luna/Sol, GPT-5.5): every configured model is one of the six
-# adopted ids.
+# GPT-5.6 Luna/Sol, GPT-5.5, GPT-6 Sol): every configured model is one of
+# the six adopted ids.
 if [ "$PARSE_METHOD" = jq ]; then
   configured_models=$(jq -r '[.rules[].use[].model, .default[].model] | unique | .[]' "$CREW_DISPATCH")
 else
   configured_models=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("\n".join(sorted({u["model"] for r in d["rules"] for u in r["use"]} | {u["model"] for u in d["default"]})))' "$CREW_DISPATCH")
 fi
-check 'every active route uses only the adopted Haiku 4.5/Sonnet 5.5/Opus 5.5/GPT-6 Luna/Sol/Astra ids' 'anthropic/claude-haiku-4-5
+check 'every active route uses only the adopted Haiku 4.5/Sonnet 5.5/Opus 5.5/GPT-6 Luna/GPT-6.1 Sol/Astra ids' 'anthropic/claude-haiku-4-5
 anthropic/claude-opus-5-5
 anthropic/claude-sonnet-5-5
 openai-codex/gpt-6-astra
 openai-codex/gpt-6-luna
-openai-codex/gpt-6-sol' "$configured_models"
+openai-codex/gpt-6.1-sol' "$configured_models"
 
 # =============================================================================
 # 3. Roles referenced by name stay within the three that exist

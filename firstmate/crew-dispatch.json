@@ -76,7 +76,7 @@
       "use": [
         {
           "harness": "pi",
-          "model": "openai-codex/gpt-6-sol",
+          "model": "openai-codex/gpt-6.1-sol",
           "effort": "medium"
         }
       ],
@@ -124,11 +124,11 @@
       "use": [
         {
           "harness": "pi",
-          "model": "openai-codex/gpt-6-sol",
+          "model": "openai-codex/gpt-6.1-sol",
           "effort": "xhigh"
         }
       ],
-      "why": "openai-codex/gpt-6-sol on Pi is REVIEW's cross-family second reviewer, reached for only when the critical case above genuinely needs an independent, differently-sourced check in addition to the Opus 5.5 primary review, never as a routine substitute for it."
+      "why": "openai-codex/gpt-6.1-sol on Pi is REVIEW's cross-family second reviewer, reached for only when the critical case above genuinely needs an independent, differently-sourced check in addition to the Opus 5.5 primary review, never as a routine substitute for it."
     },
     {
       "category": "ARCHITECTURE",
@@ -152,7 +152,7 @@
           "effort": "xhigh"
         }
       ],
-      "why": "anthropic/claude-opus-5-5 on OMP at xhigh is the single-candidate route for very difficult architecture - a single candidate, not a quota array, so no other model can be selected ahead of Opus 5.5 here. When an independent cross-family second opinion is genuinely needed, dispatch TENTH-MAN against the recommendation (GPT-6 Sol for Claude-authored work) rather than pairing a peer here. openai-codex/gpt-6-astra remains reserved for the separate ultra-exceptional rule below."
+      "why": "anthropic/claude-opus-5-5 on OMP at xhigh is the single-candidate route for very difficult architecture - a single candidate, not a quota array, so no other model can be selected ahead of Opus 5.5 here. When an independent cross-family second opinion is genuinely needed, dispatch TENTH-MAN against the recommendation (GPT-6.1 Sol for Claude-authored work) rather than pairing a peer here. openai-codex/gpt-6-astra remains reserved for the separate ultra-exceptional rule below."
     },
     {
       "category": "ARCHITECTURE",
@@ -172,11 +172,11 @@
       "use": [
         {
           "harness": "pi",
-          "model": "openai-codex/gpt-6-sol",
+          "model": "openai-codex/gpt-6.1-sol",
           "effort": "xhigh"
         }
       ],
-      "why": "Model-family diversity is the whole point: when the primary author is a Claude/Anthropic model, the challenger runs on Pi with GPT-6 Sol, a different provider and a different harness from the OMP session that likely produced the work, at the lowest cost that still satisfies family diversity. GPT-6 Astra remains available as a separate, more specific escalation below for the most critical or unresolved cases, never a routine default. TENTH-MAN versus DEEP: DEEP investigates why something is broken; TENTH-MAN challenges whether a plan or a completion claim actually holds, broken or not."
+      "why": "Model-family diversity is the whole point: when the primary author is a Claude/Anthropic model, the challenger runs on Pi with GPT-6.1 Sol, a different provider and a different harness from the OMP session that likely produced the work, at the lowest cost that still satisfies family diversity. GPT-6 Astra remains available as a separate, more specific escalation below for the most critical or unresolved cases, never a routine default. TENTH-MAN versus DEEP: DEEP investigates why something is broken; TENTH-MAN challenges whether a plan or a completion claim actually holds, broken or not."
     },
     {
       "category": "TENTH-MAN",
@@ -268,11 +268,11 @@
       "use": [
         {
           "harness": "pi",
-          "model": "openai-codex/gpt-6-sol",
+          "model": "openai-codex/gpt-6.1-sol",
           "effort": "xhigh"
         }
       ],
-      "why": "openai-codex/gpt-6-sol on Pi is the independent alternative/escalation for DEEP diagnosis, deliberately kept on a different harness and model family from the OMP Opus 5.5 primary above, preserving the existing Pi placement for this escalation in the diagnosis form. openai-codex/gpt-6-astra remains available only through the separate, more specific exceptional rule below, once even this Sol escalation leaves the diagnosis unresolved."
+      "why": "openai-codex/gpt-6.1-sol on Pi is the independent alternative/escalation for DEEP diagnosis, deliberately kept on a different harness and model family from the OMP Opus 5.5 primary above, preserving the existing Pi placement for this escalation in the diagnosis form. openai-codex/gpt-6-astra remains available only through the separate, more specific exceptional rule below, once even this Sol escalation leaves the diagnosis unresolved."
     },
     {
       "category": "DEEP",
@@ -292,11 +292,11 @@
       "use": [
         {
           "harness": "omp",
-          "model": "openai-codex/gpt-6-sol",
+          "model": "openai-codex/gpt-6.1-sol",
           "effort": "xhigh"
         }
       ],
-      "why": "openai-codex/gpt-6-sol on OMP is reached for only as a second hypothesis once the Opus 5.5 ship pass above leaves the problem unresolved, preserving the existing OMP placement for this escalation in the ship form. openai-codex/gpt-6-astra remains available only through the separate, more specific exceptional rule below, once even this Sol second hypothesis leaves the problem unresolved."
+      "why": "openai-codex/gpt-6.1-sol on OMP is reached for only as a second hypothesis once the Opus 5.5 ship pass above leaves the problem unresolved, preserving the existing OMP placement for this escalation in the ship form. openai-codex/gpt-6-astra remains available only through the separate, more specific exceptional rule below, once even this Sol second hypothesis leaves the problem unresolved."
     },
     {
       "category": "DEEP",

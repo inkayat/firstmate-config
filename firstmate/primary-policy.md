@@ -226,13 +226,13 @@ wins over the table.
 | --- | --- | --- |
 | QUICK | omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-6-luna` low - genuinely interchangeable) | senior-fullstack |
 | EXPLORE | simple: omp `anthropic/claude-haiku-4-5` low (or omp `openai-codex/gpt-6-luna` low); hard: omp `anthropic/claude-sonnet-5-5` medium | senior-fullstack |
-| RESEARCH | ordinary: omp `anthropic/claude-sonnet-5-5` medium; substantial/decision-heavy: omp `anthropic/claude-opus-5-5` high; Pi-tooling advantage: pi `openai-codex/gpt-6-sol` medium | senior-fullstack |
-| REVIEW | bounded: omp `anthropic/claude-sonnet-5-5` high; substantive/cross-component: omp `anthropic/claude-opus-5-5` high; critical/high-consequence: omp `anthropic/claude-opus-5-5` xhigh (optional cross-family second reviewer: pi `openai-codex/gpt-6-sol` xhigh) | senior-fullstack |
+| RESEARCH | ordinary: omp `anthropic/claude-sonnet-5-5` medium; substantial/decision-heavy: omp `anthropic/claude-opus-5-5` high; Pi-tooling advantage: pi `openai-codex/gpt-6.1-sol` medium | senior-fullstack |
+| REVIEW | bounded: omp `anthropic/claude-sonnet-5-5` high; substantive/cross-component: omp `anthropic/claude-opus-5-5` high; critical/high-consequence: omp `anthropic/claude-opus-5-5` xhigh (optional cross-family second reviewer: pi `openai-codex/gpt-6.1-sol` xhigh) | senior-fullstack |
 | ARCHITECTURE | omp `anthropic/claude-opus-5-5` high; very difficult: xhigh (pi `openai-codex/gpt-6-astra` xhigh only when ultra-exceptional) | architecture |
-| TENTH-MAN | Claude-authored work: pi `openai-codex/gpt-6-sol` xhigh (pi `openai-codex/gpt-6-astra` xhigh only when critical/unresolved after Sol); Astra/OpenAI-authored work: omp `anthropic/claude-opus-5-5` xhigh | tenth-man |
+| TENTH-MAN | Claude-authored work: pi `openai-codex/gpt-6.1-sol` xhigh (pi `openai-codex/gpt-6-astra` xhigh only when critical/unresolved after Sol); Astra/OpenAI-authored work: omp `anthropic/claude-opus-5-5` xhigh | tenth-man |
 | IMPLEMENT | small/bounded: omp `anthropic/claude-sonnet-5-5` high; substantive: omp `anthropic/claude-opus-5-5` high | senior-fullstack |
 | IMPLEMENT-LARGE | omp `anthropic/claude-opus-5-5` high; reasoning-heavy: xhigh | senior-fullstack |
-| DEEP | scout and ship: omp `anthropic/claude-opus-5-5` xhigh, with `openai-codex/gpt-6-sol` xhigh reached only through an explicit single-candidate escalation rule (pi for diagnosis, omp for implementation) and `openai-codex/gpt-6-astra` xhigh as the last escalation beyond that - never a quota peer | senior-fullstack |
+| DEEP | scout and ship: omp `anthropic/claude-opus-5-5` xhigh, with `openai-codex/gpt-6.1-sol` xhigh reached only through an explicit single-candidate escalation rule (pi for diagnosis, omp for implementation) and `openai-codex/gpt-6-astra` xhigh as the last escalation beyond that - never a quota peer | senior-fullstack |
 | UI/BROWSER | normal: omp `anthropic/claude-sonnet-5-5` high; complex/cross-layer: omp `anthropic/claude-opus-5-5` high | senior-fullstack |
 | DEFAULT | omp `anthropic/claude-opus-5-5` high (debugging period, section 0) | senior-fullstack |
 
@@ -271,7 +271,7 @@ review: meaningful new behavior, a nontrivial refactor, work spanning
 multiple components, or real cross-component regression risk. When
 uncertain between Sonnet 5.5 and Opus 5.5 for a substantive task, choose
 Opus 5.5. TENTH-MAN enforces model-family diversity directly: it never
-shares a model family with the work it is challenging, defaulting to GPT-6
+shares a model family with the work it is challenging, defaulting to GPT-6.1
 Sol and escalating to GPT-6 Astra only for critical cases the Sol
 challenge leaves unresolved. Semantic fit is decided first; provider
 availability and capacity only break ties within a rule's own listed
@@ -295,7 +295,7 @@ rule, and DEEP's five conditional rules (scout primary, scout Sol
 escalation, ship primary, ship Sol second-hypothesis, Astra exceptional
 last escalation).
 
-**Sol and Astra** stay semantically scoped. GPT-6 Sol is the everyday
+**Sol and Astra** stay semantically scoped. GPT-6.1 Sol is the everyday
 cross-family route: RESEARCH's Pi-tooling rule, REVIEW's cross-family
 second reviewer, DEEP's diagnosis/ship escalations, and TENTH-MAN's
 default route whenever the work under review was authored by Claude - an
@@ -324,16 +324,17 @@ ship. Judge the actual task, not the category label.
 
 **Model catalog adoption.** Active routes use only `anthropic/claude-haiku-4-5`,
 `anthropic/claude-sonnet-5-5`, `anthropic/claude-opus-5-5`,
-`openai-codex/gpt-6-luna`, `openai-codex/gpt-6-sol`, and
+`openai-codex/gpt-6-luna`, `openai-codex/gpt-6.1-sol`, and
 `openai-codex/gpt-6-astra`. OMP's native catalog lists all six with low
 through xhigh support; Pi exposes no Anthropic provider on this machine, so
-every Claude route is OMP. `openai-codex/gpt-6-sol` is also the
+every Claude route is OMP. `openai-codex/gpt-6.1-sol` is also the
 Captain-startup candidate in `captain-startup-models.tsv` (medium effort);
 that chain's Claude Sonnet fallback step is harness-scoped (OMP's own
 `anthropic/claude-sonnet-5-5` versus Pi's unversioned
 `pi-claude-code-provider/sonnet` alias) - see README.md "Captain startup
 model". `openai-codex/gpt-6-astra` is confined to Pi. Sonnet 5, Opus 5,
-Fable 5.1, GPT-5.5, and GPT-5.6 Luna/Sol are retired from worker routing.
+Fable 5.1, GPT-5.5, GPT-5.6 Luna/Sol, and GPT-6 Sol are retired from worker
+routing.
 
 **Deferred to a later release.** The local Qwen/Ollama lane remains absent
 while that machine is offline. It is not configured anywhere in this
