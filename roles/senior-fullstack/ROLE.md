@@ -1,3 +1,7 @@
+---
+name: fm-senior-fullstack
+description: "Ordinary delivery work - features, fixes, refactors, tests - across whatever layers the change touches."
+---
 # Role: senior-fullstack
 
 Ordinary delivery work: features, fixes, refactors, tests, across whatever

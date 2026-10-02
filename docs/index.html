@@ -13,7 +13,7 @@
 <h1>Overview</h1>
 <p class="lede"><code>firstmate-config</code> is a reproducible configuration layer around the official
 <a href="https://github.com/kunchenguid/firstmate">FirstMate</a> checkout. It chooses the Captain runtime,
-routes worker tasks to harnesses and models, installs a small set of shared skills, and keeps machine state
+routes worker tasks to harnesses and models, installs shared skills and role agents, and keeps machine state
 out of Git - without forking or patching FirstMate.</p>
 
 <p>The important split:</p>
@@ -21,8 +21,8 @@ out of Git - without forking or patching FirstMate.</p>
 <thead><tr><th>Layer</th><th>Owns</th><th>Lives in</th></tr></thead>
 <tbody>
 <tr><td>Official FirstMate</td><td class="wrap">Task lifecycle, supervision, spawn and teardown, the fleet lock. Never edited by this repository.</td><td class="wrap"><code>FIRSTMATE_ROOT</code> (default <code>~/Developer/tools/firstmate</code>)</td></tr>
-<tr><td>firstmate-config</td><td class="wrap">The <code>fm</code> launcher, Captain startup chain, routing table, roles, shared skills, diagnostics, <code>fm update</code>.</td><td class="wrap">This repository</td></tr>
-<tr><td>Operational home</td><td class="wrap">Project registry, Captain preferences, task state, sessions, the board data.</td><td class="wrap"><code>FM_HOME</code> (default <code>~/.firstmate</code>)</td></tr>
+<tr><td>firstmate-config</td><td class="wrap">The <code>fm</code> launcher, Captain startup chain, routing table, roles, shared skills, diagnostics, <code>fm update</code>, <code>fm bot</code>.</td><td class="wrap">This repository</td></tr>
+<tr><td>Operational home</td><td class="wrap">Project registry, Captain preferences, task state, sessions, the board data, bot specs.</td><td class="wrap"><code>FM_HOME</code> (default <code>~/.firstmate</code>)</td></tr>
 <tr><td>Herdr</td><td class="wrap">The runtime that hosts Captain and worker panes.</td><td class="wrap">Installed separately</td></tr>
 </tbody>
 </table>
@@ -47,10 +47,11 @@ everything configured here.</p>
 <ul>
 <li><strong>OMP-first Captain</strong> with an explicit Pi fallback, and a startup model chain that falls back on a known-unavailable model.</li>
 <li><strong>Semantic routing</strong> across eleven dispatch categories, kept in one JSON file.</li>
-<li><strong>Three generic roles</strong> and a short list of pinned shared skills, layered <em>below</em> project instructions.</li>
+<li><strong>Twelve roles</strong> - three core, five specialists, four for an opt-in single-task team - that double as OMP agents, and pinned shared skills, all layered <em>below</em> project instructions.</li>
 <li><strong>Read-only diagnostics</strong>: <code>fm doctor</code> and <code>fm version</code>.</li>
 <li><strong>Fast-forward-only updates</strong> of both checkouts with <code>fm update</code>, followed by an idempotent reconcile.</li>
 <li><strong>A Kanban board</strong> that projects live FirstMate work with <code>fm board</code>.</li>
+<li><strong>Scheduled bots</strong>: daily routines filed as ordinary tasks, with permission levels that never replace per-commit approval.</li>
 </ul>
 
 <h2 id="reading-path">Reading path</h2>
@@ -64,6 +65,7 @@ everything configured here.</p>
 <li><a href="config.html"><b>Configuration and files</b><span>Tracked files, machine-local files, variables.</span></a></li>
 <li><a href="cli.html"><b>CLI reference</b><span>Every command and option that exists.</span></a></li>
 <li><a href="board.html"><b>Task board</b><span>Columns, commands, and data files.</span></a></li>
+<li><a href="bots.html"><b>Bots</b><span>Scheduled routines, activation, permission levels.</span></a></li>
 </ul>
 
 <h2 id="tips">Tips</h2>
@@ -75,6 +77,6 @@ part of the stack is outside what this configuration was validated against.</p><
 <div class="callout warn"><span class="t">Planned work is not documented here</span>
 <p>The repository README has a roadmap (for example optional multi-agent deliberation). Nothing on it is current behavior, and this guide does not describe it.</p></div>
 </article></main>
-<noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Pages: index, install, update, architecture, roles-skills, dispatch, safety, config, cli, board (<code>*.html</code>).</p></noscript>
+<noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Pages: index, install, update, architecture, roles-skills, dispatch, safety, config, cli, board, bots (<code>*.html</code>).</p></noscript>
 </body>
 </html>

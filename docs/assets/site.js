@@ -20,7 +20,8 @@
     { group: 'Reference', pages: [
       ['config.html', 'Configuration and files'],
       ['cli.html', 'CLI reference'],
-      ['board.html', 'Task board']
+      ['board.html', 'Task board'],
+      ['bots.html', 'Bots']
     ]}
   ];
 

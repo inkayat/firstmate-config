@@ -20,9 +20,11 @@
 <tr><td class="wrap">Official FirstMate checkout</td><td class="wrap">Upstream-clean. Never modified, except by the fast-forward-only first stage of <code>fm update</code>. <code>install.sh</code> reports a modified checkout and leaves it alone.</td></tr>
 <tr><td class="wrap">Project repositories</td><td class="wrap">The installer never touches them. Project knowledge is never copied into this repository; it is resolved per task, in place.</td></tr>
 <tr><td class="wrap">Credentials</td><td class="wrap">Never stored. Authentication, sessions, and runtime records live outside the repository.</td></tr>
-<tr><td class="wrap">Existing files at link locations</td><td class="wrap">If a path where a symlink belongs already holds something this installer did not create, it warns and leaves it alone.</td></tr>
+<tr><td class="wrap">Existing files at link locations</td><td class="wrap">If a file or directory already sits where a symlink belongs, the installer warns and leaves it alone. In OMP's agent root it also leaves alone any <code>fm-&lt;role&gt;.md</code> symlink that does not point at a firstmate-config role file, and never touches other agent files.</td></tr>
 <tr><td class="wrap"><code>$FM_HOME/data/captain.md</code></td><td class="wrap">Seeded once, then owned by the machine. Never overwritten.</td></tr>
 <tr><td class="wrap">Secondmates</td><td class="wrap">A secondmate home is refused as a Captain home, and <code>fm update</code> does not update secondmates.</td></tr>
+<tr><td class="wrap">Bots</td><td class="wrap">Nothing runs until <code>fm bot check-install</code> activates the watcher check, and each run is an ordinary FirstMate task. A level is an upper bound, never approval: every commit and every push still needs your approval for that commit. Access fields hold secret reference names, never secrets.</td></tr>
+<tr><td class="wrap">Team mode</td><td class="wrap">Members exist only inside the lead's task and worktree, and the lead may spawn only the roles its <code>spawns</code> list names. The in-team review does not replace the independent review below.</td></tr>
 </tbody>
 </table>
 
@@ -72,6 +74,7 @@
 <li><code>fm update</code> has no multi-repository rollback.</li>
 <li>A running Captain is not notified of updates and keeps what it loaded at startup.</li>
 <li><code>fm doctor</code>'s runtime task-staleness check reports <code>UNKNOWN</code> when tasks are in flight, because no safe bulk read-only classifier exists. Use FirstMate's per-task state check for an authoritative answer.</li>
+<li>Role rules such as "own paths only" or "write no files" are instructions, not a sandbox. A team member with write or shell tools can still write wherever its operating-system user can; the lead and QA catch violations only by checking.</li>
 </ul></div>
 </article></main>
 <noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Start at <a href="index.html">index.html</a>.</p></noscript>

@@ -47,6 +47,15 @@ policy chooses worker harness, model, effort, and role by task semantics.
   period (`firstmate/primary-policy.md` section 0)
 - Multi-project operation with per-task project resolution
 - Scoped `AGENTS.md` / `CLAUDE.md` context and project-local skills
+- Role files that double as OMP agent definitions and load their own default
+  skills (`autoloadSkills`):
+  - core roles;
+  - an open set of specialists (`security-engineer`, `code-reviewer`,
+    `refactorist`, `django-pro`, `frontend-master`);
+  - team roles (`team-lead`, `product-owner`, `backend-contract`, `qa`) for an
+    opt-in, single-task OMP team: planning, then parallel implementation,
+    QA, and review. `install.sh` links every role file into OMP's user agent
+    root as `fm-<role>` (`firstmate/primary-policy.md` sections 4-5)
 - Reproducibly installed shared worker skills and external pins
 - Browser/manual validation policy for user-visible work
 - Independent review before merge for substantive or risky Captain-dispatched
@@ -59,9 +68,9 @@ policy chooses worker harness, model, effort, and role by task semantics.
 ## Documentation
 
 A small, navigable guide lives in [`docs/`](docs/index.html): installation and
-first run, update and recovery, architecture and startup, roles and skills,
-dispatch routing, safety boundaries, configuration, the CLI, and the task
-board. It is plain HTML with no build step; preview it locally by opening
+first run, update and recovery, architecture and startup, roles, skills, and
+team mode, dispatch routing, safety boundaries, configuration, the CLI, the
+task board, and bots. It is plain HTML with no build step; preview it locally by opening
 `docs/index.html` in a browser. This README and the files it links remain the
 source of truth.
 
@@ -186,9 +195,11 @@ cd firstmate-config
 ```
 
 The installer checks the local toolchain, creates or verifies the official
-FirstMate checkout, writes machine-local resolution, installs tracked skills,
-and links commands into `~/.local/bin`. Running it again is the normal reconcile
-path and is idempotent.
+FirstMate checkout, writes machine-local resolution, installs tracked skills
+and slash commands (`~/.agents/skills`, `~/.agents/commands`), links each role
+file as an OMP agent (`~/.omp/agent/agents/fm-<role>.md`), and links
+commands into `~/.local/bin`. Running it again is the normal reconcile path
+and is idempotent.
 
 Read-only drift check:
 
@@ -206,6 +217,7 @@ Read-only drift check:
 | `fm version` | Print compact stack identity and version information |
 | `fm update` | Fast-forward the official FirstMate checkout (`FIRSTMATE_ROOT`), then the `firstmate-config` checkout, then reconcile and verify this machine via its own `install.sh`; check both checkouts before changing either, refuse anything that is not a clean, plain fast-forward, and report a failure after the official stage as a partial update |
 | `fm board` / `fm board --lavish` | Open the persistent Kanban board (terminal-browser by default, Lavish with `--lavish`); render a deterministically refreshed, LLM-free data projection with the same static template, keep re-rendering it while the viewer is open, and let the page re-read it every few seconds so transitions appear without a manual refresh |
+| `fm bot ...` | Create, list, show, pause, resume, or remove home-local bot specs and dry-run which are due; never dispatches (`bin/fm-bot --help`) |
 | `ponytail-update` | Prepare and validate a local Ponytail pin update without committing or pushing |
 
 `fm doctor --json` and `fm version --json` provide machine-readable output.
@@ -215,6 +227,12 @@ Read-only drift check:
 Every card has a keyboard-reachable **Details** link (`board.html#task/<id>`) to that task's own detail view in the same page, in either viewer; **Back to board** or Escape returns to the board with focus on the card. At render time `bin/fm-board` adds one `fm-tasks-axi.sh show <id> --full` lookup per FirstMate task to `board-data.js` only (never `state.json`), plus the task's open decision and landed PR/report from `state/home-summary.json`, so the view shows body, notes, status and hold, dependencies, review context, worker summary, and links. A field its source reports as unset reads **None**; a field no source has (a manual row, a task the backlog no longer holds) reads as not available. Raw `.meta`/`.status` content is never shown. Under Lavish, turn **Annotate** off (⌘I / Ctrl+I) to follow links: in annotate mode Lavish captures clicks for annotations.
 
 Board columns follow FirstMate's structured state, never hold prose: **Todo** is queued or deferred work (plain queued rows, dated or aged captain deferrals, non-captain holds); **In Progress** is a live child that is working; **Waiting Review** is a finished worker awaiting review or landing, a no-mistakes gate or needs-decision (`parked`), or a live captain call (`captain_actionable`); **Blocked** is an unresolved dependency or a child that is `blocked`/`paused`/`failed`/unknown; **Completed** is only a landed backlog row. Rows FirstMate stops publishing are retired whenever its summary surfaces are provably complete, including while one local-only task awaits approval (`terminal_in_flight`); `bin/fm-board`'s `CREW_STATE_TO_BOARD`, `_queued_state`, and `_retirement_protected` own the exact rules.
+
+`bin/fm-bot` owns bot specs at `$FM_HOME/data/bots/<name>.md` (machine-local, never tracked) and their dry `due` evaluation. A bot is a spec plus one watcher check, never a process: `fm-bot check-install` writes `$FM_HOME/state/bots.check.sh` and binds it with the official `bin/fm-check-register.sh bots`, and that check prints `bot due: <name>-<YYYYMMDD> spec=… level=…` while a bot is inside its Europe/Stockholm window and its dated task id is not yet in the backlog, so filing that id silences it for the day; each filing is also kept in a durable `$FM_HOME/data/bots/.filed/<name>` marker, because the backlog prunes done rows into an archive `fm-tasks-axi.sh show` does not search, so a task finished and pruned the same day stays silent. The dispatch seam, `fm bot file <name>-<YYYYMMDD>`, records that marker at filing time, before anything is dispatched, so a task filed, finished, and pruned between two watcher polls still cannot re-fire; a dated id filed any other way (a raw `fm-tasks-axi.sh add`) is only seen at the next poll and keeps that gap. `file` refuses anything but today's due id, prints the dispatch plan for the effective level (kind, delivery, role file, route, the routine fields, and the stop rule), files and holds an invalid bot for the captain instead, and never spawns; `firstmate/primary-policy.md` section 8 is the Captain's instruction to use it. Missed windows are not backfilled, and 02:xx times are refused because of DST. Each spec stores and validates its routine - role, project, route, schedule, scope, access (`none` or a `secret:<ref>` name, never a secret), notify, wall-clock and optional candidate/file/line limits, excluded paths - for the Captain and workers to apply; fm-bot itself enforces only the schedule and the level gate. A spec's `level` (`local-proposal` < `local-commit` < `push`) is only an upper bound, never an authorization. `local-proposal`, the default, needs only an active, well-formed spec. `local-commit` and `push` need captain authorization words with their own scope, an authorized-on date and an unexpired `expires`, file and line limits, and a registered project whose posture allows the level (`local-only` at most `local-commit`); `push` also needs excluded paths, one remote, a branch prefix, one push per run, a non-`+yolo` project, and the authorization quoted verbatim in `$FM_HOME/data/captain.md` naming the bot and project. `create` refuses any gate failure; `due` re-checks the gate every time and runs an elevated bot whose gate fails that day at `local-proposal` with the reason. `fm bot list` shows each bot's last run, the newest `<name>-<YYYYMMDD>` id the backlog lists or the marker holds. Commits and pushes stay gated by FirstMate's own per-action captain approval.
+
+`skills/bot-builder` is the Captain's guide for "bot oluştur" / "create a bot": it collects the routine and level, refuses missing pieces (an elevated level without the captain's exact words, scope, and expiry; a mapped role with no `roles/<role>/ROLE.md`), and writes the spec only through `fm bot create`; it never activates the watcher check or dispatches. `commands/bots.md` is the read-only `/bots` prompt over `fm bot list`/`show`. `install.sh` step 7 links every `commands/*.md` into `~/.agents/commands` (OMP turns each into a slash command) the same way it links `skills/*` into `~/.agents/skills`, so both reach a primary Captain session only once they land on main and the primary checkout's `install.sh` runs; until then a primary Captain session cannot load `/bots` or `bot-builder`. `tests/bot-builder-trial.sh` (opt-in, `FM_LIVE_BOT_TRIAL=1`, real billable `omp` sessions) is evidence for the skill and command interaction only: it copies both into a disposable sandbox project's own `.agents/skills` and `.agents/commands` and runs a plain OMP session there against a disposable trial home, not a primary Captain session.
+
+`tests/bot-pilot.sh` (opt-in, `FM_LIVE_BOT_PILOT=1`, real billable `omp` workers) is the P8 pilot, simulated end to end in a disposable lab: a lab `FM_HOME` from the official `bin/fm-lab-home.sh`, a disposable sandbox repository, and an isolated non-default Herdr session that only the official `bin/fm-herdr-lab.sh` provisions, drives, and tears down. Over nine simulated Stockholm days (sweeping every 5 minutes through the registered check's official snapshot run, across the 2026-10-25 DST change) it plays Firstmate's part - `fm bot file`, a brief from the printed plan, done-and-prune or a captain hold - and asserts one due line, one filing, and one dated report per local-proposal morning with no branch, file, or commit change, and two local-commit runs that each stop uncommitted on their dated bot branch at `needs-decision [key=commit-approval]`. It does not prove real elapsed days, a live `fm-watch.sh` loop, a Captain session, `fm-spawn`/treehouse dispatch, the approve-then-commit step, or `push`. Its workers read this checkout's real `roles/refactorist/ROLE.md`; the local-commit bot's authorization is an explicit fixture-only placeholder, never captain words, so the pilot proves nothing about a real permission.
 
 `ponytail-update` checks the latest stable Ponytail release. If an update is
 available, it updates `skills/external.lock`, shows the diff, runs the Ponytail
