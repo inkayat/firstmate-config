@@ -562,3 +562,27 @@ This policy and the selected verification skills are guidance, not a
 mechanical completion check. This configuration has no trusted verification
 runner or FirstMate completion hook; a passing fixture report cannot stand
 in for verification of the actual task changes.
+
+## 8. Bot wakes
+
+A `check:` wake from `state/bots.check.sh` carries one line per bot;
+`bin/fm-bot` owns the line formats and their meaning.
+
+- **`bot due: <id> …`** - run `fm bot file <id>`. It is the only way to file a
+  bot's dated task: it re-checks the spec at that moment, files the id,
+  records the marker that keeps the bot silent for the rest of the day, and
+  prints the dispatch plan. Never file a bot id with a raw
+  `fm-tasks-axi.sh add`, which skips that marker. `already-filed:` or a
+  refusal means dispatch nothing.
+- **Dispatch exactly the plan.** Its role file, route rule, kind and
+  delivery, scope, limits, excluded paths, access, notify, wall-clock limit,
+  and stop rule go into the brief as printed. Never widen the scope or raise
+  the level; a plan carrying `reason:` runs at the level it prints, and the
+  report says why.
+- **The level is never approval.** `local-proposal` is a scout report.
+  `local-commit` and `push` are ships that stop uncommitted with
+  `needs-decision [key=commit-approval]`; any commit, and any push, still
+  needs the captain's own approval for that commit.
+- **`bot invalid: <id> …`** - `fm bot file <id>` files and holds the id for
+  the captain; dispatch nothing. **`bot error: …`** - the check or the
+  backlog could not answer; investigate, dispatch nothing.

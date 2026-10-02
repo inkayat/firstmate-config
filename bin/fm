@@ -72,6 +72,9 @@
 #                         own --help documents the full add/update/move/list/
 #                         show/summary/render/open CLI); fm board --lavish
 #                         opens the same static file through Lavish instead
+#   fm bot ...            bot specs and their dry due evaluation (bin/fm-bot's
+#                         own --help documents create/list/show/pause/resume/
+#                         remove/due/check-install); never dispatches
 #   fm --help
 set -u
 
@@ -142,6 +145,10 @@ case ${1:-} in
   board)
     shift
     exec "$CONFIG_ROOT/bin/fm-board" open "$@"
+    ;;
+  bot)
+    shift
+    exec "$CONFIG_ROOT/bin/fm-bot" "$@"
     ;;
 esac
 
