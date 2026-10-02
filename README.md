@@ -1,5 +1,9 @@
 # firstmate-config
 
+**[Read the guide](https://inkayat.github.io/firstmate-config/)** — the
+navigable documentation site for installation, CLI, configuration, dispatch,
+safety, and updates.
+
 `firstmate-config` is an opinionated, reproducible configuration layer around
 the official [FirstMate](https://github.com/kunchenguid/firstmate) checkout. It
 selects the Captain runtime, worker routing, shared skills, and machine-local
