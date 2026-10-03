@@ -27,15 +27,16 @@
 </table>
 
 <h2 id="fm">fm</h2>
-<pre data-label="usage"><code>fm [--harness omp|pi]
-fm [--harness omp|pi] --check
-fm [--harness omp|pi] --print-command
+<pre data-label="usage"><code>fm [--harness omp|pi] [--model codex|claude]
+fm [--harness omp|pi] [--model codex|claude] --check
+fm [--harness omp|pi] [--model codex|claude] --print-command
 fm --help</code></pre>
 <p>Starts the Captain on OMP by default. Before the harness starts it runs a preflight; it stops with an <code>fm:</code> error if the FirstMate checkout has no <code>AGENTS.md</code>, a primary extension or the startup model file is missing, the harness executable is not on <code>PATH</code>, the <code>herdr</code> CLI is missing while the backend is Herdr, or <code>FM_HOME</code> is a secondmate home.</p>
 <table>
 <thead><tr><th>Option</th><th>Purpose</th></tr></thead>
 <tbody>
-<tr><td><code>--harness omp|pi</code></td><td class="wrap">Select the Captain harness. Must come first. Also valid before <code>doctor</code> and <code>version</code>.</td></tr>
+<tr><td><code>--harness omp|pi</code></td><td class="wrap">Select the Captain harness. Must come before any other option or subcommand, except <code>--model</code>. Also valid before <code>doctor</code> and <code>version</code>.</td></tr>
+<tr><td><code>--model codex|claude</code></td><td class="wrap">Start this Captain on a model preset instead of the startup chain: <code>codex</code> is GPT-6.1 Sol at medium, <code>claude</code> is Sonnet 5.5 at high. Either order with <code>--harness</code>; not valid before a subcommand. Any other value, or a preset the selected harness does not report available or cannot verify, prints a warning and falls back to the chain. See <a href="architecture.html#model-override">Choosing a model for one launch</a>.</td></tr>
 <tr><td><code>--check</code></td><td class="wrap">Run the preflight and model resolution, print the resolution as <code>KEY=value</code> lines, end with <code>PREFLIGHT=ok</code>, and exit without starting anything.</td></tr>
 <tr><td><code>--print-command</code></td><td class="wrap">Same as <code>--check</code>, plus a <code>COMMAND=</code> line with the exact harness command.</td></tr>
 <tr><td><code>--help</code>, <code>-h</code></td><td class="wrap">Print the launcher's header documentation.</td></tr>

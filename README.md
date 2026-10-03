@@ -154,10 +154,25 @@ step, then `openai-codex/gpt-6-astra` xhigh. `bin/fm`, `fm doctor`, and
 `fm version` all resolve this chain through the one shared availability path
 in `firstmate/fm-captain-lib.sh`.
 
+`fm --model codex|claude` (either order with `--harness`) replaces the chain
+for one launch with a preset: `codex` is `openai-codex/gpt-6.1-sol` at
+medium, `claude` is `anthropic/claude-sonnet-5-5` (Sonnet 5.5) at high. Both
+ids are exact and version-pinned in OMP's native catalog and in Pi's built-in
+registry; Pi's `pi-claude-code-provider/sonnet` is an unversioned alias and is
+never used for this preset, so on Pi `claude` needs Anthropic credentials
+configured in Pi itself. The preset is used only when that same availability
+path reports its exact model and effort `AVAILABLE` on the selected harness.
+Any other value, or an unavailable or unverifiable preset, warns
+(`REQUESTED_MODEL_FALLBACK` in `--check`) and launches the unchanged chain -
+default model and effort - on the same harness; a raw model id is never passed
+through. Nothing is persisted, and chain/runtime blockers still stop the
+launch.
+
 The Sonnet fallback step is harness-scoped because the two harnesses expose
 Claude Sonnet under different, non-interchangeable ids: OMP's own native
-catalog carries `anthropic/claude-sonnet-5-5`; Pi exposes it only through the
-Claude Code provider extension as `pi-claude-code-provider/sonnet`, which is
+catalog carries `anthropic/claude-sonnet-5-5`; Pi's chain step instead uses
+the Claude Code provider extension's subscription-backed
+`pi-claude-code-provider/sonnet` alias, which is
 not an OMP model id and is never checked against OMP's catalog. Each TSV row
 carries an optional third `harness` column (`omp`, `pi`, or blank for both);
 a row whose harness column does not match the active Captain harness is
@@ -202,6 +217,7 @@ Read-only drift check:
 | --- | --- |
 | `fm` | Start the OMP Captain from any directory |
 | `fm --harness pi` | Start the Captain with the explicit Pi fallback |
+| `fm --model codex\|claude [--harness pi]` | Start this Captain on GPT-6.1 Sol (medium) or Sonnet 5.5 (high), either flag order; any other value or an unavailable preset warns and uses the default startup chain |
 | `fm doctor` | Run read-only architecture, compatibility, routing, and installation diagnostics |
 | `fm version` | Print compact stack identity and version information |
 | `fm update` | Fast-forward the official FirstMate checkout (`FIRSTMATE_ROOT`), then the `firstmate-config` checkout, then reconcile and verify this machine via its own `install.sh`; check both checkouts before changing either, refuse anything that is not a clean, plain fast-forward, and report a failure after the official stage as a partial update |
