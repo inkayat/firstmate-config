@@ -1,0 +1,879 @@
+#!/usr/bin/env python3
+"""fm-team - team profiles, per-task binding, and the delivery scope audit.
+
+A team profile (`teams/<name>.json`) configures one opt-in OMP team task: its
+lead, its members with their mode (read-only or mutating), write globs,
+message recipients, helper spawns and optional extra skills, an ordered
+workflow, and the team's operation rights. A profile only ever narrows what
+the global role files already allow; it never rewrites one.
+
+`validate` checks a profile against this checkout's real role frontmatter, the
+same fields OMP reads (`tools`, `spawns`, `autoloadSkills`):
+
+- a member must be another role and sit inside the lead role's `spawns` list
+  (OMP's own spawn allowlist for that role);
+- `mutating` needs a role whose `tools` (when declared) include write or
+  edit, and `talk_to` needs `write`, because OMP grants outbound messages only
+  with `write`;
+- a helper `spawn` must sit inside the member role's declared `spawns` list
+  (`*` for any agent); a role that declares no `spawns` gives its members no
+  helper at all, because OMP disables spawning for such a spawned agent;
+- extra `skills` must be shared skills this repository manages (`skills/` or
+  `skills/external.lock`) and, with the role's `autoloadSkills`, stay within
+  primary-policy.md section 5's per-task budget of three (two workflow plus
+  one reference; the split itself is not machine-readable, only the total);
+- write globs are repository-relative (`*`, `?`, whole-segment `**` only) and
+  no two members may own an overlapping glob - checked conservatively by
+  literal prefix, so `apps/**` and `apps/api/**` overlap even where no file
+  would match both;
+- the workflow is an ordered phase list (no graph, so no cycle can exist),
+  naming every member, with at most the team-lead role's two rework rounds;
+- `ops` is exactly `commit: none|request`, `push: none`, `merge: none`.
+  `request` means the team stops uncommitted for the captain's approval;
+  no profile value grants a commit, push, or merge.
+
+`bind` is the Captain's intake step for a team task: it validates
+`teams/<name>.json`, then writes a byte-for-byte snapshot and a binding record
+(`$FM_HOME/data/team-bindings/<task>.profile.json` and `<task>.json`: profile
+name, snapshot sha256, delivery-audit base commit, and the profile's commit
+when it is tracked and unmodified). A bound task never reads `teams/` again,
+so editing a profile cannot change a running task, and two tasks never share
+one record. It warns when this checkout's extensions/fm-team-policy.ts is not
+linked into OMP's user extension root (`FM_OMP_EXTENSIONS_ROOT`, default
+~/.omp/agent/extensions): without it nothing enforces the profile at
+runtime and only `audit` checks the delivery.
+
+`check` resolves a task the way the runtime policy extension does:
+- `none` - no binding and a brief (`$FM_HOME/data/<task>/brief.md`) without a
+  `Team profile: <name>` line: an ordinary, non-team task;
+- `team` - binding, snapshot, sha256 and brief all agree, and the snapshot
+  still validates against the current roles (a later role narrowing
+  invalidates it), which makes `check` the relaunch check;
+- refused `team-binding-missing` (the brief names a profile, no binding),
+  `team-binding-corrupt`, `team-binding-mismatch`, `team-profile-missing`,
+  `team-profile-tampered`, or `team-profile-corrupt`.
+The sha256 is a consistency check, not authorization: the binding, snapshot
+and brief are all writable by the same user, so a worker that rewrites them
+together, or deletes both the binding and the brief line, is not detected.
+
+`audit` is the Captain-side delivery check, run outside the worker. For a
+sound binding it lists every path the candidate changes relative to the bound
+base - the committed `base..HEAD` delta (renames as both paths), plus staged,
+unstaged, untracked, deleted and renamed paths from `git status` - and
+refuses `path-outside-scope` (not in the union of the members' write globs),
+`symlink-outside-worktree` (a committed, staged or on-disk link resolving
+outside the worktree), and `gitlink-change` (any submodule or gitlink). It
+proves team-level final-tree scope only: never which member wrote a path,
+nothing written and then reverted, nothing outside the worktree, and no
+ignored file. The worktree comes from `--worktree` or the official
+`$FM_HOME/state/<task>.meta` `worktree=` line.
+
+Usage:
+  fm-team validate PROFILE.json
+  fm-team bind TASK --profile NAME --base COMMIT
+  fm-team check TASK
+  fm-team audit TASK [--worktree PATH]
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime
+import fcntl
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+# Every git call here only inspects a repository - this checkout or a
+# worker's worktree - so it must not leave an index refresh or lock behind.
+os.environ["GIT_OPTIONAL_LOCKS"] = "0"
+
+SCHEMA = "fm-team-profile.v1"
+BINDING_SCHEMA = "fm-team-binding.v1"
+PROFILE_KEYS = ("schema", "name", "description", "lead", "members", "workflow", "ops")
+PROFILE_REQUIRED = ("schema", "name", "lead", "members", "workflow", "ops")
+MEMBER_KEYS = ("agent", "mode", "paths", "talk_to", "spawn", "skills")
+MODES = ("read-only", "mutating")
+OPS = {"commit": ("none", "request"), "push": ("none",), "merge": ("none",)}
+# The agents OMP bundles; the same list fm-doctor's roles.spawns check accepts.
+BUNDLED_AGENTS = ("scout", "reviewer", "security-reviewer", "task", "sonic")
+SKILL_BUDGET = 3       # primary-policy.md section 5: two workflow + one reference
+MAX_REWORK_ROUNDS = 2  # roles/team-lead/ROLE.md step 10
+
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+AGENT_RE = re.compile(r"^fm-([a-z0-9][a-z0-9-]*)$")
+GLOB_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._@+*?-]+$")
+TASK_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+BASE_RE = re.compile(r"^[0-9a-f]{7,40}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+BRIEF_MARKER_RE = re.compile(r"^Team profile: (\S+)[ \t]*$", re.M)
+
+
+class TeamError(Exception):
+    """One refusal: a fixed machine code plus a human message."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def die(msg: str) -> "None":
+    print(f"fm-team: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def config_root() -> str:
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def fm_home() -> str:
+    return os.environ.get("FM_HOME") or os.path.expanduser("~/.firstmate")
+
+
+def bindings_dir() -> str:
+    return os.path.join(fm_home(), "data", "team-bindings")
+
+
+def binding_path(task: str) -> str:
+    return os.path.join(bindings_dir(), f"{task}.json")
+
+
+def snapshot_path(task: str) -> str:
+    return os.path.join(bindings_dir(), f"{task}.profile.json")
+
+
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+# --- role frontmatter (the fields OMP reads) ---------------------------------
+
+def role_frontmatter(path: str) -> dict:
+    """Scalars as strings and lists as lists, from a role file's leading
+    `---` block: block lists, inline `[a, b]` lists, and CSV scalars, the
+    shapes OMP accepts for tools/spawns/autoloadSkills."""
+    fm: dict = {}
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    if not lines or lines[0] != "---":
+        return fm
+    key = None
+    for line in lines[1:]:
+        if line == "---":
+            break
+        item = re.match(r"^\s+-\s+(.*)$", line)
+        if item and key is not None:
+            fm.setdefault(key, []).append(item.group(1).strip().strip("\"'"))
+            continue
+        kv = re.match(r"^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$", line)
+        if not kv:
+            key = None
+            continue
+        key, value = kv.group(1), kv.group(2).strip()
+        if value == "":
+            fm[key] = []
+        elif value.startswith("[") and value.endswith("]"):
+            fm[key] = [x.strip().strip("\"'") for x in value[1:-1].split(",") if x.strip()]
+            key = None
+        else:
+            fm[key] = value.strip("\"'")
+            key = None
+    return fm
+
+
+def as_list(value) -> list | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    return [x.strip() for x in value.split(",") if x.strip()]
+
+
+class Roles:
+    """Native upper bounds from roles/<role>/ROLE.md, keyed by agent name."""
+
+    def __init__(self, root: str):
+        self.root = root
+        self._cache: dict = {}
+
+    def get(self, agent) -> dict | None:
+        m = AGENT_RE.match(agent) if isinstance(agent, str) else None
+        if not m:
+            return None
+        if agent not in self._cache:
+            path = os.path.join(self.root, "roles", m.group(1), "ROLE.md")
+            self._cache[agent] = role_frontmatter(path) if os.path.isfile(path) else None
+        return self._cache[agent]
+
+    def known_agent(self, agent: str) -> bool:
+        return agent in BUNDLED_AGENTS or self.get(agent) is not None
+
+    @staticmethod
+    def tools(fm: dict) -> set | None:
+        tools = as_list(fm.get("tools"))
+        return None if tools is None else set(tools)
+
+    @staticmethod
+    def spawn_bound(fm: dict) -> set | None:
+        """None = any agent (a declared `spawns: "*"`); a set = exactly the
+        declared list (empty = none). An undeclared `spawns` is none: OMP
+        refused a member role that declares neither spawns nor tools ("Cannot
+        spawn 'task'. Allowed: none (spawns disabled for this agent)",
+        native-trial-report.md section 5), and OMP's documented compatibility
+        rule (tools listing `task` implies `*`) is deliberately not honored,
+        so only a declared list or wildcard can back a helper right."""
+        spawns = as_list(fm.get("spawns"))
+        if spawns is None:
+            return set()
+        return None if spawns == ["*"] else set(spawns)
+
+
+def managed_skills(root: str) -> set:
+    names = set()
+    skills_dir = os.path.join(root, "skills")
+    if os.path.isdir(skills_dir):
+        for name in os.listdir(skills_dir):
+            if os.path.isfile(os.path.join(skills_dir, name, "SKILL.md")):
+                names.add(name)
+    lock = os.path.join(skills_dir, "external.lock")
+    if os.path.isfile(lock):
+        with open(lock, encoding="utf-8") as f:
+            for line in f:
+                cols = line.rstrip("\n").split("\t")
+                if cols and cols[0] and not cols[0].startswith("#") and len(cols) >= 5 and cols[4]:
+                    names.add(cols[4])
+    return names
+
+
+# --- write globs ----------------------------------------------------------------
+
+def glob_problem(glob) -> str | None:
+    if not isinstance(glob, str) or not glob or len(glob) > 200:
+        return "must be a non-empty string of at most 200 characters"
+    if glob.startswith("/") or "\\" in glob:
+        return "must be repository-relative with forward slashes"
+    for seg in glob.split("/"):
+        if seg in ("", ".", ".."):
+            return "may not contain empty, '.' or '..' segments"
+        if not GLOB_SEGMENT_RE.match(seg):
+            return "supports only letters, digits, . _ @ + -, and the wildcards * ? **"
+        if "**" in seg and seg != "**":
+            return "'**' must be a whole path segment"
+    return None
+
+
+def glob_regex(glob: str) -> str:
+    """`*`/`?` stay inside one segment; `**` spans any number of segments,
+    including none, so `apps/api/**` also matches `apps/api` itself.
+    extensions/fm-team-policy.ts implements the same translation."""
+    rx, need_sep = "", False
+    parts = glob.split("/")
+    for i, seg in enumerate(parts):
+        if seg == "**":
+            if i == len(parts) - 1:
+                rx += "(?:/.*)?" if need_sep else ".*"
+            else:
+                rx += "/(?:.*/)?" if need_sep else "(?:.*/)?"
+            need_sep = False
+            continue
+        if need_sep:
+            rx += "/"
+        rx += "".join("[^/]*" if c == "*" else "[^/]" if c == "?" else re.escape(c) for c in seg)
+        need_sep = True
+    return f"^{rx}$"
+
+
+def glob_match(glob: str, path: str) -> bool:
+    return re.match(glob_regex(glob), path, re.S) is not None
+
+
+def _literal_prefix(glob: str) -> list:
+    out = []
+    for seg in glob.split("/"):
+        if "*" in seg or "?" in seg:
+            break
+        out.append(seg)
+    return out
+
+
+def globs_overlap(a: str, b: str) -> bool:
+    a_exact = "*" not in a and "?" not in a
+    b_exact = "*" not in b and "?" not in b
+    if a_exact and b_exact:
+        return a == b
+    if a_exact or b_exact:
+        exact, wild = (a, b) if a_exact else (b, a)
+        return glob_match(wild, exact)
+    pa, pb = _literal_prefix(a), _literal_prefix(b)
+    n = min(len(pa), len(pb))
+    return pa[:n] == pb[:n]
+
+
+# --- profile validation ------------------------------------------------------------
+
+def _str_list(value) -> bool:
+    return isinstance(value, list) and all(isinstance(x, str) for x in value)
+
+
+def validate_profile(p, root: str) -> list:
+    """Every refusal as (code, message); empty when the profile is valid."""
+    errs: list = []
+
+    def err(code: str, msg: str) -> None:
+        errs.append((code, msg))
+
+    if not isinstance(p, dict):
+        return [("unreadable", "a profile is one JSON object")]
+    for key in p:
+        if key not in PROFILE_KEYS:
+            err("unknown-key", f"unknown profile key '{key}'")
+    missing = [k for k in PROFILE_REQUIRED if k not in p]
+    if missing:
+        err("unreadable", f"profile is missing {', '.join(missing)}")
+        return errs
+    if p["schema"] != SCHEMA:
+        err("bad-schema", f"schema must be {SCHEMA} (got {p['schema']!r})")
+    if not isinstance(p["name"], str) or not NAME_RE.match(p["name"]):
+        err("bad-name", f"name must match {NAME_RE.pattern}")
+    if "description" in p and not isinstance(p["description"], str):
+        err("bad-type", "description must be a string")
+
+    roles = Roles(root)
+    skills = managed_skills(root)
+    lead_fm = roles.get(p["lead"])
+    lead_bound: set | None = set()
+    if lead_fm is None:
+        err("unknown-agent", f"lead {p['lead']!r} has no roles/<role>/ROLE.md")
+    elif as_list(lead_fm.get("spawns")) is None:
+        err("bad-lead", f"lead {p['lead']} declares no spawns list, so it has no member upper bound")
+    else:
+        lead_bound = Roles.spawn_bound(lead_fm)
+
+    members = p["members"]
+    if not isinstance(members, list) or not members or not all(isinstance(m, dict) for m in members):
+        err("bad-type", "members must be a non-empty list of objects")
+        members = []
+    agents = [m.get("agent") for m in members]
+    owned: list = []  # (agent, glob)
+    for index, m in enumerate(members):
+        agent = m.get("agent")
+        for key in m:
+            if key not in MEMBER_KEYS:
+                err("unknown-key", f"unknown member key '{key}' on {agent}")
+        fm = roles.get(agent)
+        if fm is None:
+            err("unknown-agent", f"member {agent!r} has no roles/<role>/ROLE.md")
+            continue
+        if agents.index(agent) != index:
+            err("duplicate-member", f"{agent} is listed more than once")
+            continue
+        if lead_bound is not None and agent not in lead_bound:
+            err("exceeds-native-spawns", f"{agent} is not in {p['lead']}'s spawns list")
+        tools = Roles.tools(fm)
+        mode = m.get("mode")
+        if mode not in MODES:
+            err("bad-mode", f"{agent} mode must be one of {', '.join(MODES)} (got {mode!r})")
+        paths = m.get("paths", {})
+        if not isinstance(paths, dict):
+            err("bad-type", f"{agent} paths must be an object")
+            paths = {}
+        for key in paths:
+            if key != "write":
+                err("unknown-key", f"unknown paths key '{key}' on {agent}")
+        write = paths.get("write", [])
+        if not _str_list(write):
+            err("bad-type", f"{agent} paths.write must be a list of globs")
+            write = []
+        if mode == "mutating":
+            if tools is not None and not tools & {"write", "edit"}:
+                err("exceeds-native-tools", f"{agent} is mutating but its role tools have neither write nor edit")
+            if not write:
+                err("missing-write-paths", f"mutating {agent} needs paths.write")
+        elif mode == "read-only" and write:
+            err("write-paths-on-read-only", f"read-only {agent} may not own write paths")
+        for glob in write:
+            problem = glob_problem(glob)
+            if problem:
+                err("bad-path", f"{agent} write glob {glob!r} {problem}")
+            else:
+                owned.append((agent, glob))
+        talk_to = m.get("talk_to", [])
+        if not _str_list(talk_to):
+            err("bad-type", f"{agent} talk_to must be a list of member agents")
+            talk_to = []
+        for rcpt in talk_to:
+            if rcpt not in agents or rcpt == agent:
+                err("unknown-recipient", f"{agent} talk_to {rcpt!r} is not another member of this team")
+        if talk_to and tools is not None and "write" not in tools:
+            err("exceeds-native-tools", f"{agent} has talk_to but its role tools lack write, which OMP requires to message")
+        spawn = m.get("spawn", [])
+        if not _str_list(spawn):
+            err("bad-type", f"{agent} spawn must be a list of agents")
+            spawn = []
+        bound = Roles.spawn_bound(fm)
+        for helper in spawn:
+            if not roles.known_agent(helper):
+                err("unknown-agent", f"{agent} spawn {helper!r} is neither a role nor a bundled OMP agent")
+            elif bound is not None and helper not in bound:
+                err("exceeds-native-spawns", f"{agent}'s role does not natively allow spawning {helper}")
+        extra = m.get("skills", [])
+        if not _str_list(extra):
+            err("bad-type", f"{agent} skills must be a list of skill names")
+            extra = []
+        for skill in extra:
+            if skill not in skills:
+                err("unmanaged-skill", f"{agent} skill {skill!r} is not managed by skills/ or skills/external.lock")
+        total = set(as_list(fm.get("autoloadSkills")) or []) | set(extra)
+        if len(total) > SKILL_BUDGET:
+            err("skill-budget", f"{agent} would carry {len(total)} skills ({', '.join(sorted(total))}); the per-task budget is {SKILL_BUDGET}")
+
+    for i, (agent_a, a) in enumerate(owned):
+        for agent_b, b in owned[i + 1:]:
+            if agent_a != agent_b and globs_overlap(a, b):
+                err("overlapping-write-paths", f"{agent_a} {a!r} overlaps {agent_b} {b!r}; each path has one owner")
+
+    wf = p["workflow"]
+    if not isinstance(wf, dict):
+        err("bad-type", "workflow must be an object")
+        wf = {}
+    for key in wf:
+        if key not in ("phases", "max_rework_rounds"):
+            err("unknown-key", f"unknown workflow key '{key}'")
+    phases = wf.get("phases")
+    if not isinstance(phases, list) or not phases or not all(isinstance(ph, dict) for ph in phases):
+        err("bad-workflow", "workflow.phases must be a non-empty ordered list of {name, members}")
+        phases = []
+    names: list = []
+    phased: set = set()
+    for ph in phases:
+        for key in ph:
+            if key not in ("name", "members"):
+                err("unknown-key", f"unknown phase key '{key}'")
+        name = ph.get("name")
+        if not isinstance(name, str) or not NAME_RE.match(name) or name in names:
+            err("bad-workflow", f"phase name {name!r} must be unique and match {NAME_RE.pattern}")
+        names.append(name)
+        ph_members = ph.get("members")
+        if not _str_list(ph_members) or not ph_members:
+            err("bad-workflow", f"phase {name!r} needs a non-empty members list")
+            continue
+        for agent in ph_members:
+            if agent not in agents:
+                err("unknown-member", f"phase {name!r} names {agent!r}, which is not a member")
+            phased.add(agent)
+    if phases:
+        for agent in agents:
+            if isinstance(agent, str) and agent not in phased:
+                err("unphased-member", f"{agent} is in no workflow phase")
+    rounds = wf.get("max_rework_rounds")
+    if isinstance(rounds, bool) or not isinstance(rounds, int) or not 0 <= rounds <= MAX_REWORK_ROUNDS:
+        err("bad-rework-rounds", f"workflow.max_rework_rounds must be an integer 0..{MAX_REWORK_ROUNDS}")
+
+    ops = p["ops"]
+    if not isinstance(ops, dict):
+        err("bad-type", "ops must be an object")
+        ops = {}
+    for key in ops:
+        if key not in OPS:
+            err("unknown-right", f"unknown right ops.{key}")
+    for key, allowed in OPS.items():
+        if key not in ops:
+            err("unknown-right", f"missing right ops.{key}")
+        elif ops[key] not in allowed:
+            err("op-not-allowed", f"ops.{key} must be {' or '.join(allowed)} (got {ops[key]!r}); commit, push and merge stay Firstmate's")
+    return errs
+
+
+# --- binding -------------------------------------------------------------------------
+
+def _refuse_symlink(path: str, what: str) -> None:
+    if os.path.islink(path):
+        die(f"{what} is a symlink, refusing to follow it: {path}")
+
+
+@contextlib.contextmanager
+def _lock():
+    _refuse_symlink(os.path.join(fm_home(), "data"), "data directory")
+    _refuse_symlink(bindings_dir(), "team-bindings directory")
+    os.makedirs(bindings_dir(), mode=0o700, exist_ok=True)
+    lock_fd = os.open(os.path.join(bindings_dir(), ".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+def _atomic_write(path: str, data: bytes) -> None:
+    _refuse_symlink(path, "target")
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp.")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
+
+
+def profile_commit(root: str, rel: str) -> str | None:
+    """The commit that last touched a tracked, unmodified profile; None for an
+    untracked or locally modified one (no approved revision to point at)."""
+    def git(*argv):
+        return subprocess.run(["git", "-C", root, *argv], capture_output=True, text=True)
+    try:
+        if git("ls-files", "--error-unmatch", "--", rel).returncode != 0:
+            return None
+        if git("diff", "--quiet", "HEAD", "--", rel).returncode != 0:
+            return None
+        out = git("log", "-1", "--format=%H", "--", rel)
+    except OSError:
+        return None
+    commit = out.stdout.strip()
+    return commit if out.returncode == 0 and COMMIT_RE.match(commit) else None
+
+
+def brief_profile(task: str) -> str | None:
+    """The Captain's own intake marker: a `Team profile: <name>` line in the
+    task brief. It is the only record of "this is a team task" that lives
+    outside the binding directory."""
+    path = os.path.join(fm_home(), "data", task, "brief.md")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            m = BRIEF_MARKER_RE.search(f.read())
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
+def resolve(task: str, root: str) -> dict | None:
+    """None for a non-team task; the binding and profile for a sound team
+    task; TeamError for a team task whose required profile cannot be used."""
+    marker = brief_profile(task)
+    bpath = binding_path(task)
+    if not os.path.lexists(bpath):
+        if marker:
+            raise TeamError("team-binding-missing", f"the brief names team profile {marker} but {bpath} is absent")
+        return None
+    if os.path.islink(bpath) or not os.path.isfile(bpath):
+        raise TeamError("team-binding-corrupt", f"{bpath} is not a regular file")
+    try:
+        with open(bpath, encoding="utf-8") as f:
+            binding = json.load(f)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise TeamError("team-binding-corrupt", f"{bpath}: {exc}") from None
+    if not isinstance(binding, dict) or binding.get("schema") != BINDING_SCHEMA:
+        raise TeamError("team-binding-corrupt", f"{bpath} is not a {BINDING_SCHEMA} record")
+    if binding.get("task") != task:
+        raise TeamError("team-binding-mismatch", f"{bpath} records task {binding.get('task')!r}")
+    commit = binding.get("profile_commit")
+    if not (isinstance(binding.get("profile"), str) and NAME_RE.match(binding["profile"])
+            and isinstance(binding.get("profile_sha256"), str) and SHA256_RE.match(binding["profile_sha256"])
+            and isinstance(binding.get("base"), str) and BASE_RE.match(binding["base"])
+            and (commit is None or (isinstance(commit, str) and COMMIT_RE.match(commit)))):
+        raise TeamError("team-binding-corrupt", f"{bpath} has a missing or malformed field")
+    if marker and marker != binding["profile"]:
+        raise TeamError("team-binding-mismatch", f"the brief names {marker} but the binding names {binding['profile']}")
+    spath = snapshot_path(task)
+    if not os.path.lexists(spath):
+        raise TeamError("team-profile-missing", f"{spath} is absent")
+    if os.path.islink(spath) or not os.path.isfile(spath):
+        raise TeamError("team-profile-corrupt", f"{spath} is not a regular file")
+    with open(spath, "rb") as f:
+        raw = f.read()
+    if sha256(raw) != binding["profile_sha256"]:
+        raise TeamError("team-profile-tampered", f"{spath} no longer matches the bound sha256")
+    try:
+        profile = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise TeamError("team-profile-corrupt", f"{spath}: {exc}") from None
+    errs = validate_profile(profile, root)
+    if errs:
+        raise TeamError("team-profile-corrupt", "; ".join(f"{c}: {m}" for c, m in errs))
+    if profile["name"] != binding["profile"]:
+        raise TeamError("team-profile-corrupt", f"snapshot is profile {profile['name']}, binding names {binding['profile']}")
+    return {"binding": binding, "profile": profile}
+
+
+# --- commands -------------------------------------------------------------------------
+
+def _print_refusals(errs: list) -> None:
+    for code, msg in errs:
+        print(f"fm-team: refused ({code}): {msg}", file=sys.stderr)
+
+
+def cmd_validate(args) -> int:
+    try:
+        with open(args.profile, encoding="utf-8") as f:
+            profile = json.load(f)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        die(f"refused (unreadable): {args.profile}: {exc}")
+    errs = validate_profile(profile, config_root())
+    _print_refusals(errs)
+    if errs:
+        return 1
+    print(f"ok: team profile {profile['name']} ({len(profile['members'])} member(s))")
+    return 0
+
+
+def cmd_bind(args) -> int:
+    root = config_root()
+    if not TASK_RE.match(args.task):
+        die(f"refused (bad-task): '{args.task}' is not a task id")
+    if not NAME_RE.match(args.profile):
+        die(f"refused (bad-profile): '{args.profile}' is not a profile name (teams/<name>.json)")
+    if not BASE_RE.match(args.base):
+        die(f"refused (bad-base): '{args.base}' is not a commit id (7-40 lowercase hex)")
+    rel = f"teams/{args.profile}.json"
+    path = os.path.join(root, rel)
+    if os.path.islink(path) or not os.path.isfile(path):
+        die(f"refused (bad-profile): {path} is not a regular file")
+    with open(path, "rb") as f:
+        raw = f.read()
+    try:
+        profile = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        die(f"refused (unreadable): {path}: {exc}")
+    errs = validate_profile(profile, root)
+    _print_refusals(errs)
+    if errs:
+        return 1
+    if profile["name"] != args.profile:
+        die(f"refused (bad-profile): {rel} declares name {profile['name']!r}")
+    binding = {
+        "schema": BINDING_SCHEMA,
+        "task": args.task,
+        "profile": args.profile,
+        "profile_sha256": sha256(raw),
+        "profile_commit": profile_commit(root, rel),
+        "base": args.base,
+        "bound_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    with _lock():
+        if os.path.lexists(binding_path(args.task)) or os.path.lexists(snapshot_path(args.task)):
+            die(f"refused (already-bound): {args.task} already has a binding in {bindings_dir()}")
+        _atomic_write(snapshot_path(args.task), raw)
+        _atomic_write(binding_path(args.task), (json.dumps(binding, indent=2) + "\n").encode())
+    print(f"bound: {args.task} -> {rel} sha256={binding['profile_sha256']} base={args.base}")
+    # install.sh links the extension into this root; a session started with
+    # another OMP profile or agent directory loads a root this cannot see.
+    ext_root = os.environ.get("FM_OMP_EXTENSIONS_ROOT") or os.path.expanduser("~/.omp/agent/extensions")
+    link = os.path.join(ext_root, "fm-team-policy.ts")
+    ours = os.path.realpath(os.path.join(root, "extensions", "fm-team-policy.ts"))
+    if not (os.path.isfile(link) and os.path.realpath(link) == ours):
+        print(f"fm-team: warning: the team policy extension is not linked at {link}; OMP sessions of "
+              f"{args.task} run unenforced and only `fm-team audit` checks the delivery", file=sys.stderr)
+    return 0
+
+
+def cmd_check(args) -> int:
+    if not TASK_RE.match(args.task):
+        die(f"refused (bad-task): '{args.task}' is not a task id")
+    try:
+        resolved = resolve(args.task, config_root())
+    except TeamError as exc:
+        die(f"refused ({exc.code}): {exc.message}")
+    if resolved is None:
+        print(f"none: {args.task} has no team binding and its brief names no team profile")
+        return 0
+    b = resolved["binding"]
+    print(f"team: {args.task} profile={b['profile']} sha256={b['profile_sha256']} base={b['base']}")
+    return 0
+
+
+# --- delivery audit -------------------------------------------------------------
+
+AUDIT_LIMITS = ("team-level final-tree scope only; no per-member attribution; transient writes, "
+                "writes outside the worktree, and ignored files are not visible")
+KINDS = {"M": "modified", "A": "added", "D": "deleted", "T": "typechange", "U": "unmerged"}
+GITLINK_MODE, SYMLINK_MODE = "160000", "120000"
+
+
+def _git(worktree: str, *argv) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", worktree, *argv], capture_output=True)
+
+
+def _decode(raw: bytes) -> str:
+    return raw.decode("utf-8", "surrogateescape")
+
+
+def task_worktree(task: str) -> str | None:
+    try:
+        with open(os.path.join(fm_home(), "state", f"{task}.meta"), encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("worktree="):
+                    return line[len("worktree="):].rstrip("\n") or None
+    except OSError:
+        pass
+    return None
+
+
+def _entry(source, kind, path, gitlink=False, blob=None, disk=False) -> dict:
+    """blob: a symlink's object id to read its target from; disk: read the
+    worktree file itself (unstaged and untracked paths)."""
+    return {"source": source, "kind": kind, "path": path, "gitlink": gitlink, "blob": blob, "disk": disk}
+
+
+def committed_entries(wt: str, base: str) -> list:
+    out = _git(wt, "diff", "--raw", "-z", "-M", "--no-abbrev", base, "HEAD")
+    if out.returncode != 0:
+        raise TeamError("bad-worktree", f"git diff {base} HEAD failed: {_decode(out.stderr).strip()}")
+    tokens, entries, i = _decode(out.stdout).split("\0"), [], 0
+    while i < len(tokens):
+        head = tokens[i]
+        if not head.startswith(":"):
+            i += 1
+            continue
+        src_mode, dst_mode, _src_sha, dst_sha, status = head[1:].split(" ")
+        gitlink, letter = GITLINK_MODE in (src_mode, dst_mode), status[0]
+        blob = dst_sha if dst_mode == SYMLINK_MODE else None
+        if letter in "RC":
+            old, new = tokens[i + 1], tokens[i + 2]
+            i += 3
+            if letter == "R":
+                entries.append(_entry("committed", "renamed-from", old, gitlink))
+            entries.append(_entry("committed", "renamed-to" if letter == "R" else "added", new, gitlink, blob))
+        else:
+            entries.append(_entry("committed", KINDS.get(letter, "modified"), tokens[i + 1], gitlink,
+                                  None if letter == "D" else blob))
+            i += 2
+    return entries
+
+
+def worktree_entries(wt: str) -> list:
+    out = _git(wt, "status", "--porcelain=v2", "-z", "--untracked-files=all")
+    if out.returncode != 0:
+        raise TeamError("bad-worktree", f"git status failed: {_decode(out.stderr).strip()}")
+    tokens, entries, i = _decode(out.stdout).split("\0"), [], 0
+    while i < len(tokens):
+        rec = tokens[i]
+        i += 1
+        if rec.startswith("? "):
+            entries.append(_entry("untracked", "added", rec[2:], disk=True))
+        elif rec[:2] in ("1 ", "2 "):
+            f = rec.split(" ", 8 if rec[0] == "1" else 9)
+            x, y, sub, modes, h_index, path = f[1][0], f[1][1], f[2], f[3:6], f[7], f[-1]
+            gitlink = sub.startswith("S") or GITLINK_MODE in modes
+            blob = h_index if modes[1] == SYMLINK_MODE else None
+            if rec[0] == "2":
+                orig = tokens[i]
+                i += 1
+                entries.append(_entry("staged", "renamed-to" if x == "R" else "added", path, gitlink, blob))
+                if x == "R":
+                    entries.append(_entry("staged", "renamed-from", orig, gitlink))
+            elif x != ".":
+                entries.append(_entry("staged", KINDS.get(x, "modified"), path, gitlink, None if x == "D" else blob))
+            if y != ".":
+                entries.append(_entry("unstaged", KINDS.get(y, "modified"), path, gitlink, disk=y != "D"))
+        elif rec.startswith("u "):
+            f = rec.split(" ", 10)
+            entries.append(_entry("unmerged", "unmerged", f[-1], f[2].startswith("S"), disk=True))
+    return entries
+
+
+def link_escapes(wt_real: str, path: str, target: str) -> bool:
+    base = target if os.path.isabs(target) else os.path.join(wt_real, os.path.dirname(path), target)
+    resolved = os.path.realpath(base)
+    return not (resolved == wt_real or resolved.startswith(wt_real + os.sep))
+
+
+def judge(entry: dict, wt_real: str, globs: list) -> str | None:
+    path = entry["path"]
+    if not path or path.startswith("/") or ".." in path.split("/"):
+        return "bad-path"
+    if entry["gitlink"]:
+        return "gitlink-change"
+    target = None
+    if entry["blob"]:
+        target = _decode(_git(wt_real, "cat-file", "blob", entry["blob"]).stdout)
+    elif entry["disk"] and os.path.islink(os.path.join(wt_real, path)):
+        target = os.readlink(os.path.join(wt_real, path))
+    if target is not None and link_escapes(wt_real, path, target):
+        return "symlink-outside-worktree"
+    if not any(glob_match(g, path) for g in globs):
+        return "path-outside-scope"
+    return None
+
+
+def shown(path: str) -> str:
+    return path if path.isprintable() else json.dumps(path)
+
+
+def cmd_audit(args) -> int:
+    if not TASK_RE.match(args.task):
+        die(f"refused (bad-task): '{args.task}' is not a task id")
+    try:
+        resolved = resolve(args.task, config_root())
+    except TeamError as exc:
+        die(f"refused ({exc.code}): {exc.message}")
+    if resolved is None:
+        die(f"refused (not-a-team-task): {args.task} has no team binding; there is no team scope to audit")
+    binding, profile = resolved["binding"], resolved["profile"]
+    wt = args.worktree or task_worktree(args.task)
+    if not wt:
+        die(f"refused (bad-worktree): no --worktree and no worktree= line in state/{args.task}.meta")
+    wt_real = os.path.realpath(wt)
+    top = _git(wt_real, "rev-parse", "--show-toplevel")
+    if top.returncode != 0 or os.path.realpath(_decode(top.stdout).strip()) != wt_real:
+        die(f"refused (bad-worktree): {wt} is not a git worktree top level")
+    base = binding["base"]
+    if _git(wt_real, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}").returncode != 0:
+        die(f"refused (bad-base): bound base {base} is not a commit in {wt}")
+    globs = [g for m in profile["members"] for g in m.get("paths", {}).get("write", [])]
+    try:
+        entries = committed_entries(wt_real, base) + worktree_entries(wt_real)
+    except TeamError as exc:
+        die(f"refused ({exc.code}): {exc.message}")
+    print(f"binding: {args.task} profile={binding['profile']} sha256={binding['profile_sha256']} base={base}")
+    seen, refused = set(), 0
+    for e in entries:
+        key = (e["source"], e["kind"], e["path"])
+        if key in seen:
+            continue
+        seen.add(key)
+        code = judge(e, wt_real, globs)
+        refused += code is not None
+        verdict = f"refused {e['source']}:{e['kind']} {shown(e['path'])} ({code})" if code \
+            else f"ok {e['source']}:{e['kind']} {shown(e['path'])}"
+        print(verdict)
+    print(f"audit: {len(seen)} path(s), {refused} refused")
+    print(f"scope: {AUDIT_LIMITS}")
+    return 1 if refused else 0
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="fm-team", description=__doc__.split("\n")[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    v = sub.add_parser("validate", help="check a profile against the roles' native upper bounds")
+    v.add_argument("profile")
+    v.set_defaults(func=cmd_validate)
+    b = sub.add_parser("bind", help="validate teams/NAME.json and bind its snapshot to TASK")
+    b.add_argument("task")
+    b.add_argument("--profile", required=True)
+    b.add_argument("--base", required=True)
+    b.set_defaults(func=cmd_bind)
+    c = sub.add_parser("check", help="resolve TASK as non-team, team, or refused")
+    c.add_argument("task")
+    c.set_defaults(func=cmd_check)
+    a = sub.add_parser("audit", help="check every changed path of TASK's worktree against the team scope")
+    a.add_argument("task")
+    a.add_argument("--worktree")
+    a.set_defaults(func=cmd_audit)
+    return parser
+
+
+def main(argv: list) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

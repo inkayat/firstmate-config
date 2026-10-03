@@ -89,6 +89,29 @@
 <div class="callout note"><span class="t">Not a merge gate</span>
 <p>The in-team review does not replace the independent review before merge. The planning members and the reviewer are read-only; members report to the lead, and only the lead reports to FirstMate.</p></div>
 
+<h2 id="team-profiles">Team profiles</h2>
+<p>Optional: a team task can carry a profile, <code>teams/&lt;name&gt;.json</code>, that configures who is on the team, what each member may write and whom it may message, and which operations the team may only request. <code>fm team validate</code> judges it against the real role frontmatter, so a profile only narrows what the global roles already allow; no role file is ever rewritten for one task. <code>teams/web-feature.json</code> is a proposed example, not a selected team.</p>
+<table>
+<thead><tr><th>Field</th><th>Limits</th><th>Applied by</th></tr></thead>
+<tbody>
+<tr><td><code>members[].agent</code></td><td class="wrap">Who the lead may spawn, inside the lead role's own <code>spawns</code> list.</td><td class="wrap">Policy extension</td></tr>
+<tr><td><code>mode</code>, <code>paths.write</code></td><td class="wrap"><code>read-only</code>, or <code>mutating</code> with repository-relative globs; no two members own an overlapping glob.</td><td class="wrap">Policy extension and <code>fm team audit</code></td></tr>
+<tr><td><code>talk_to</code></td><td class="wrap">Which members a member may message; the lead is always reachable and <code>agent://all</code> never is.</td><td class="wrap">Policy extension</td></tr>
+<tr><td><code>spawn</code></td><td class="wrap">Helpers a member may start, inside its role's declared <code>spawns</code> list. A role without one allows no helper, and no shipped member role declares one. Helpers are read-only.</td><td class="wrap">Policy extension</td></tr>
+<tr><td><code>skills</code></td><td class="wrap">Extra shared skills the lead names in a member's brief, counted with the role's <code>autoloadSkills</code> against the budget of three. Default skills cannot be removed per task.</td><td class="wrap">Advisory</td></tr>
+<tr><td><code>workflow</code></td><td class="wrap">Ordered phases and at most two rework rounds, coordinated by the lead.</td><td class="wrap">Advisory</td></tr>
+<tr><td><code>ops</code></td><td class="wrap"><code>commit: none</code> or <code>request</code>, <code>push: none</code>, <code>merge: none</code>. A limit, never authority.</td><td class="wrap">Policy extension (best effort); FirstMate's guarded merge path</td></tr>
+</tbody>
+</table>
+<ol class="flow">
+<li><strong>Bind at intake.</strong> The Captain runs <code>fm team bind TASK --profile NAME --base COMMIT</code> and writes a <code>Team profile: NAME</code> line in the brief. The task keeps its own snapshot under <code>$FM_HOME/data/team-bindings/</code>.</li>
+<li><strong>Apply in OMP.</strong> <code>install.sh</code> links <code>extensions/fm-team-policy.ts</code> into OMP's user extension root. It acts only in the bound task's sessions; a bound task whose binding or snapshot is missing, corrupt, or tampered refuses everything but reads.</li>
+<li><strong>Check before a relaunch.</strong> <code>fm team check TASK</code> re-validates the snapshot against the current roles.</li>
+<li><strong>Audit at delivery.</strong> <code>fm team audit TASK</code> lists every committed, staged, unstaged, untracked, deleted, and renamed path and refuses anything outside the team scope.</li>
+</ol>
+<div class="callout warn"><span class="t">Where it stops</span>
+<p><code>bash</code> can still write any file, read anything, and use every credential the user account holds; the <code>ops</code> command patterns are best effort. The binding is writable by the same user, so its sha256 is a consistency check, not authorization. The audit proves the team's final-tree scope, not which member wrote what. The extension's decisions are tested against synthetic OMP hook events; a live OMP team session loading it has not been exercised yet.</p></div>
+
 <h2 id="shipped-skills">Shared skills that ship</h2>
 <p>Nineteen skills are installed under <code>~/.agents/skills</code>. Four live in this repository; fifteen are pinned by commit from three upstream repositories (all MIT-licensed, none vendored).</p>
 <table>

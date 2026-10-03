@@ -56,6 +56,10 @@ policy chooses worker harness, model, effort, and role by task semantics.
     opt-in, single-task OMP team: planning, then parallel implementation,
     QA, and review. `install.sh` links every role file into OMP's user agent
     root as `fm-<role>` (`firstmate/primary-policy.md` sections 4-5)
+- Optional per-task team profiles (`teams/<name>.json`): members, write
+  scopes, message recipients, helper spawns, workflow, and commit/push/merge
+  limits, applied in OMP sessions by this repository's own policy extension
+  and checked at delivery by `fm team audit` ("Team profiles" below)
 - Reproducibly installed shared worker skills and external pins
 - Browser/manual validation policy for user-visible work
 - Independent review before merge for substantive or risky Captain-dispatched
@@ -212,9 +216,11 @@ cd firstmate-config
 The installer checks the local toolchain, creates or verifies the official
 FirstMate checkout, writes machine-local resolution, installs tracked skills
 and slash commands (`~/.agents/skills`, `~/.agents/commands`), links each role
-file as an OMP agent (`~/.omp/agent/agents/fm-<role>.md`), and links
-commands into `~/.local/bin`. Running it again is the normal reconcile path
-and is idempotent.
+file as an OMP agent (`~/.omp/agent/agents/fm-<role>.md`) and the team policy
+extension into OMP's user extension root
+(`~/.omp/agent/extensions/fm-team-policy.ts`), and links commands into
+`~/.local/bin`. Running it again is the normal reconcile path and is
+idempotent.
 
 Read-only drift check:
 
@@ -234,6 +240,7 @@ Read-only drift check:
 | `fm update` | Fast-forward the official FirstMate checkout (`FIRSTMATE_ROOT`), then the `firstmate-config` checkout, then reconcile and verify this machine via its own `install.sh`; check both checkouts before changing either, refuse anything that is not a clean, plain fast-forward, and report a failure after the official stage as a partial update |
 | `fm board` / `fm board --lavish` | Open the persistent Kanban board (terminal-browser by default, Lavish with `--lavish`); render a deterministically refreshed, LLM-free data projection with the same static template, keep re-rendering it while the viewer is open, and let the page re-read it every few seconds so transitions appear without a manual refresh |
 | `fm bot ...` | Create, list, show, pause, resume, or remove home-local bot specs and dry-run which are due; never dispatches (`bin/fm-bot --help`) |
+| `fm team ...` | Validate a team profile, bind one to a task, check a binding, or audit a team task's changed paths against its scope; never spawns, commits, or merges (`bin/fm-team --help`) |
 | `ponytail-update` | Prepare and validate a local Ponytail pin update without committing or pushing |
 
 `fm doctor --json` and `fm version --json` provide machine-readable output.
@@ -255,6 +262,56 @@ available, it updates `skills/external.lock`, shows the diff, runs the Ponytail
 validation suites, reconciles the machine, verifies installed state, and checks
 again. It does not commit, merge, push, create branches, or tag releases.
 
+## Team profiles
+
+A team task - a brief naming the `team-lead` role - may carry a team profile,
+`teams/<name>.json`. `bin/fm-team validate` checks it against the real role
+frontmatter, so a profile only narrows what the global role files already
+allow and never rewrites one. `teams/web-feature.json` is a proposed example,
+not a captain-selected team.
+
+| Profile field | What it limits | Where it is applied |
+| --- | --- | --- |
+| `members[].agent` | who the lead may spawn, inside the lead role's own `spawns` list | policy extension, `before_subagent_spawn` |
+| `members[].mode`, `paths.write` | `read-only`, or `mutating` with repository-relative write globs; no two members own an overlapping glob | policy extension (write, edit, apply_patch, ast_edit targets, normalized and symlink-resolved) and `fm team audit` |
+| `members[].talk_to` | which members a member may message (`agent://all` is never allowed); a member may always message the lead | policy extension, `write agent://<id>` |
+| `members[].spawn` | helpers a member may spawn, inside its role's declared `spawns` list; a role without one allows no helper (no shipped member role declares one), and helpers are read-only | policy extension |
+| `members[].skills` | extra shared skills the lead names in that member's brief, counted against the per-task budget of three with the role's `autoloadSkills`; `autoloadSkills` themselves cannot be removed per task | advisory |
+| `workflow` | ordered phases and at most two rework rounds; the lead coordinates them | advisory (`team-lead` role) |
+| `ops` | `commit: none\|request`, `push: none`, `merge: none` - limits, never authority | policy extension (best-effort command patterns); FirstMate's guarded merge path |
+
+The flow uses existing owners only:
+
+1. At intake the Captain runs `fm team bind <task> --profile <name> --base <commit>`
+   and writes a `Team profile: <name>` line in the brief. The binding and a
+   byte-for-byte snapshot land in `$FM_HOME/data/team-bindings/`; the task
+   never reads `teams/` again.
+2. `install.sh` links `extensions/fm-team-policy.ts` into
+   `~/.omp/agent/extensions`, so OMP loads it into every session. It acts only
+   when the session's `FM_TASK_ID` (set by the official `fm-spawn`) is bound
+   or its brief names a profile; everywhere else it is a no-op. A bound task
+   whose binding or snapshot is missing, corrupt, tampered, or mismatched
+   refuses everything but reads.
+3. Before a relaunch, `fm team check <task>` re-validates the snapshot against
+   the current roles.
+4. Before review or landing, `fm team audit <task>` lists every committed,
+   staged, unstaged, untracked, deleted, and renamed path, and refuses paths
+   outside the team scope, symlinks leaving the worktree, and gitlinks.
+
+Limits, stated plainly: `bash` (and anything it runs) can still write any
+file, read anything, and use every credential the user account holds,
+including the machine's `gh` login; the command patterns behind `ops` are best
+effort and miss `eval`'d strings, scripts, and aliases. The binding,
+snapshot, and brief are writable by the same user, so the sha256 is a
+consistency check, not authorization: rewriting all three, or deleting the
+binding and the brief line together, goes undetected. The audit proves
+team-level final-tree scope only - not which member wrote a path, not writes
+that were reverted, not writes outside the worktree, and not ignored files.
+There is no OS sandbox, worker-specific credential, or branch protection.
+The extension's decisions are proven against synthetic OMP hook events
+(`tests/team-policy.sh`); a live OMP team session loading it has not been
+exercised.
+
 ## Machine-local state
 
 `FM_HOME` defaults to `~/.firstmate` and holds operational data that does not
@@ -264,6 +321,7 @@ belong in Git, including:
 - Captain preferences and local learnings
 - authentication, session, runtime, and task state
 - machine-specific tool or browser knowledge
+- per-task team bindings and profile snapshots (`data/team-bindings/`)
 
 `~/.config/firstmate-config/env` records local path resolution. Credentials,
 host-specific paths, runtime records, and project data are not tracked here.
