@@ -74,9 +74,10 @@ An explicit role or route from the captain wins over this table.
 - **`push`** - everything `local-commit` needs, plus `--exclude PATH` (one or
   more), `--push-remote <remote>`, `--push-branch-prefix bot/<name>/`, and
   `--push-max-per-run 1`. The authorization words must name both the bot and
-  the project, and must already appear verbatim in the captain's standing
-  rules (`$FM_HOME/data/captain.md`); if they do not, stop and tell the
-  captain - `fm bot create` will refuse it.
+  the project, and the captain's standing rules (`$FM_HOME/data/captain.md`)
+  must already hold a dedicated line `bot-authorization: <those exact words>`;
+  prose saying the same thing does not count. If that line is missing, stop
+  and tell the captain - `fm bot create` will refuse it.
 
 The project's registered posture caps the level (`local-only` allows at most
 `local-commit`; `push` needs a project without `+yolo`). The level is an upper

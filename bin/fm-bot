@@ -9,7 +9,9 @@ files, spawns, or calls a model. Firstmate acts on a `bot due:` line exactly
 as it acts on any other custom-check wake.
 
 Every spec carries the routine itself: role, project, route (an existing
-`CATEGORY #N` dispatch rule), schedule, scope, access (`none` or a
+`CATEGORY #N` dispatch rule, whose harness/model/effort `create` records as
+`route_use`, so a changed rule there is `route-changed`, never a silent
+re-target), schedule, scope, access (`none` or a
 `secret:<ref>` reference name, never a secret), notify, and limits (wall-clock
 minutes, optional candidate/file/line caps, excluded paths). These fields are
 stored and validated for the Captain and its workers to apply; fm-bot itself
@@ -23,9 +25,10 @@ an unexpired `expires`, file and line limits, and a registered project whose
 posture (the official `bin/fm-project-mode.sh`) allows the level - a
 `local-only` project at most `local-commit`. `push` additionally needs
 excluded paths, one remote, a branch prefix, at most one push per run, a
-project without `+yolo`, and its authorization quoted verbatim in
-`$FM_HOME/data/captain.md` (the home's standing-rules file) naming both the bot
-and the project. `create` refuses any gate failure. `due` re-runs every check
+project without `+yolo`, authorization words naming both the bot and the
+project, and a dedicated `bot-authorization: <those words>` record in
+`$FM_HOME/data/captain.md` (the home's standing-rules file); matching prose
+does not count. `create` refuses any gate failure. `due` re-runs every check
 on every evaluation, never trusting what `create` once accepted: a spec that
 is not even a valid local-proposal reports `bot invalid:` and is never due,
 and an elevated spec whose gate fails that day - expired, missing, or
@@ -36,25 +39,45 @@ captain approval.
 
 Schedule semantics: `--at`/`--until` are inclusive Europe/Stockholm wall-clock
 minutes on the same local day, evaluated through zoneinfo (never host local
-time). 02:xx is refused because that hour is ambiguous on the autumn DST day
-and absent on the spring one. The dated task id is `<name>-<YYYYMMDD>` in
-Stockholm local date; once the official `fm-tasks-axi.sh show <id> --full`
-finds it the bot is silent for that day. A missed window is not backfilled.
+time), at least ten minutes long so a five-minute sweep lands in them while
+the watcher is armed (the official watcher is one-shot and needs the Captain
+to re-arm it, so an unarmed watcher can still miss a window). 02:xx is
+refused because that hour is ambiguous on the autumn DST day and absent on
+the spring one. The dated task id is `<name>-<YYYYMMDD>` in Stockholm local
+date; once the official `fm-tasks-axi.sh show <id> --full` finds it the bot
+is silent for that day. A missed window is never backfilled, on the same or
+a later day.
 `show --full` does not search the done archive, so each observed filing is
 also kept in a durable per-bot marker (`data/bots/.filed/<name>`); a dated
 task that is done and pruned to the archive later the same day stays filed.
+Only a real-clock evaluation (or `FM_BOT_TEST_CLOCK=1`) writes that marker,
+so a dry `--now` query never moves today's.
 The dispatch seam closes the remaining gap: `file <name>-<YYYYMMDD>` is how a
 due bot's dated task is filed. It re-evaluates the bot at that instant,
 refuses anything but today's due id (no backfill), adds the row through the
-official `fm-tasks-axi.sh add`, writes the marker immediately after that add
-succeeds - before anything is dispatched, so the task cannot have been done
-and pruned yet - and prints the dispatch plan: kind, delivery, role file,
-route, the routine fields, and the stop rule for the effective level. A bot
-that is due but invalid is filed and held for the captain instead, with no
-plan. `file` never spawns a worker. Filing a bot's dated id any other way
-(a raw `fm-tasks-axi.sh add`) bypasses the filing-time marker and reopens
-the poll-gap race.
+official `fm-tasks-axi.sh add` with the plan in the row's body, writes the
+marker immediately after that add succeeds - before anything is dispatched,
+so the task cannot have been done and pruned yet - and prints the dispatch
+plan: kind, delivery, role file, route, the routine fields, and the stop rule
+for the effective level. Backlog writes are never killed on a timeout. A
+filing interrupted before its plan was printed (killed during the add, or a
+marker that could not be written) prints `already-filed (queued, not
+started):` and the stored plan once, on the next `file`, while the row is
+still queued, unheld, and unstarted; any other filed id prints only
+`already-filed:`. A bot that is due but invalid - an unreadable, symlinked,
+directory, or FIFO spec included, which is never followed or read - is filed
+and held for the captain through the official `fm-captain-hold.sh` with its
+cause, with no plan; the hold lands before the marker, and an invalid bot
+whose row is filed but unheld reports `bot error: … reason=invalid-unheld`
+until `file` holds it. `file` never spawns a worker. Filing a bot's dated id
+any other way (a raw `fm-tasks-axi.sh add`) bypasses the filing-time marker
+and reopens the poll-gap race.
 
+A per-bot fault no `fm bot` command can answer (`backlog-unavailable`, or a
+`check-failed-*` crash) prints once per occurrence: an identical line from
+the previous real-clock sweep that Stockholm day stays quiet, so it cannot
+starve the watcher's later checks. Due, invalid, invalid-unheld, and deadline
+lines always print.
 `list` and `show` report each bot's last run: the newer of the newest
 `<name>-<YYYYMMDD>` id the official `fm-tasks-axi.sh list` still shows and the
 bot's filed marker, `none` when neither has one, `unknown` when the backlog
@@ -70,18 +93,25 @@ Usage:
                 [--authorization "captain's exact words" --authorization-scope TEXT
                  --authorized-on YYYY-MM-DD --expires YYYY-MM-DD]
                 [--push-remote R --push-branch-prefix PREFIX/ --push-max-per-run 1]
-                [--now ISO]
+                [--now ISO, only with FM_BOT_TEST_CLOCK=1]
   fm-bot list [--json] [--now ISO]
   fm-bot show NAME [--json] [--now ISO]
   fm-bot pause NAME | resume NAME | remove NAME
   fm-bot due [--check] [--json] [--now ISO]
-  fm-bot file NAME-YYYYMMDD [--json] [--now ISO]
+  fm-bot file NAME-YYYYMMDD [--json] [--now ISO, only with FM_BOT_TEST_CLOCK=1]
   fm-bot check-install
 
-`due --check` is the watcher form: only actionable lines, always exit 0.
+`due --check` is the watcher form: only actionable lines, always exit 0. It
+starts no bot after CHECK_BUDGET (15 s, leaving at least 5 s before the
+watcher's 30 s kill), names the bots it did not reach, and starts one bot
+further along each 5-minute slot so no bot is deferred every sweep.
 `check-install` writes `$FM_HOME/state/bots.check.sh` and binds it with the
-official `bin/fm-check-register.sh bots`; its bytes pin this checkout, so run
-it only from the checkout the home should use. Retire it with the official
+official `bin/fm-check-register.sh bots`; if registration fails or times out
+it removes the new file, or restores the previous check's bytes and registers
+them again through that official script (never writing trust itself), and
+says so when that fails. Its bytes pin this interpreter, checkout, home, and
+FirstMate, so run it only from the checkout the home should use; `fm doctor`
+reports drift as `runtime.bot_check`. Retire it with the official
 `bin/fm-check-unregister.sh bots`.
 """
 from __future__ import annotations
@@ -89,11 +119,13 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime
+import errno
 import fcntl
 import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -131,20 +163,33 @@ SPEC_LINE_RE = re.compile(r"^([a-z_]+): (.*)$")
 LIST_ID_RE = re.compile(r"^\s+([A-Za-z0-9][A-Za-z0-9._-]*),")
 
 TEXT_LIMITS = {"scope": 500, "authorization": 1000, "authorization_scope": 500, "exclude": 300}
-# fm-watch.sh kills a check after 30 s: each backlog/posture call gets
-# CALL_TIMEOUT, and a sweep stops evaluating once CHECK_BUDGET has passed.
+# fm-watch.sh kills a check after 30 s: each backlog/posture read gets
+# CALL_TIMEOUT, and a sweep starts no bot after CHECK_BUDGET, which leaves
+# room for one elevated bot's two reads plus 5 s of margin before the kill.
+# Backlog writes get no timeout: killing one mid-write leaves the backlog's
+# own lock behind, and tasks-axi already bounds its lock wait.
 CALL_TIMEOUT = 5
-CHECK_BUDGET = 20
+CHECK_BUDGET = 30 - 2 * CALL_TIMEOUT - 5
 
 # Field order is the on-disk order. Required keys must be present in every
 # spec; the rest appear only when set. `exclude` may repeat.
 FIELDS = (
-    "schema", "name", "state", "role", "project", "route", "days", "at", "until",
+    "schema", "name", "state", "role", "project", "route", "route_use", "days", "at", "until",
     "scope", "access", "notify", "wall_clock_min", "max_candidates", "max_files",
     "max_lines", "exclude", "level", "authorization", "authorization_scope",
     "authorized_on", "expires", "push_remote", "push_branch_prefix",
     "push_max_per_run", "created_at", "updated_at",
 )
+# A window must span at least this many minutes (inclusive of both ends), so
+# a 5-minute sweep lands inside it while the watcher is armed; the official
+# watcher is one-shot, so an unarmed watcher can still miss a window.
+MIN_WINDOW_MINUTES = 10
+# A push authorization is a captain record of its own, one per line:
+#   bot-authorization: <the authorization words>
+AUTH_RECORD_RE = re.compile(r"^\s*(?:[-*+]\s+)?bot-authorization:\s*(.+?)\s*$")
+REGISTER_TIMEOUT = 10
+# The first line of a filed row's backlog body; the plan follows as JSON.
+PLAN_HEADER = "fm-bot dispatch plan (fm-bot.v1): dispatch exactly this, never widen it"
 REQUIRED_KEYS = (
     "schema", "name", "state", "role", "project", "route", "days", "at", "until",
     "scope", "access", "notify", "wall_clock_min", "level", "created_at", "updated_at",
@@ -352,7 +397,23 @@ def render_spec(spec: dict) -> str:
 
 
 def read_spec(name: str) -> dict:
-    with open(spec_path(name), "r", encoding="utf-8") as f:
+    """Never follows a link and never blocks on or reads a non-regular file:
+    a symlinked, directory, or FIFO spec is a refusal before any read."""
+    try:
+        fd = os.open(spec_path(name), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise SpecError("symlink", "the spec is a symlink") from None
+        raise
+    try:
+        regular = stat.S_ISREG(os.fstat(fd).st_mode)
+    except OSError:
+        os.close(fd)
+        raise
+    if not regular:
+        os.close(fd)
+        raise SpecError("nonregular", "the spec is not a regular file")
+    with os.fdopen(fd, "r", encoding="utf-8") as f:
         return parse_spec_text(f.read())
 
 
@@ -415,13 +476,20 @@ def _positive_int(spec: dict, key: str) -> None:
         raise SpecError(f"bad-{code_of(key)}", f"{key} must be a positive integer (got '{value}')")
 
 
-def _route_valid(route: str) -> bool:
+def _route_rule(route: str) -> dict | None:
+    """The crew-dispatch rule a 'CATEGORY #N' route names, or None."""
     m = ROUTE_RE.match(route)
     if not m:
-        return False
+        return None
     with open(os.path.join(config_root(), "firstmate", "crew-dispatch.json"), "r", encoding="utf-8") as f:
-        rules = json.load(f).get("rules", [])
-    return int(m.group(2)) <= sum(1 for r in rules if r.get("category") == m.group(1))
+        rules = [r for r in json.load(f).get("rules", []) if r.get("category") == m.group(1)]
+    n = int(m.group(2))
+    return rules[n - 1] if n <= len(rules) else None
+
+
+def route_use_of(rule: dict) -> str:
+    """The rule's identity as a bot records it: its harness:model:effort list."""
+    return ", ".join(f"{u.get('harness')}:{u.get('model')}:{u.get('effort')}" for u in rule.get("use", []))
 
 
 def normalize_words(text: str) -> str:
@@ -448,8 +516,16 @@ def check_base(spec: dict, name: str) -> None:
         raise SpecError("unknown-role", f"role '{role}' has no roles/{role}/ROLE.md in {config_root()}")
     if not PROJECT_RE.match(spec.get("project") or ""):
         raise SpecError("bad-project", f"project '{spec.get('project')}' is not a valid project name")
-    if not _route_valid(spec.get("route") or ""):
+    rule = _route_rule(spec.get("route") or "")
+    if rule is None:
         raise SpecError("unknown-route", f"route '{spec.get('route')}' is not an existing 'CATEGORY #N' rule in firstmate/crew-dispatch.json")
+    # A route is positional, so the rule a bot was created against is
+    # recorded (route_use): a rule inserted or edited later refuses rather
+    # than silently re-targets it, and a spec without one is never routed.
+    if not spec.get("route_use"):
+        raise SpecError("route-unpinned", f"the spec records no route_use for '{spec.get('route')}'; recreate the bot")
+    if spec["route_use"] != route_use_of(rule):
+        raise SpecError("route-changed", f"route '{spec['route']}' now resolves to '{route_use_of(rule)}', not the recorded '{spec['route_use']}'; recreate the bot to accept the new rule")
     parse_days(spec.get("days") or "")
     for key in ("at", "until"):
         value = spec.get(key) or ""
@@ -459,6 +535,8 @@ def check_base(spec: dict, name: str) -> None:
             raise SpecError("dst-hour", f"{key} {value} is in 02:xx, which is ambiguous or absent on {TZ_NAME} DST days")
     if hm_minutes(spec["until"]) < hm_minutes(spec["at"]):
         raise SpecError("bad-window", "until must not be earlier than at (windows never cross midnight)")
+    if hm_minutes(spec["until"]) - hm_minutes(spec["at"]) + 1 < MIN_WINDOW_MINUTES:
+        raise SpecError("window-too-short", f"a window spans at least {MIN_WINDOW_MINUTES} minutes, so a 5-minute sweep lands in it while the watcher is armed")
     _text(spec, "scope")
     if not ACCESS_RE.match(spec.get("access") or ""):
         raise SpecError("bad-access", "access must be 'none' or 'secret:<reference-name>' (a reference, never the secret)")
@@ -544,43 +622,85 @@ def check_elevated(spec: dict, name: str, today: datetime.date) -> None:
         raise SpecError("authorization-expired", f"authorization expired {spec['expires']}")
     if level == "push":
         rules = ""
-        with contextlib.suppress(OSError), open(captain_rules_path(), "r", encoding="utf-8") as f:
+        # An undecodable byte spoils only its own line: a record holding one
+        # no longer matches (a downgrade), and every other record still reads.
+        with contextlib.suppress(OSError), open(captain_rules_path(), "r", encoding="utf-8", errors="replace") as f:
             rules = f.read()
-        if normalize_words(spec["authorization"]) not in normalize_words(rules):
-            raise SpecError("captain-rule-missing", "a push authorization must appear verbatim in data/captain.md")
+        records = {normalize_words(m.group(1)) for line in rules.splitlines() if (m := AUTH_RECORD_RE.match(line))}
+        if normalize_words(spec["authorization"]) not in records:
+            raise SpecError("captain-rule-missing", "a push authorization must be its own `bot-authorization: <words>` line in data/captain.md")
 
 
 # --- backlog --------------------------------------------------------------------
 
-def _tasks_axi(*args: str) -> subprocess.CompletedProcess | None:
-    script = os.path.join(firstmate_root(), "bin", "fm-tasks-axi.sh")
+def _tasks_axi(*args: str, timeout: float | None = CALL_TIMEOUT) -> subprocess.CompletedProcess | None:
+    return _official("fm-tasks-axi.sh", *args, timeout=timeout)
+
+
+def _official(script_name: str, *args: str, timeout: float | None) -> subprocess.CompletedProcess | None:
+    script = os.path.join(firstmate_root(), "bin", script_name)
     if not os.path.isfile(script):
         return None
     try:
-        return subprocess.run([script, *args], capture_output=True, text=True, timeout=CALL_TIMEOUT,
+        return subprocess.run([script, *args], capture_output=True, text=True, timeout=timeout,
                               env={**os.environ, "FM_HOME": fm_home()})
     except (OSError, subprocess.TimeoutExpired):
         return None
 
 
-def backlog_has(task_id: str) -> bool | None:
-    """True/False from the official fm-tasks-axi.sh, None when the backlog
-    cannot answer (so the caller reports an error instead of guessing)."""
+def _captain_hold(task_id: str, reason: str, title: str | None) -> subprocess.CompletedProcess | None:
+    """Holds `task_id` for the captain through the official owner, which
+    encodes the reason (tasks-axi refuses parentheses) and creates the row
+    first when `title` is given and it is missing. A write: no timeout."""
+    extra = ("--title", title) if title else ()
+    return _official("fm-captain-hold.sh", "hold", task_id, "--reason", reason, *extra, timeout=None)
+
+
+def backlog_row(task_id: str) -> tuple[bool | None, str]:
+    """(True, row text)/(False, "") from the official fm-tasks-axi.sh, or
+    (None, "") when the backlog cannot answer (so the caller reports an
+    error instead of guessing)."""
     out = _tasks_axi("show", task_id, "--full")
     if out is None:
-        return None
+        return None, ""
     if out.returncode == 0:
-        return True
+        return True, out.stdout
     if out.returncode == 1 and "NOT_FOUND" in out.stdout + out.stderr:
-        return False
-    return None
+        return False, ""
+    return None, ""
+
+
+def row_held(row: str) -> bool:
+    return re.search(r"^\s*held:\s*yes\s*$", row, re.M) is not None
+
+
+def row_queued(row: str) -> bool:
+    return re.search(r"^\s*state:\s*queued\s*$", row, re.M) is not None
+
+
+def plan_body(plan: dict) -> str:
+    return f"{PLAN_HEADER}\n{json.dumps(plan, sort_keys=True)}\n"
+
+
+def stored_plan(row: str, task_id: str, name: str) -> dict | None:
+    """The plan `file` stored in a row's body (`show --full` prints the body
+    as one quoted string), or None when the row carries no readable plan for
+    exactly this bot and id."""
+    m = re.search(r'^\s*body: (".*")\s*$', row, re.M)
+    try:
+        lines = json.loads(m.group(1)).split("\n") if m else []
+        payload = lines[lines.index(PLAN_HEADER) + 1]
+        plan = json.loads(payload)
+    except (ValueError, IndexError):
+        return None
+    return plan if isinstance(plan, dict) and plan.get("id") == task_id and plan.get("bot") == name else None
 
 
 # The backlog's retention prunes done rows into an archive that
 # `fm-tasks-axi.sh show --full` does not search, so a dated id that was filed,
 # finished, and pruned inside its own window would look unfiled again. Each
 # bot therefore keeps one durable marker, `data/bots/.filed/<name>`, holding
-# the newest dated id the backlog has ever shown for it. Only an observed
+# today's dated id once the backlog has shown it. Only an observed
 # backlog hit writes it - never a due line - so an unanswered wake keeps
 # waking until firstmate files the id, exactly as before. `remove` leaves it,
 # so a bot recreated under the same name cannot re-fire a day it already ran.
@@ -602,15 +722,38 @@ def read_filed_marker(name: str) -> str | None:
 
 
 def record_filed(name: str, task_id: str) -> None:
-    """Advance the marker to `task_id` (ids of one bot sort by date)."""
-    if (read_filed_marker(name) or "") >= task_id:
+    """Record today's `task_id`, replacing any other marker - an older day's,
+    or a future-dated one left by a clock that once ran ahead, which would
+    otherwise block every real day until that date."""
+    if read_filed_marker(name) == task_id:
         return
+    _write_marker(filed_marker_path(name), task_id)
+
+
+# `file` records the id whose plan it is about to print, just before printing,
+# so only a filing interrupted before that point (killed during the add, or a
+# marker that could not be written) may print the row's stored plan again.
+def planned_marker_path(name: str) -> str:
+    return os.path.join(bots_dir(), ".filed", f"{name}.planned")
+
+
+def plan_printed(name: str, task_id: str) -> bool:
+    path = planned_marker_path(name)
+    if os.path.islink(path) or not os.path.isfile(path):
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip() == task_id
+    except (OSError, ValueError):
+        return True  # cannot prove the plan was never printed: never re-plan
+
+
+def _write_marker(path: str, task_id: str) -> None:
     with _lock():
-        directory = os.path.dirname(filed_marker_path(name))
+        directory = os.path.dirname(path)
         _refuse_symlink(directory, "filed-marker directory")
         os.makedirs(directory, mode=0o700, exist_ok=True)
-        if (read_filed_marker(name) or "") < task_id:
-            _atomic_write(filed_marker_path(name), task_id + "\n", 0o600)
+        _atomic_write(path, task_id + "\n", 0o600)
 
 
 def last_runs(names: list[str]) -> dict | None:
@@ -641,9 +784,30 @@ def last_run_label(name: str, runs: dict | None) -> str:
     return runs.get(name) or "none"
 
 
+def _invalid_cause(spec: dict | None, name: str, unreadable: dict | None) -> dict | None:
+    """Why a bot is not even a valid local-proposal ({reason, detail}), or None."""
+    if unreadable is not None or spec is None:
+        return unreadable or {"reason": "unreadable", "detail": "the spec could not be read"}
+    try:
+        check_base(spec, name)
+    except SpecError as exc:
+        return {"reason": exc.code, "detail": exc.message}
+    return None
+
+
+def writes_allowed(now: str | None) -> bool:
+    """Only a real-clock evaluation, or a test clock, may record filing
+    state: a dry query at another date must never move today's marker."""
+    return now is None or os.environ.get("FM_BOT_TEST_CLOCK") == "1"
+
+
 # --- evaluation -------------------------------------------------------------------
 
-def evaluate(name: str, moment: datetime.datetime) -> dict:
+def evaluate(name: str, moment: datetime.datetime, record: bool = True) -> dict:
+    return _evaluate(name, moment, record)[0]
+
+
+def _evaluate(name: str, moment: datetime.datetime, record: bool) -> tuple[dict, dict | None]:
     """One bot's verdict at `moment`. Order matters: a paused or out-of-window
     bot is silent without touching the backlog, so a sweep costs nothing
     outside windows; validity is judged only when the bot would fire, so a
@@ -655,49 +819,53 @@ def evaluate(name: str, moment: datetime.datetime) -> dict:
               "local": local.strftime("%Y-%m-%d %H:%M %Z")}
     spec, unreadable = None, None
     try:
-        if os.path.islink(spec_path(name)):
-            # file/show/pause refuse a symlinked spec, so report it here too
-            # rather than raise a due line that can never be filed.
-            raise SpecError("symlink", "the spec is a symlink")
         spec = read_spec(name)
     except SpecError as exc:
         unreadable = {"reason": exc.code, "detail": exc.message}
     except (OSError, ValueError) as exc:  # ValueError: not UTF-8
         unreadable = {"reason": "unreadable", "detail": str(exc)}
     if spec is not None and spec.get("state") == "paused":
-        return {**result, "verdict": "paused"}
+        return {**result, "verdict": "paused"}, spec
     try:
         window = spec is None or in_window(spec, local)
     except (SpecError, ValueError, KeyError):
         window = True  # a malformed schedule cannot prove the bot is quiet
     if not window:
-        return {**result, "verdict": "outside-window"}
+        return {**result, "verdict": "outside-window"}, spec
     if read_filed_marker(name) == result["id"]:
-        return {**result, "verdict": "filed"}
-    filed = backlog_has(result["id"])
+        return {**result, "verdict": "filed"}, spec
+    filed, row = backlog_row(result["id"])
     if filed is None:
         return {**result, "verdict": "error", "reason": "backlog-unavailable",
-                "detail": "fm-tasks-axi.sh could not answer"}
+                "detail": "fm-tasks-axi.sh could not answer"}, spec
     if filed:
+        # An invalid bot's row is only safe once held for the captain: a
+        # queued, unheld row is dispatchable, so keep reporting it until
+        # `fm bot file` (re)applies the hold.
+        cause = None if row_held(row) else _invalid_cause(spec, name, unreadable)
+        if cause is not None:
+            return {**result, "verdict": "error", "reason": "invalid-unheld",
+                    "detail": "the invalid bot's backlog row is not held for the captain", "cause": cause}, spec
         # A marker that cannot be written must not change today's verdict:
         # the backlog still answers until the row is pruned, and the next
         # sweep retries. die() raises SystemExit, hence its suppression here.
-        with contextlib.suppress(OSError, SystemExit):
-            record_filed(name, result["id"])
-        return {**result, "verdict": "filed"}
+        if record:
+            with contextlib.suppress(OSError, SystemExit):
+                record_filed(name, result["id"])
+        return {**result, "verdict": "filed"}, spec
     if unreadable is not None:
-        return {**result, "verdict": "invalid", **unreadable}
+        return {**result, "verdict": "invalid", **unreadable}, spec
     try:
         check_base(spec, name)
     except SpecError as exc:
-        return {**result, "verdict": "invalid", "reason": exc.code, "detail": exc.message}
+        return {**result, "verdict": "invalid", "reason": exc.code, "detail": exc.message}, spec
     result.update(verdict="due", requested=spec["level"], level=spec["level"])
     if spec["level"] != "local-proposal":
         try:
             check_elevated(spec, name, local.date())
         except SpecError as exc:
             result.update(level="local-proposal", reason=exc.code, detail=exc.message)
-    return result
+    return result, spec
 
 
 def watcher_line(r: dict) -> str | None:
@@ -715,8 +883,16 @@ def watcher_line(r: dict) -> str | None:
 
 # --- commands ---------------------------------------------------------------------
 
+def require_test_clock(now: str | None) -> None:
+    """--now on a command that writes state is for tests: it could file a
+    future day early or a past day late, which bots never do."""
+    if now is not None and os.environ.get("FM_BOT_TEST_CLOCK") != "1":
+        die("refused (clock-override): --now is a test clock; set FM_BOT_TEST_CLOCK=1 to use it")
+
+
 def cmd_create(args: argparse.Namespace) -> None:
     name = require_name(args.name)
+    require_test_clock(args.now)
     moment = parse_now(args.now)
     ts = now_iso()
     spec = {
@@ -736,6 +912,9 @@ def cmd_create(args: argparse.Namespace) -> None:
     }
     try:
         spec["days"] = normalize_days(args.days)
+        rule = _route_rule(args.route or "")
+        if rule is not None:
+            spec["route_use"] = route_use_of(rule)
         check_base(spec, name)
         if spec["level"] != "local-proposal":
             check_elevated(spec, name, local_now(moment).date())
@@ -791,8 +970,13 @@ def _summary(name: str, moment: datetime.datetime, runs: dict | None) -> dict:
         spec = read_spec(name)
         row.update({k: spec.get(k) for k in SUMMARY_FIELDS})
         row["schedule"] = f"{spec['days']} {spec['at']}-{spec['until']} {TZ_NAME}"
-        row["next"] = ("in window now" if spec["state"] == "active" and in_window(spec, local)
-                       else next_window_start(spec, local).strftime("%Y-%m-%d %H:%M %Z"))
+        filed_today = dated_id(name, local) in (read_filed_marker(name), (runs or {}).get(name))
+        if spec["state"] == "paused":
+            row["next"] = "paused"
+        elif in_window(spec, local) and not filed_today:
+            row["next"] = "in window now"
+        else:
+            row["next"] = next_window_start(spec, local).strftime("%Y-%m-%d %H:%M %Z")
     except (SpecError, OSError, ValueError, KeyError) as exc:
         row.update(state="invalid", detail=str(exc))
     return row
@@ -832,7 +1016,36 @@ def cmd_show(args: argparse.Namespace) -> None:
         print(f"{key}:".ljust(21) + (str(value) if value not in (None, "") else "(none)"))
 
 
+# A per-bot fault no `fm bot` command can answer (the backlog cannot answer,
+# or evaluating the bot crashed) wakes once per occurrence: an identical line
+# from the previous sweep the same Stockholm day stays quiet, so it cannot
+# starve the watcher's later checks. Due, invalid, invalid-unheld and deadline
+# lines are actionable or hide unevaluated bots, so they always print.
+def reported_path() -> str:
+    return os.path.join(bots_dir(), ".reported")
+
+
+def read_reported(day: str) -> set[str]:
+    path = reported_path()
+    if os.path.islink(path) or not os.path.isfile(path):
+        return set()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except (OSError, ValueError):
+        return set()
+    return set(lines[1:]) if lines and lines[0] == day else set()
+
+
+def save_reported(day: str, lines: set[str], before: set[str]) -> None:
+    if lines == before and (lines or not os.path.lexists(reported_path())):
+        return
+    with contextlib.suppress(OSError, SystemExit), _lock():
+        _atomic_write(reported_path(), "\n".join([day, *sorted(lines)]) + "\n", 0o600)
+
+
 def cmd_due(args: argparse.Namespace) -> None:
+    record = writes_allowed(args.now)
     if args.check:
         # The watcher discards stderr, treats empty stdout as quiet, and
         # kills a check after 30 s, so each line is flushed as it is known,
@@ -841,22 +1054,37 @@ def cmd_due(args: argparse.Namespace) -> None:
         try:
             started = time.monotonic()
             moment = parse_now(args.now)
+            day = local_now(moment).strftime("%Y%m%d")
+            before = read_reported(day) if record else set()
+            seen: set[str] = set()
             names = spec_names()
+            if names:
+                # One bot further along per 5-minute slot: a budget cut never
+                # defers the same tail bots every sweep.
+                k = int(moment.timestamp()) // 300 % len(names)
+                names = names[k:] + names[:k]
             for i, name in enumerate(names):
                 if time.monotonic() - started > CHECK_BUDGET:
                     print(f"bot error: check reason=deadline unevaluated={','.join(names[i:])}", flush=True)
                     break
                 try:
-                    line = watcher_line(evaluate(name, moment))
+                    r = evaluate(name, moment, record)
+                    line, quiet = watcher_line(r), r.get("reason") == "backlog-unavailable"
                 except Exception as exc:  # noqa: BLE001 - surfaced as a wake, never swallowed
-                    line = f"bot error: {name} reason=check-failed-{type(exc).__name__}"
+                    line, quiet = f"bot error: {name} reason=check-failed-{type(exc).__name__}", True
+                if line and quiet:
+                    seen.add(line)
+                    if line in before:
+                        continue
                 if line:
                     print(line, flush=True)
+            if record:
+                save_reported(day, seen, before)
         except Exception as exc:  # noqa: BLE001 - surfaced as a wake, never swallowed
             print(f"bot error: check reason=check-failed-{type(exc).__name__}", flush=True)
         return
     moment = parse_now(args.now)
-    results = [evaluate(n, moment) for n in spec_names()]
+    results = [evaluate(n, moment, record) for n in spec_names()]
     if args.json:
         print(json.dumps(results, sort_keys=True))
         return
@@ -941,8 +1169,9 @@ def cmd_file(args: argparse.Namespace) -> None:
     if not m:
         die(f"refused (bad-id): '{args.id}' is not <bot-name>-<YYYYMMDD>")
     name = m.group(1)
-    _refuse_symlink(spec_path(name), "bot spec")
-    if not os.path.isfile(spec_path(name)):
+    # A symlinked or non-regular spec is filed and held like an unreadable
+    # one (evaluate never follows or reads it), so its day can be silenced.
+    if not os.path.lexists(spec_path(name)):
         die(f"no such bot '{name}'")
     # Serialized, so two concurrent files of one id cannot both see it due
     # and both print a dispatch plan; the second finds the marker.
@@ -951,40 +1180,82 @@ def cmd_file(args: argparse.Namespace) -> None:
 
 
 def _file_locked(args: argparse.Namespace, name: str) -> None:
-    result = evaluate(name, parse_now(args.now))
+    require_test_clock(args.now)
+    result, spec = _evaluate(name, parse_now(args.now), True)
     if result["id"] != args.id:
         die(f"refused (not-today): {args.id} is not {name}'s dated id at {result['local']} "
             f"({result['id']}); bots never backfill")
     verdict = result["verdict"]
     if verdict == "filed":
-        print(f"already-filed: {args.id}")
+        _already_filed(args, name)
         return
-    if verdict not in ("due", "invalid"):
+    # An invalid bot filed earlier whose hold never landed: re-apply the hold.
+    rehold = verdict == "error" and result.get("reason") == "invalid-unheld"
+    if verdict not in ("due", "invalid") and not rehold:
         die(f"refused (not-due): {name} is {verdict} at {result['local']}")
-    plan = None
     if verdict == "due":
-        plan = dispatch_plan(read_spec(name), result)
+        plan = dispatch_plan(spec, result)
         title = f"bot {name} {plan['level']} run, {plan['role']} on {plan['project']}"
-        added = _tasks_axi("add", args.id, title, "--kind", plan["kind"], "--repo", plan["project"])
-    else:
-        added = _tasks_axi("add", args.id, f"bot {name} spec invalid, held for the captain")
-    if added is None or added.returncode != 0:
-        die(f"refused (backlog-unavailable): fm-tasks-axi.sh add {args.id} failed; nothing filed")
-    # The marker is the whole point of filing here: written before any
-    # dispatch, it cannot lose a race with that task's completion and pruning.
-    try:
-        record_filed(name, args.id)
-    except OSError as exc:
-        die(f"filed {args.id} but could not record its marker ({exc}); do not dispatch until the "
-            f"next `fm bot due` records it")
-    if plan is not None:
+        # The row carries the plan, so a filing interrupted after this add can
+        # still print it (see _already_filed) and whoever dispatches the row
+        # sees its scope, limits, and stop rule.
+        added = _tasks_axi("add", args.id, title, "--kind", plan["kind"], "--repo", plan["project"],
+                           "--body", plan_body(plan), timeout=None)
+        if added is None or added.returncode != 0:
+            die(f"refused (backlog-unavailable): fm-tasks-axi.sh add {args.id} failed; nothing filed")
+        # The marker is the whole point of filing here: written before any
+        # dispatch, it cannot lose a race with that task's completion and pruning.
+        _record_or_die(name, args.id)
+        _plan_or_die(name, args.id)
         _print_record(plan, args.json)
         return
-    held = _tasks_axi("hold", args.id, "--reason", f"bot spec invalid: {result['reason']}",
-                      "--kind", "captain")
+    cause = result.get("cause") or {"reason": result["reason"], "detail": result.get("detail")}
+    # Hold before the marker: until the hold lands a queued row is
+    # dispatchable, and without a marker every sweep keeps reporting it. The
+    # official captain-hold owner creates the row on a first filing.
+    title = None if rehold else f"bot {name} spec invalid, held for the captain"
+    held = _captain_hold(args.id, f"bot spec invalid: {cause.get('detail') or cause['reason']}", title)
     if held is None or held.returncode != 0:
-        die(f"filed {args.id} but could not hold it; hold it for the captain by hand")
-    _print_record({"held": args.id, "spec": result["spec"], "reason": result["reason"]}, args.json)
+        why = (held.stderr or held.stdout).strip().splitlines()[-1:] if held is not None else ["fm-captain-hold.sh unavailable"]
+        die(f"could not hold {args.id} for the captain ({' '.join(why)}); if its row exists, every sweep "
+            f"reports it as invalid-unheld until `fm bot file {args.id}` holds it")
+    _record_or_die(name, args.id)
+    _print_record({"held": args.id, "spec": result["spec"], "reason": cause["reason"]}, args.json)
+
+
+def _already_filed(args: argparse.Namespace, name: str) -> None:
+    """A filed id prints its stored plan again only when no plan was printed
+    for it and its row is still queued, unheld, and unstarted, so an
+    interrupted filing can be dispatched once; a second `file`, or a started,
+    done, held, pruned, or unreadable row, never re-plans."""
+    filed, row = backlog_row(args.id) if not plan_printed(name, args.id) else (False, "")
+    plan = stored_plan(row, args.id, name) if filed and row_queued(row) and not row_held(row) else None
+    if plan is None:
+        print(f"already-filed: {args.id}")
+        return
+    _record_or_die(name, args.id)
+    _plan_or_die(name, args.id)
+    if args.json:
+        print(json.dumps({**plan, "already_filed": True}, sort_keys=True))
+        return
+    print(f"already-filed (queued, not started): {args.id}")
+    _print_record(plan, False)
+
+
+def _plan_or_die(name: str, task_id: str) -> None:
+    try:
+        _write_marker(planned_marker_path(name), task_id)
+    except OSError as exc:
+        die(f"filed {task_id} but could not record that its plan is printed ({exc}); dispatch nothing now - "
+            f"once it can be written, `fm bot file {task_id}` prints the stored plan of a queued row")
+
+
+def _record_or_die(name: str, task_id: str) -> None:
+    try:
+        record_filed(name, task_id)
+    except OSError as exc:
+        die(f"filed {task_id} but could not record its marker ({exc}); dispatch nothing now - once the "
+            f"marker can be written, `fm bot file {task_id}` prints the stored plan of a queued row")
 
 
 def render_check() -> str:
@@ -1012,11 +1283,41 @@ def cmd_check_install(_args: argparse.Namespace) -> None:
     state = os.path.join(fm_home(), "state")
     _refuse_symlink(state, "state directory")
     os.makedirs(state, mode=0o700, exist_ok=True)
+    previous = None
+    if os.path.isfile(check_path()) and not os.path.islink(check_path()):
+        with open(check_path(), "r", encoding="utf-8", errors="replace") as f:
+            previous = f.read()
     _atomic_write(check_path(), render_check(), 0o700)
-    out = subprocess.run([register, CHECK_ID], capture_output=True, text=True, timeout=30,
-                         env={**os.environ, "FM_HOME": fm_home()})
+
+    def restore(code: str, detail: str) -> None:
+        # Leave no unregistered check behind: remove a new one, or put the
+        # previous bytes back and register them again through the official
+        # owner, whose own failure may have removed their trust record.
+        if previous is None:
+            with contextlib.suppress(OSError):
+                os.remove(check_path())
+            die(f"refused ({code}): {detail}")
+        _atomic_write(check_path(), previous, 0o700)
+        try:
+            again = subprocess.run([register, CHECK_ID], capture_output=True, text=True, timeout=REGISTER_TIMEOUT,
+                                   env={**os.environ, "FM_HOME": fm_home()})
+            why = "" if again.returncode == 0 else (again.stderr or again.stdout).strip() or f"exit {again.returncode}"
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            why = str(exc)
+        if not why:
+            die(f"refused ({code}): {detail}; previous check restored and registered")
+        die(f"refused ({code}): {detail}; previous check restored, but could not register the restored check ({why}), "
+            f"so the watcher rejects it until `fm bot check-install` succeeds")
+
+    try:
+        out = subprocess.run([register, CHECK_ID], capture_output=True, text=True, timeout=REGISTER_TIMEOUT,
+                             env={**os.environ, "FM_HOME": fm_home()})
+    except subprocess.TimeoutExpired:
+        restore("check-register-timeout", f"fm-check-register.sh {CHECK_ID} did not finish within {REGISTER_TIMEOUT}s")
+    except OSError as exc:
+        restore("check-register-failed", f"fm-check-register.sh {CHECK_ID} could not run: {exc}")
     if out.returncode != 0:
-        die(f"fm-check-register.sh {CHECK_ID} failed: {(out.stderr or out.stdout).strip()}")
+        restore("check-register-failed", f"fm-check-register.sh {CHECK_ID} failed: {(out.stderr or out.stdout).strip()}")
     print(f"installed: {check_path()} ({out.stdout.strip()})")
 
 

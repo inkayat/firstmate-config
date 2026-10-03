@@ -166,7 +166,7 @@ git -C "$ORIGIN" -c user.email=pilot@example.invalid -c user.name=pilot add -A
 git -C "$ORIGIN" -c user.email=pilot@example.invalid -c user.name=pilot commit -q -m 'sandbox baseline'
 ORIGIN_REFS=$(git -C "$ORIGIN" for-each-ref --format='%(refname) %(objectname)')
 
-run_bot() { HOME="$TMP_ROOT/decoy" FM_HOME="$H" FIRSTMATE_ROOT="$FMROOT" "$BOT" "$@"; }
+run_bot() { HOME="$TMP_ROOT/decoy" FM_HOME="$H" FIRSTMATE_ROOT="$FMROOT" FM_BOT_TEST_CLOCK=1 "$BOT" "$@"; }
 axi() { HOME="$TMP_ROOT/decoy" FM_HOME="$H" "$FMROOT/bin/fm-tasks-axi.sh" "$@"; }
 herdr_lab() { "$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" "$@"; }
 mkdir -p "$TMP_ROOT/decoy" "$TMP_ROOT/runs"
