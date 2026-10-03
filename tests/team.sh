@@ -155,6 +155,14 @@ refuses '1 push right other than none' op-not-allowed 'p["ops"]["push"] = "reque
 refuses '1 commit right other than none/request' op-not-allowed 'p["ops"]["commit"] = "allowed"'
 refuses '1 unknown right' unknown-right 'p["ops"]["deploy"] = "none"'
 refuses '1 missing right' unknown-right 'del p["ops"]["merge"]'
+refuses '1 https_read that is a string, not a boolean' bad-type 'm["fm-architecture"]["https_read"] = "true"'
+refuses '1 https_read that is a number, not a boolean' bad-type 'm["fm-architecture"]["https_read"] = 1'
+refuses '1 https_read that is null, not a boolean' bad-type 'm["fm-architecture"]["https_read"] = None'
+for v in True False; do
+  variant "$TMP_ROOT/https-$v.json" "m[\"fm-architecture\"][\"https_read\"] = $v"
+  "$FMT" validate "$TMP_ROOT/https-$v.json" >/dev/null 2>&1
+  check "1 https_read $v validates" "$?" 0
+done
 
 variant "$TMP_ROOT/skill-ok.json" 'm["fm-django-pro"]["skills"] = ["test-driven-development"]'
 "$FMT" validate "$TMP_ROOT/skill-ok.json" >/dev/null 2>&1

@@ -3,9 +3,11 @@
 
 A team profile (`teams/<name>.json`) configures one opt-in OMP team task: its
 lead, its members with their mode (read-only or mutating), write globs,
-message recipients, helper spawns and optional extra skills, an ordered
-workflow, and the team's operation rights. A profile only ever narrows what
-the global role files already allow; it never rewrites one.
+message recipients, helper spawns, optional extra skills and an optional
+`https_read` boolean (https read-family access for that member and its
+helpers; absent means false), an ordered workflow, and the team's operation
+rights. A profile only ever narrows what the global role files already
+allow; it never rewrites one.
 
 `validate` checks a profile against this checkout's real role frontmatter, the
 same fields OMP reads (`tools`, `spawns`, `autoloadSkills`):
@@ -96,7 +98,7 @@ SCHEMA = "fm-team-profile.v1"
 BINDING_SCHEMA = "fm-team-binding.v1"
 PROFILE_KEYS = ("schema", "name", "description", "lead", "members", "workflow", "ops")
 PROFILE_REQUIRED = ("schema", "name", "lead", "members", "workflow", "ops")
-MEMBER_KEYS = ("agent", "mode", "paths", "talk_to", "spawn", "skills")
+MEMBER_KEYS = ("agent", "mode", "paths", "talk_to", "spawn", "skills", "https_read")
 MODES = ("read-only", "mutating")
 OPS = {"commit": ("none", "request"), "push": ("none",), "merge": ("none",)}
 # The agents OMP bundles; the same list fm-doctor's roles.spawns check accepts.
@@ -422,6 +424,8 @@ def validate_profile(p, root: str) -> list:
                 err("unknown-agent", f"{agent} spawn {helper!r} is neither a role nor a bundled OMP agent")
             elif bound is not None and helper not in bound:
                 err("exceeds-native-spawns", f"{agent}'s role does not natively allow spawning {helper}")
+        if not isinstance(m.get("https_read", False), bool):
+            err("bad-type", f"{agent} https_read must be true or false")
         extra = m.get("skills", [])
         if not _str_list(extra):
             err("bad-type", f"{agent} skills must be a list of skill names")

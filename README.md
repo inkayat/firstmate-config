@@ -260,6 +260,7 @@ not a captain-selected team.
 | `members[].mode`, `paths.write` | `read-only`, or `mutating` with repository-relative write globs; no two members own an overlapping glob | policy extension (write, edit, apply_patch, ast_edit targets, normalized and symlink-resolved) and `fm team audit` |
 | `members[].talk_to` | which members a member may message (`agent://all` is never allowed); a member may always message the lead | policy extension, `write agent://<id>` |
 | `members[].spawn` | helpers a member may spawn, inside its role's declared `spawns` list; a role without one allows no helper (no shipped member role declares one), and helpers are read-only | policy extension |
+| `members[].https_read` | optional boolean, absent means false: whether that member, and every helper it spawns, may read `https://` and `www.` URLs through `read`, `grep`, `glob`, `find`, and `ast_grep`; plain `http://` is never readable by a member or helper | policy extension |
 | `members[].skills` | extra shared skills the lead names in that member's brief, counted against the per-task budget of three with the role's `autoloadSkills`; `autoloadSkills` themselves cannot be removed per task | advisory |
 | `workflow` | ordered phases and at most two rework rounds; the lead coordinates them | advisory (`team-lead` role) |
 | `ops` | `commit: none\|request`, `push: none`, `merge: none` - limits, never authority | policy extension (best-effort command patterns); FirstMate's guarded merge path |
@@ -282,19 +283,36 @@ The flow uses existing owners only:
    staged, unstaged, untracked, deleted, and renamed path, and refuses paths
    outside the team scope, symlinks leaving the worktree, and gitlinks.
 
-Limits, stated plainly: `bash` (and anything it runs) can still write any
-file, read anything, and use every credential the user account holds,
-including the machine's `gh` login; the command patterns behind `ops` are best
-effort and miss `eval`'d strings, scripts, and aliases. The binding,
-snapshot, and brief are writable by the same user, so the sha256 is a
-consistency check, not authorization: rewriting all three, or deleting the
-binding and the brief line together, goes undetected. The audit proves
-team-level final-tree scope only - not which member wrote a path, not writes
-that were reverted, not writes outside the worktree, and not ignored files.
-There is no OS sandbox, worker-specific credential, or branch protection.
-The extension's decisions are proven against synthetic OMP hook events
-(`tests/team-policy.sh`); a live OMP team session loading it has not been
-exercised.
+Member and helper reads through OMP's tools (`read`, `grep`, `glob`, `find`,
+`ast_grep`, and `lsp` file targets) stay inside the task worktree and the
+shared roots `install.sh` links (`~/.agents/skills/<entry>` and
+`~/.agents/references`, each judged against its own entry's real location).
+Of internal URLs they read only `local://`, `artifact://`, `agent://`,
+`rule://`, and `omp://`: `skill://` and `history://` reach past those path
+checks, so they are refused with credential-using schemes such as `ssh://`,
+`pr://`, and `vault://` and every unknown scheme. The lead reads as before.
+
+Limits, stated plainly: the read confinement is an in-process tool check,
+not an OS boundary. It binds only members without `bash`; `bash` (and
+anything it runs) can still write any file, read anything, and use every
+credential the user account holds, including the machine's `gh` login. The
+unconfined lead shares its session with members (`artifact://`, `agent://`,
+`local://`), so whatever it reads or prints can reach them; rules and context
+files OMP loads from project sources at startup never pass a tool call; and a
+same-user process can repoint the shared skill links. An `https_read` grant
+is an egress channel for everything its member can read. It grants nothing
+else - not plain HTTP, a browser, `bash`, or credentials, and it is not
+network containment; `web_search` stays available to every team identity
+either way. The command patterns behind `ops` are best effort and miss
+`eval`'d strings, scripts, and aliases. The binding, snapshot, and brief are
+writable by the same user, so the sha256 is a consistency check, not
+authorization: rewriting all three, or deleting the binding and the brief
+line together, goes undetected. The audit proves team-level final-tree scope
+only - not which member wrote a path, not writes that were reverted, not
+writes outside the worktree, and not ignored files. There is no OS sandbox,
+worker-specific credential, or branch protection. The extension's decisions
+are proven against synthetic OMP hook events (`tests/team-policy.sh`); a
+live OMP team session loading it has not been exercised.
 
 ## Machine-local state
 
