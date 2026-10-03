@@ -707,6 +707,59 @@ contains 'in-flight task: metadata count reports 1' "$out_task" '1 in-flight tas
 contains 'in-flight task: staleness reports UNKNOWN, never a false PASS' "$out_task" 'UNKNOWN       runtime.task_staleness'
 not_contains 'in-flight task: staleness never falsely reports PASS' "$out_task" 'PASS          runtime.task_staleness'
 
+# 17b. Bot watcher check health is advisory: NOT_APPLICABLE without a check,
+#      WARNING when the registered check pins an interpreter that is gone or
+#      another checkout's fm-bot, and never a change to the exit code.
+contains 'no bot watcher check installed: NOT_APPLICABLE' "$(run_doctor)" 'NOT_APPLICABLE runtime.bot_check'
+BOT_FM_HOME="$TMP_ROOT/fm-home-with-bot-check"
+mkdir -p "$BOT_FM_HOME/state" "$BOT_FM_HOME/data" "$BOT_FM_HOME/config"
+printf '#!/usr/bin/env bash\npy=/nonexistent/python3\nbot=%s/bin/fm-bot\n' "$CONFIG_ROOT" > "$BOT_FM_HOME/state/bots.check.sh"
+RUN_FM_HOME=$BOT_FM_HOME
+out_bot=$(run_doctor); code_bot=$?
+check 'bot check with a missing interpreter: exit code stays 0 (advisory)' 0 "$code_bot"
+contains 'bot check with a missing interpreter: WARNING' "$out_bot" 'WARNING       runtime.bot_check'
+contains 'bot check with a missing interpreter: names it' "$out_bot" '/nonexistent/python3'
+printf '#!/usr/bin/env bash\npy=%s\nbot=/tmp/some-other-checkout/bin/fm-bot\n' "$(command -v python3)" > "$BOT_FM_HOME/state/bots.check.sh"
+out_bot=$(run_doctor)
+contains 'bot check pinned to another checkout: WARNING' "$out_bot" 'WARNING       runtime.bot_check'
+contains 'bot check pinned to another checkout: names the pinned path' "$out_bot" '/tmp/some-other-checkout/bin/fm-bot'
+unset RUN_FM_HOME
+
+# 17c. The remaining bot-check branches, against a fixture FirstMate whose
+#      check library answers from a fixture flag: PASS only when the check is
+#      registered and pins this checkout, this home, and this FirstMate;
+#      WARNING when unregistered or pinned to another home or FirstMate;
+#      UNKNOWN without FirstMate's check library.
+BOT_FMROOT="$TMP_ROOT/firstmate-with-check-lib"
+mkdir -p "$BOT_FMROOT/bin" "$TMP_ROOT/firstmate-without-check-lib/bin"
+: > "$BOT_FMROOT/bin/fm-pr-lib.sh"
+printf 'fm_custom_check_registered() { [ -e "$1/$2.registered-fixture" ]; }\n' > "$BOT_FMROOT/bin/fm-check-lib.sh"
+bot_check_pins() {  # <pinned FM_HOME> <pinned FIRSTMATE_ROOT>
+  printf '#!/usr/bin/env bash\nFM_HOME=%s\nFIRSTMATE_ROOT=%s\npy=%s\nbot=%s/bin/fm-bot\n' \
+    "$1" "$2" "$(command -v python3)" "$CONFIG_ROOT" > "$BOT_FM_HOME/state/bots.check.sh"
+}
+RUN_FM_HOME=$BOT_FM_HOME RUN_FIRSTMATE_ROOT=$BOT_FMROOT
+bot_check_pins "$BOT_FM_HOME" "$BOT_FMROOT"
+: > "$BOT_FM_HOME/state/bots.registered-fixture"
+contains 'bot check registered and pinned here: PASS' "$(run_doctor)" 'PASS          runtime.bot_check'
+rm "$BOT_FM_HOME/state/bots.registered-fixture"
+out_bot=$(run_doctor)
+contains 'bot check not registered: WARNING' "$out_bot" 'WARNING       runtime.bot_check'
+contains 'bot check not registered: says so' "$out_bot" 'not registered'
+: > "$BOT_FM_HOME/state/bots.registered-fixture"
+bot_check_pins "$TMP_ROOT/some-other-home" "$BOT_FMROOT"
+out_bot=$(run_doctor)
+contains 'bot check pinned to another home: WARNING' "$out_bot" 'WARNING       runtime.bot_check'
+contains 'bot check pinned to another home: names it' "$out_bot" "$TMP_ROOT/some-other-home"
+bot_check_pins "$BOT_FM_HOME" "$TMP_ROOT/some-other-firstmate"
+out_bot=$(run_doctor)
+contains 'bot check pinned to another FirstMate: WARNING' "$out_bot" 'WARNING       runtime.bot_check'
+contains 'bot check pinned to another FirstMate: names it' "$out_bot" "$TMP_ROOT/some-other-firstmate"
+RUN_FIRSTMATE_ROOT="$TMP_ROOT/firstmate-without-check-lib"
+bot_check_pins "$BOT_FM_HOME" "$TMP_ROOT/firstmate-without-check-lib"
+contains 'bot check without FirstMate check library: UNKNOWN' "$(run_doctor)" 'UNKNOWN       runtime.bot_check'
+unset RUN_FM_HOME RUN_FIRSTMATE_ROOT
+
 # =============================================================================
 # 18. Git probes are read-only: every git invocation fm-doctor makes runs
 #     with GIT_OPTIONAL_LOCKS=0, so no probe can write an index refresh or

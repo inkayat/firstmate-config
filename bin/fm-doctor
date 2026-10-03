@@ -557,6 +557,39 @@ else
   add_check runtime.task_staleness UNKNOWN "FirstMate's fm-supervision-lib.sh unavailable" ""
 fi
 
+# Bot watcher check (advisory, never the exit code): the registered
+# state/bots.check.sh pins an interpreter, one checkout's bin/fm-bot, a home,
+# and a FirstMate checkout, so a removed interpreter, a check installed from
+# another checkout or for another home, or a lost trust record would make
+# every sweep fail, act on the wrong home, or be rejected without notice.
+BOT_CHECK="$STATE_DIR/bots.check.sh"
+same_dir() { [ "$(cd "$1" 2>/dev/null && pwd -P)" = "$(cd "$2" 2>/dev/null && pwd -P)" ] && [ -d "$1" ]; }
+if [ ! -e "$BOT_CHECK" ]; then
+  add_check runtime.bot_check NOT_APPLICABLE "no bot watcher check installed" ""
+else
+  bot_pinned() { sed -n "s/^$1=//p" "$BOT_CHECK" | head -1 | sed "s/^'\(.*\)'\$/\1/"; }
+  BOT_PY=$(bot_pinned py)
+  BOT_SCRIPT=$(bot_pinned bot)
+  BOT_HOME=$(bot_pinned FM_HOME)
+  BOT_ROOT=$(bot_pinned FIRSTMATE_ROOT)
+  if [ ! -x "$BOT_PY" ]; then
+    add_check runtime.bot_check WARNING "the bot check pins a missing interpreter: $BOT_PY" "every sweep reports fm-bot-missing; re-run fm bot check-install"
+  elif [ "$BOT_SCRIPT" != "$CONFIG_ROOT/bin/fm-bot" ]; then
+    add_check runtime.bot_check WARNING "the bot check pins another checkout's fm-bot: $BOT_SCRIPT" "re-run fm bot check-install from $CONFIG_ROOT"
+  elif ! same_dir "$BOT_HOME" "$FM_HOME"; then
+    add_check runtime.bot_check WARNING "the bot check pins another home: ${BOT_HOME:-(none)}" "re-run fm bot check-install with FM_HOME=$FM_HOME"
+  elif ! same_dir "$BOT_ROOT" "$FIRSTMATE_ROOT"; then
+    add_check runtime.bot_check WARNING "the bot check pins another FirstMate checkout: ${BOT_ROOT:-(none)}" "re-run fm bot check-install with FIRSTMATE_ROOT=$FIRSTMATE_ROOT"
+  elif [ ! -f "$FIRSTMATE_ROOT/bin/fm-check-lib.sh" ] || [ ! -f "$FIRSTMATE_ROOT/bin/fm-pr-lib.sh" ]; then
+    add_check runtime.bot_check UNKNOWN "the bot check's registration cannot be verified without FirstMate's fm-check-lib.sh" ""
+  elif ( set +u; . "$FIRSTMATE_ROOT/bin/fm-pr-lib.sh"; . "$FIRSTMATE_ROOT/bin/fm-check-lib.sh"
+         fm_custom_check_registered "$STATE_DIR" bots ) >/dev/null 2>&1; then
+    add_check runtime.bot_check PASS "the bot check is registered and pins $BOT_PY, this checkout's fm-bot, this home, and this FirstMate" ""
+  else
+    add_check runtime.bot_check WARNING "the bot check is not registered, so the watcher rejects it" "re-run fm bot check-install"
+  fi
+fi
+
 J_RUNTIME=$(printf '{"herdr":{"cli_present":%s,"running":%s,"compatible":%s,"server_version":%s,"client_version":%s},"lock":{"status":%s,"known":%s},"watcher":{"needed":%s,"fresh":%s},"heartbeat":{"present":%s,"fresh":%s,"description":%s},"wake_queue":{"pending":%s},"task_metadata":{"in_flight":%s,"staleness":%s}}' \
   "$HERDR_CLI_PRESENT" "$(jtri "$HERDR_RUNNING")" "$(jtri "$HERDR_COMPATIBLE")" "$(jstr "$HERDR_SERVER_VERSION")" "$(jstr "$HERDR_CLIENT_VERSION")" \
   "$(jstr "$LOCK_STATUS")" "$LOCK_KNOWN" \

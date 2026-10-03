@@ -31,9 +31,12 @@ has_line() { if printf '%s\n' "$2" | grep -Fxq -- "$3"; then pass "$1"; else fai
 skip() { printf 'bots.sh: skipped entirely (%s)\n' "$1"; exit 0; }
 command -v python3 >/dev/null 2>&1 || skip "no python3 to run fm-bot"
 command -v tasks-axi >/dev/null 2>&1 || skip "tasks-axi is not on PATH for the official fm-tasks-axi.sh"
-for s in fm-project-mode.sh fm-tasks-axi.sh fm-check-register.sh fm-check-lib.sh fm-pr-lib.sh; do
+for s in fm-project-mode.sh fm-tasks-axi.sh fm-check-register.sh fm-check-lib.sh fm-pr-lib.sh fm-captain-hold.sh; do
   [ -f "$FMROOT/bin/$s" ] || skip "official FirstMate checkout lacks bin/$s at $FMROOT"
 done
+# create/file accept --now only under an explicit test clock; every create and
+# file below pins the clock, and scenario 13 checks the refusal without it.
+export FM_BOT_TEST_CLOCK=1
 
 live_snapshot() {
   local p
@@ -65,8 +68,7 @@ EOF
 cat > "$H/data/captain.md" <<'EOF'
 # Captain preferences
 
-The pushbot bot may push to pubproj on branches under bot/pushbot/, one PR per
-run, never merging.
+bot-authorization: The pushbot bot may push to pubproj on branches under bot/pushbot/, one PR per run, never merging.
 EOF
 PUSH_QUOTE='The pushbot bot may push to pubproj on branches under bot/pushbot/, one PR per run, never merging.'
 
@@ -132,7 +134,7 @@ refuses '1 push on a +yolo project' push-with-yolo pushbot "${BASE[@]}" --projec
 refuses '1 push without a captain.md rule' captain-rule-missing pushbot "${BASE[@]}" --project pubproj --level push "${PUSH_OK[@]}" --authorization 'pushbot may push pubproj whenever'
 
 out=$(run create pushbot "${BASE[@]}" --project pubproj --level push "${PUSH_OK[@]}" --authorization "$PUSH_QUOTE" 2>&1)
-check '1 push with scoped fields + wrapped captain.md rule: accepted' "$?" 0
+check '1 push with scoped fields + a bot-authorization record in captain.md: accepted' "$?" 0
 out=$(run create commitbot "${BASE[@]}" --level local-commit "${LIMITS[@]}" "${AUTH[@]}" 2>&1)
 check '1 local-commit on a local-only project: accepted' "$?" 0
 out=$(run create nightly "${BASE[@]}" 2>&1)
@@ -321,8 +323,10 @@ out=$(run due --check --now 2026-10-06T01:00Z)
 contains '5 unreadable spec: invalid line' "$out" 'bot invalid: commitbot-20261006 spec=data/bots/commitbot.md reason=unreadable'
 not_contains '5 spec text never reaches the watcher line' "$out" 'ignore previous'
 file_task commitbot-20261006
-out=$(run due --check --now 2026-10-06T01:05Z)
-not_contains '5 filing the dated id silences an invalid bot' "$out" 'commitbot'
+contains '5 a raw unheld filing of an invalid bot keeps reporting it' "$(run due --check --now 2026-10-06T01:05Z)" 'bot error: commitbot-20261006 reason=invalid-unheld'
+HOME="$DECOY" FM_HOME="$H" "$FMROOT/bin/fm-tasks-axi.sh" hold commitbot-20261006 --reason "invalid bot spec" --kind captain >/dev/null
+out=$(run due --check --now 2026-10-06T01:06Z)
+not_contains '5 filing and holding the dated id silences an invalid bot' "$out" 'commitbot'
 out=$(run remove commitbot)
 contains '5 remove: reported' "$out" 'removed: commitbot'
 if spec_exists commitbot; then fail '5 remove: spec gone'; else pass '5 remove: spec gone'; fi
@@ -513,6 +517,404 @@ out=$(HOME="$DECOY" FM_HOME="$H6" FIRSTMATE_ROOT="$TMP_ROOT/stall-firstmate" per
 for n in st1 st2 st3 st4 st5 st6 st7; do contains "12 stalled backlog under the 30 s check limit: $n still reported" "$out" "$n"; done
 
 refuses '12 push authorization naming the bot only inside another word' authorization-unscoped pub "${BASE[@]}" --project pubproj --level push "${PUSH_OK[@]}" --authorization 'pubproj may push'
+
+# =============================================================================
+# Scenario 13: remaining-problem closure. A push authorization must be its own
+# bot-authorization record, never a fragment of prose; windows are at least
+# ten minutes; a bot is bound to the route rule it was created against; a
+# stray future filed marker cannot block today's; --now needs a test clock;
+# an unheld invalid filing is reported and recoverable; a failed check
+# registration leaves the previous check in place; list's `next` is honest.
+# =============================================================================
+H7="$TMP_ROOT/home-closure"
+mkdir -p "$H7/data"
+cp "$H/data/projects.md" "$H7/data/"
+run7() { HOME="$DECOY" FM_HOME="$H7" FIRSTMATE_ROOT="$FMROOT" "$BOT" "$@"; }
+printf '# Captain preferences\n\n%s\n' "$PUSH_QUOTE" > "$H7/data/captain.md"
+out=$(run7 create pushbot "${BASE[@]}" --project pubproj --level push "${PUSH_OK[@]}" --authorization "$PUSH_QUOTE" 2>&1)
+contains '13 the same words as prose, not a record: refused' "$out" 'refused (captain-rule-missing)'
+printf '# Captain preferences\n\nNever let the pushbot bot push to pubproj without asking me first.\n' > "$H7/data/captain.md"
+out=$(run7 create pushbot "${BASE[@]}" --project pubproj --level push "${PUSH_OK[@]}" --authorization 'pushbot bot push to pubproj' 2>&1)
+contains '13 words inside a prohibition: refused' "$out" 'refused (captain-rule-missing)'
+printf '# Captain preferences\n\n- bot-authorization:  %s\n' "$PUSH_QUOTE" > "$H7/data/captain.md"
+out=$(run7 create pushbot "${BASE[@]}" --project pubproj --level push "${PUSH_OK[@]}" --authorization "$PUSH_QUOTE" 2>&1)
+check '13 a bulleted bot-authorization record: accepted' "$?" 0
+
+refuses '13 a window shorter than ten minutes' window-too-short short "${BASE[@]}" --at 08:00 --until 08:08
+out=$(run7 create tenmin "${BASE[@]}" --at 08:00 --until 08:09 2>&1)
+check '13 a ten-minute window: accepted' "$?" 0
+sed -i.bak 's/^until:\( *\)08:09$/until:\108:03/' "$H7/data/bots/tenmin.md"; rm -f "$H7/data/bots/tenmin.md.bak"
+contains '13 an existing spec with a short window: reported invalid' "$(run7 due --check --now 2026-10-15T06:02Z)" 'bot invalid: tenmin-20261015 spec=data/bots/tenmin.md reason=window-too-short'
+run7 remove tenmin >/dev/null
+
+RC="$TMP_ROOT/route-cfg"
+mkdir -p "$RC/bin" "$RC/firstmate"
+cp "$BOT" "$RC/bin/fm-bot"; cp "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$RC/firstmate/"; cp -R "$CONFIG_ROOT/roles" "$RC/"
+H8="$TMP_ROOT/home-route"
+mkdir -p "$H8/data"
+cp "$H/data/projects.md" "$H8/data/"
+run8() { HOME="$DECOY" FM_HOME="$H8" FIRSTMATE_ROOT="$FMROOT" "$RC/bin/fm-bot" "$@"; }
+run8 create routed "${BASE[@]}" >/dev/null
+contains '13 create records the rule the route names' "$(cat "$H8/data/bots/routed.md")" 'route_use: omp:anthropic/claude-sonnet-5-5:medium'
+contains '13 an unchanged rule: due' "$(run8 due --check --now 2026-10-15T01:00Z)" 'bot due: routed-20261015'
+python3 - "$RC/firstmate/crew-dispatch.json" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p))
+explore = [r for r in d["rules"] if r.get("category") == "EXPLORE"]
+d["rules"].insert(d["rules"].index(explore[0]) + 1, {"category": "EXPLORE", "when": "fixture sub-lane", "use": [{"harness": "omp", "model": "anthropic/claude-opus-5-5", "effort": "xhigh"}]})
+json.dump(d, open(p, "w"))
+PY
+contains '13 a sub-lane inserted before the rule: reported route-changed, never re-targeted' "$(run8 due --check --now 2026-10-15T01:00Z)" 'bot invalid: routed-20261015 spec=data/bots/routed.md reason=route-changed'
+sed -i.bak '/^route_use:/d' "$H8/data/bots/routed.md"; rm -f "$H8/data/bots/routed.md.bak"
+contains '13 a spec without route_use is refused, never routed by position' "$(run8 due --check --now 2026-10-15T01:00Z)" 'bot invalid: routed-20261015 spec=data/bots/routed.md reason=route-unpinned'
+
+run7 create mk "${BASE[@]}" >/dev/null
+mkdir -p "$H7/data/bots/.filed"
+printf 'mk-20271231\n' > "$H7/data/bots/.filed/mk"
+run7 file mk-20261015 --now 2026-10-15T01:00Z >/dev/null
+check '13 a future filed marker does not block recording today' "$(cat "$H7/data/bots/.filed/mk")" mk-20261015
+out=$(HOME="$DECOY" FM_HOME="$H7" FIRSTMATE_ROOT="$FMROOT" env -u FM_BOT_TEST_CLOCK "$BOT" file mk-20261016 --now 2026-10-16T01:00Z 2>&1)
+contains '13 file --now without the test clock: refused' "$out" 'refused (clock-override)'
+out=$(HOME="$DECOY" FM_HOME="$H7" FIRSTMATE_ROOT="$FMROOT" env -u FM_BOT_TEST_CLOCK "$BOT" create clk "${BASE[@]}" 2>&1)
+contains '13 create --now without the test clock: refused' "$out" 'refused (clock-override)'
+
+AX="$TMP_ROOT/axi-stub"
+mkdir -p "$AX/bin" "$AX/rows"
+cat > "$AX/bin/fm-tasks-axi.sh" <<'SH'
+#!/bin/sh
+# Stateful backlog stub: add creates a row; show reports its hold.
+S=$(dirname "$0")/..
+case $1 in
+  show) [ -e "$S/rows/$2" ] || { echo NOT_FOUND; exit 1; }
+        printf 'id: %s\nstate: queued\n' "$2"
+        if [ -e "$S/rows/$2.held" ]; then printf '  held: yes\n  hold_kind: captain\n'; else printf '  held: no\n  hold_kind: "-"\n'; fi; exit 0 ;;
+  add) : > "$S/rows/$2"; exit 0 ;;
+  list) exit 0 ;;
+esac
+exit 2
+SH
+cat > "$AX/bin/fm-captain-hold.sh" <<'SH'
+#!/bin/sh
+# Captain-hold stub: creates a missing row when given --title, then fails
+# the hold itself while hold-fails exists (a create-then-hold failure).
+S=$(dirname "$0")/..
+[ "$1" = hold ] || exit 2
+id=$2; shift 2
+while [ "$#" -gt 0 ]; do case $1 in --title) [ -e "$S/rows/$id" ] || : > "$S/rows/$id"; shift ;; esac; shift; done
+[ ! -e "$S/hold-fails" ] || exit 1
+[ -e "$S/rows/$id" ] || exit 1
+: > "$S/rows/$id.held"; echo "$id"
+SH
+chmod +x "$AX/bin/fm-tasks-axi.sh" "$AX/bin/fm-captain-hold.sh"
+H9="$TMP_ROOT/home-hold"
+mkdir -p "$H9/data"
+run9() { HOME="$DECOY" FM_HOME="$H9" FIRSTMATE_ROOT="$AX" "$BOT" "$@"; }
+run9 create hb "${BASE[@]}" >/dev/null
+sed -i.bak 's/^role:\( *\)senior-fullstack$/role:\1no-such-role/' "$H9/data/bots/hb.md"; rm -f "$H9/data/bots/hb.md.bak"
+: > "$AX/hold-fails"
+out=$(run9 file hb-20261015 --now 2026-10-15T01:00Z 2>&1)
+contains '13 hold failing after add: refused, not reported as held' "$out" 'could not hold'
+if [ -e "$H9/data/bots/.filed/hb" ]; then fail '13 hold failing after add: no filed marker'; else pass '13 hold failing after add: no filed marker'; fi
+contains '13 an unheld invalid filing is an error line, not silence' "$(run9 due --check --now 2026-10-15T01:05Z)" 'bot error: hb-20261015 reason=invalid-unheld'
+rm "$AX/hold-fails"
+out=$(run9 file hb-20261015 --json --now 2026-10-15T01:06Z 2>&1)
+check '13 filing again completes the hold' "$(field "$out" held)" hb-20261015
+not_contains '13 once held: silent' "$(run9 due --check --now 2026-10-15T01:07Z)" 'hb-'
+
+CR="$TMP_ROOT/register-stub"
+mkdir -p "$CR/bin"
+H10="$TMP_ROOT/home-register"
+mkdir -p "$H10/state"
+printf 'previous registered check\n' > "$H10/state/bots.check.sh"
+printf '#!/bin/sh\necho "registration refused" >&2\nexit 1\n' > "$CR/bin/fm-check-register.sh"; chmod +x "$CR/bin/fm-check-register.sh"
+out=$(HOME="$DECOY" FM_HOME="$H10" FIRSTMATE_ROOT="$CR" "$BOT" check-install 2>&1)
+contains '13 a refused registration: reported' "$out" 'refused (check-register-failed)'
+check '13 a refused registration: the previous check is restored' "$(cat "$H10/state/bots.check.sh")" 'previous registered check'
+printf '#!/bin/sh\nexec sleep 60\n' > "$CR/bin/fm-check-register.sh"
+rm -f "$H10/state/bots.check.sh"
+out=$(HOME="$DECOY" FM_HOME="$H10" FIRSTMATE_ROOT="$CR" "$BOT" check-install 2>&1)
+contains '13 a registration that hangs: reported as a timeout' "$out" 'refused (check-register-timeout)'
+if [ -e "$H10/state/bots.check.sh" ]; then fail '13 a registration that hangs: no unregistered check left'; else pass '13 a registration that hangs: no unregistered check left'; fi
+
+run7 create nx "${BASE[@]}" >/dev/null
+run7 pause nx >/dev/null
+contains '13 list: a paused bot shows no next start' "$(run7 list --now 2026-10-15T12:00Z | grep '^nx')" 'next paused'
+run7 file mk-20261017 --now 2026-10-17T01:00Z >/dev/null
+out=$(run7 list --now 2026-10-17T01:10Z | grep '^mk')
+not_contains '13 list: a bot filed today is not "in window now"' "$out" 'in window now'
+contains '13 list: a bot filed today shows its next day' "$out" 'next 2026-10-18 03:00'
+
+# =============================================================================
+# Scenario 14: audit corrections. Mutating backlog writes are never killed
+# mid-write; an invalid bot is held on the first `file` through the official
+# captain-hold owner with its cause; the backlog row carries the dispatch plan
+# and a queued, unstarted row prints it again; dry and synthetic-date queries
+# never move today's marker; a symlinked, directory, or FIFO spec is filed and
+# held without being followed or read; an identical nonactionable fault is
+# reported once per occurrence, never actionable lines.
+# =============================================================================
+H14="$TMP_ROOT/home-audit"
+mkdir -p "$H14/data"
+cp "$H/data/projects.md" "$H14/data/"
+run14() { HOME="$DECOY" FM_HOME="$H14" FIRSTMATE_ROOT="$FMROOT" "$BOT" "$@"; }
+axi14() { HOME="$DECOY" FM_HOME="$H14" "$FMROOT/bin/fm-tasks-axi.sh" "$@"; }
+
+SL="$TMP_ROOT/slow-add"
+mkdir -p "$SL/bin" "$SL/rows"
+cat > "$SL/bin/fm-tasks-axi.sh" <<'SH'
+#!/bin/sh
+# add writes the row, then answers only after fm-bot's 5 s call timeout.
+S=$(dirname "$0")/..
+case $1 in
+  show) [ -e "$S/rows/$2" ] || { echo NOT_FOUND; exit 1; }; printf 'id: %s\nstate: queued\n  held: no\n' "$2"; exit 0 ;;
+  add) : > "$S/rows/$2"; sleep 7; exit 0 ;;
+  list) exit 0 ;;
+esac
+exit 2
+SH
+chmod +x "$SL/bin/fm-tasks-axi.sh"
+HS="$TMP_ROOT/home-slow"
+mkdir -p "$HS/data"
+HOME="$DECOY" FM_HOME="$HS" FIRSTMATE_ROOT="$SL" "$BOT" create slow "${BASE[@]}" >/dev/null
+out=$(HOME="$DECOY" FM_HOME="$HS" FIRSTMATE_ROOT="$SL" "$BOT" file slow-20261015 --now 2026-10-15T01:00Z 2>&1)
+not_contains '14 a slow backlog add is never reported as nothing filed' "$out" 'nothing filed'
+contains '14 a slow backlog add still prints the plan' "$out" 'stop_rule:'
+
+run14 create gb "${BASE[@]}" >/dev/null
+sed -i.bak 's/^wall_clock_min:\( *\)45$/wall_clock_min:\145m/' "$H14/data/bots/gb.md"; rm -f "$H14/data/bots/gb.md.bak"
+out=$(run14 file gb-20261015 --json --now 2026-10-15T01:00Z 2>&1)
+check '14 an invalid cause with parentheses is held on the first file' "$(field "$out" held)" gb-20261015
+row=$(axi14 show gb-20261015 --full)
+contains '14 that hold is a captain hold' "$row" 'hold_kind: captain'
+contains '14 that hold keeps the original cause' "$row" "wall_clock_min must be a positive integer (got '45m')"
+contains '14 no invalid row is left dispatchable' "$(axi14 ready)" 'count: 0'
+not_contains '14 once held on the first file: silent' "$(run14 due --check --now 2026-10-15T01:05Z)" 'gb-'
+run14 create rh "${BASE[@]}" >/dev/null
+sed -i.bak 's/^wall_clock_min:\( *\)45$/wall_clock_min:\145m/' "$H14/data/bots/rh.md"; rm -f "$H14/data/bots/rh.md.bak"
+axi14 add rh-20261015 --title "rh raw filing" >/dev/null
+contains '14 a raw unheld filing is reported' "$(run14 due --check --now 2026-10-15T01:00Z)" 'bot error: rh-20261015 reason=invalid-unheld'
+run14 file rh-20261015 --now 2026-10-15T01:01Z >/dev/null 2>&1
+row=$(axi14 show rh-20261015 --full)
+contains '14 the recovery hold keeps the original cause' "$row" "wall_clock_min must be a positive integer (got '45m')"
+contains '14 the recovery hold is a captain hold' "$row" 'hold_kind: captain'
+
+run14 create db "${BASE[@]}" >/dev/null
+mkdir -p "$H14/data/bots/.filed"; chmod 500 "$H14/data/bots/.filed"
+out=$(run14 file db-20261015 --now 2026-10-15T01:00Z 2>&1)
+chmod 700 "$H14/data/bots/.filed"
+contains '14 a failed marker write is reported' "$out" 'could not record its marker'
+contains '14 the backlog row carries the plan and its stop rule' "$(axi14 show db-20261015 --full)" 'stop_rule'
+out=$(run14 file db-20261015 --now 2026-10-15T01:06Z 2>&1)
+contains '14 a queued, unstarted filed row: labelled already filed' "$out" 'already-filed (queued, not started): db-20261015'
+contains '14 a queued, unstarted filed row: prints its stored plan' "$out" 'stop_rule:'
+check '14 the stored plan is printed once' "$(printf '%s\n' "$out" | grep -c '^stop_rule:')" 1
+has_line '14 after the recovery print, a later file does not re-plan' "$(run14 file db-20261015 --now 2026-10-15T01:06Z 2>&1)" 'already-filed: db-20261015'
+run14 create dc "${BASE[@]}" >/dev/null
+chmod 500 "$H14/data/bots/.filed"
+run14 file dc-20261015 --now 2026-10-15T01:00Z >/dev/null 2>&1
+chmod 700 "$H14/data/bots/.filed"
+axi14 start dc-20261015 >/dev/null
+out=$(run14 file dc-20261015 --now 2026-10-15T01:07Z 2>&1)
+has_line '14 an interrupted filing whose row already started is never re-planned' "$out" 'already-filed: dc-20261015'
+not_contains '14 a started row prints no plan' "$out" 'stop_rule'
+run14 file gb-20261015 --now 2026-10-15T01:08Z >/dev/null 2>&1
+not_contains '14 a held invalid row prints no plan' "$(run14 file gb-20261015 --now 2026-10-15T01:08Z 2>&1)" 'stop_rule'
+
+run14 create nb "${BASE[@]}" >/dev/null
+axi14 add nb-20261010 --title "nb old day" >/dev/null
+axi14 hold nb-20261010 --reason "old held day" --kind captain >/dev/null
+run14 file nb-20261015 --now 2026-10-15T01:00Z >/dev/null
+axi14 done nb-20261015 >/dev/null
+for i in $(seq 1 11); do axi14 add "fill-$i" --title f >/dev/null; axi14 done "fill-$i" >/dev/null; done
+HOME="$DECOY" FM_HOME="$H14" FIRSTMATE_ROOT="$FMROOT" env -u FM_BOT_TEST_CLOCK "$BOT" due --now 2026-10-10T01:30Z >/dev/null 2>&1
+check "14 a dry past-date query leaves today's marker" "$(cat "$H14/data/bots/.filed/nb")" nb-20261015
+not_contains '14 and today stays filed' "$(run14 due --check --now 2026-10-15T01:35Z)" 'nb-'
+
+H15="$TMP_ROOT/home-nonregular"
+mkdir -p "$H15/data"
+cp "$H/data/projects.md" "$H15/data/"
+run15() { HOME="$DECOY" FM_HOME="$H15" FIRSTMATE_ROOT="$FMROOT" "$BOT" "$@"; }
+run15 create ok "${BASE[@]}" >/dev/null
+mkfifo "$TMP_ROOT/spec-fifo"
+ln -s "$TMP_ROOT/spec-fifo" "$H15/data/bots/lnk.md"
+mkdir "$H15/data/bots/dir.md"
+mkfifo "$H15/data/bots/pipe.md"
+out=$(HOME="$DECOY" FM_HOME="$H15" FIRSTMATE_ROOT="$FMROOT" perl -e 'alarm shift; exec @ARGV' 20 "$BOT" due --check --now 2026-10-15T01:00Z 2>&1)
+contains '14 a symlinked spec is reported without being followed' "$out" 'bot invalid: lnk-20261015 spec=data/bots/lnk.md reason=symlink'
+contains '14 a directory spec is reported as nonregular' "$out" 'bot invalid: dir-20261015 spec=data/bots/dir.md reason=nonregular'
+contains '14 a FIFO spec is reported without blocking the sweep' "$out" 'bot invalid: pipe-20261015 spec=data/bots/pipe.md reason=nonregular'
+contains '14 the sweep still reaches later bots' "$out" 'bot due: ok-20261015'
+for b in lnk dir pipe; do
+  out=$(HOME="$DECOY" FM_HOME="$H15" FIRSTMATE_ROOT="$FMROOT" perl -e 'alarm shift; exec @ARGV' 20 "$BOT" file "$b-20261015" --json --now 2026-10-15T01:01Z 2>&1)
+  check "14 a $b spec's dated id is filed and held" "$(field "$out" held)" "$b-20261015"
+done
+out=$(HOME="$DECOY" FM_HOME="$H15" FIRSTMATE_ROOT="$FMROOT" perl -e 'alarm shift; exec @ARGV' 20 "$BOT" due --check --now 2026-10-15T01:05Z 2>&1)
+not_contains '14 once filed and held, a nonregular spec is silent that day' "$out" 'invalid'
+[ -L "$H15/data/bots/lnk.md" ] && [ -p "$TMP_ROOT/spec-fifo" ] && pass '14 the symlink and its target are left untouched' || fail '14 the symlink and its target are left untouched'
+rm -f "$H15/data/bots/pipe.md"
+
+FL="$TMP_ROOT/flaky-backlog"
+mkdir -p "$FL/bin"
+cp "$FMROOT/bin/fm-project-mode.sh" "$FL/bin/"
+cat > "$FL/bin/fm-tasks-axi.sh" <<SH
+#!/bin/sh
+# The official backlog, except that show of an eb- id fails while $FL/down exists.
+case "\$1:\$2" in show:eb-*) [ ! -e "$FL/down" ] || exit 2 ;; esac
+exec "$FMROOT/bin/fm-tasks-axi.sh" "\$@"
+SH
+chmod +x "$FL/bin/fm-tasks-axi.sh"
+H16="$TMP_ROOT/home-dedupe"
+mkdir -p "$H16/data"
+cp "$H/data/projects.md" "$H16/data/"
+run16() { HOME="$DECOY" FM_HOME="$H16" FIRSTMATE_ROOT="$FL" "$BOT" "$@"; }
+for b in eb ec; do run16 create "$b" "${BASE[@]}" >/dev/null; done
+run16 create ei "${BASE[@]}" >/dev/null
+sed -i.bak 's/^role:\( *\)senior-fullstack$/role:\1no-such-role/' "$H16/data/bots/ei.md"; rm -f "$H16/data/bots/ei.md.bak"
+: > "$FL/down"
+out=$(run16 due --check --now 2026-10-15T01:00Z)
+contains '14 a nonactionable fault is reported' "$out" 'bot error: eb-20261015 reason=backlog-unavailable'
+out=$(run16 due --check --now 2026-10-15T01:05Z)
+not_contains '14 the identical fault on the next sweep is silent' "$out" 'eb-20261015'
+contains '14 due work is still reported every sweep' "$out" 'bot due: ec-20261015'
+contains '14 an unanswered invalid bot is still reported every sweep' "$out" 'bot invalid: ei-20261015'
+noclock16() { HOME="$DECOY" FM_HOME="$H16" FIRSTMATE_ROOT="$FL" env -u FM_BOT_TEST_CLOCK "$BOT" due --check --now "$1"; }
+contains '14 a synthetic-date sweep without the test clock suppresses nothing' "$(noclock16 2026-10-15T01:06Z)" 'bot error: eb-20261015 reason=backlog-unavailable'
+rm "$FL/down"
+noclock16 2026-10-15T01:07Z >/dev/null
+: > "$FL/down"
+not_contains '14 a synthetic-date sweep without the test clock records nothing' "$(run16 due --check --now 2026-10-15T01:08Z)" 'eb-20261015'
+rm "$FL/down"
+contains '14 a cleared fault gives way to the due line' "$(run16 due --check --now 2026-10-15T01:10Z)" 'bot due: eb-20261015'
+: > "$FL/down"
+contains '14 a recurring fault is reported again' "$(run16 due --check --now 2026-10-15T01:15Z)" 'bot error: eb-20261015 reason=backlog-unavailable'
+contains '14 the fault is reported again on a new day' "$(run16 due --check --now 2026-10-16T01:00Z)" 'bot error: eb-20261016 reason=backlog-unavailable'
+rm "$FL/down"
+
+# =============================================================================
+# Scenario 15: small audit defects. A sweep ends with time to spare before the
+# watcher's 30 s kill and does not defer the same tail bots every sweep;
+# non-UTF-8 captain text never crashes a push bot or elevates it; a failed
+# registration leaves the previous check registered through the official
+# owner, or says it could not; `file` plans from the spec it evaluated.
+# =============================================================================
+SB="$TMP_ROOT/slow-backlog"
+mkdir -p "$SB/bin"
+printf '#!/bin/sh\ncase $1 in show) sleep 4.9; echo NOT_FOUND; exit 1 ;; esac\nexit 2\n' > "$SB/bin/fm-tasks-axi.sh"
+printf '#!/bin/sh\nexec sleep 60\n' > "$SB/bin/fm-project-mode.sh"
+chmod +x "$SB/bin/fm-tasks-axi.sh" "$SB/bin/fm-project-mode.sh"
+H17="$TMP_ROOT/home-budget"
+mkdir -p "$H17/data"
+cp "$H/data/projects.md" "$H17/data/"
+run17() { HOME="$DECOY" FM_HOME="$H17" FIRSTMATE_ROOT="$FMROOT" "$BOT" "$@"; }
+for n in a1 a2 a3 a4 z6; do run17 create "$n" "${BASE[@]}" >/dev/null; done
+run17 create e5 "${BASE[@]}" --level local-commit "${AUTH[@]}" "${LIMITS[@]}" >/dev/null
+timed_sweep() {  # <--now> : "<seconds> <line>" per stdout line, then "<seconds> exit=..."
+  HOME="$DECOY" FM_HOME="$H17" FIRSTMATE_ROOT="$SB" python3 - "$BOT" "$1" <<'PY'
+import select, subprocess, sys, time
+t0 = time.monotonic()
+p = subprocess.Popen([sys.argv[1], "due", "--check", "--now", sys.argv[2]], stdout=subprocess.PIPE,
+                     stderr=subprocess.DEVNULL, text=True, bufsize=1)
+killed = False
+while True:
+    left = 30 - (time.monotonic() - t0)
+    if left <= 0:
+        p.kill(); killed = True; break
+    if not select.select([p.stdout], [], [], left)[0]:
+        continue
+    line = p.stdout.readline()
+    if not line:
+        break
+    print(f"{time.monotonic() - t0:.2f} {line.rstrip()}")
+p.wait()
+print(f"{time.monotonic() - t0:.2f} exit={'killed' if killed else p.returncode}")
+PY
+}
+s1=$(timed_sweep 2026-10-15T01:00Z)
+s2=$(timed_sweep 2026-10-15T01:05Z)
+for s in "$s1" "$s2"; do
+  last=$(printf '%s\n' "$s" | tail -1)
+  case $last in *exit=0) pass '15 a slow sweep is never killed by the watcher limit' ;; *) fail "15 a slow sweep is never killed by the watcher limit ($last)" ;; esac
+  if python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) < 28 else 1)' "${last%% *}"; then pass '15 a slow sweep ends at least 2 s before the 30 s kill'
+  else fail "15 a slow sweep ends at least 2 s before the 30 s kill ($last)"; fi
+done
+deferred=$(printf '%s\n' "$s1" | sed -n 's/.*bot error: check reason=deadline unevaluated=\([^,]*\).*/\1/p')
+if [ -n "$deferred" ] && printf '%s\n' "$s2" | grep -q "bot [a-z]*: $deferred-20261015"; then pass '15 a bot deferred by one sweep is evaluated by the next'
+else fail "15 a bot deferred by one sweep is evaluated by the next (deferred '$deferred'; next: $(printf '%s' "$s2" | tr '\n' '|'))"; fi
+
+H18="$TMP_ROOT/home-latin1"
+mkdir -p "$H18/data"
+cp "$H/data/projects.md" "$H18/data/"
+run18() { HOME="$DECOY" FM_HOME="$H18" FIRSTMATE_ROOT="$FMROOT" "$BOT" "$@"; }
+printf '# Captain preferences\nbot-authorization: %s\n' "$PUSH_QUOTE" > "$H18/data/captain.md"
+run18 create pushbot "${BASE[@]}" --project pubproj --level push "${PUSH_OK[@]}" --authorization "$PUSH_QUOTE" >/dev/null
+printf 'Notlar: \347ok \366nemli\n' >> "$H18/data/captain.md"
+out=$(run18 due --check --now 2026-10-15T01:00Z)
+contains '15 a non-UTF-8 line elsewhere in captain.md keeps an intact record' "$out" 'bot due: pushbot-20261015 spec=data/bots/pushbot.md level=push'
+not_contains '15 a non-UTF-8 captain.md is no check failure' "$out" 'check-failed'
+printf '# Captain preferences\nbot-authorization: %s \347\n' "$PUSH_QUOTE" > "$H18/data/captain.md"
+contains '15 a record holding a non-UTF-8 byte downgrades, never elevates' "$(run18 due --check --now 2026-10-15T01:00Z)" \
+  'bot due: pushbot-20261015 spec=data/bots/pushbot.md level=local-proposal requested=push reason=captain-rule-missing'
+out=$(run18 file pushbot-20261015 --json --now 2026-10-15T01:01Z 2>&1)
+check '15 filing with a non-UTF-8 captain.md: a downgraded plan, no traceback' "$(field "$out" level)" local-proposal
+not_contains '15 filing with a non-UTF-8 captain.md never crashes' "$out" 'Traceback'
+
+RS="$TMP_ROOT/register-flaky"
+mkdir -p "$RS/bin"
+cat > "$RS/bin/fm-check-register.sh" <<SH
+#!/bin/sh
+# The official register, failing its own way (trust record removed) while
+# $RS/fail-next or $RS/fail-always exists.
+if [ -e "$RS/fail-next" ] || [ -e "$RS/fail-always" ]; then
+  rm -f "$RS/fail-next"
+  "$FMROOT/bin/fm-check-register.sh" "\$@" >/dev/null 2>&1
+  rm -f "\$FM_HOME/state/\$1.check-trust"; echo "self-check failed" >&2; exit 1
+fi
+exec "$FMROOT/bin/fm-check-register.sh" "\$@"
+SH
+chmod +x "$RS/bin/fm-check-register.sh"
+H19="$TMP_ROOT/home-reregister"
+mkdir -p "$H19/state"
+HOME="$DECOY" FM_HOME="$H19" FIRSTMATE_ROOT="$FMROOT" "$BOT" check-install >/dev/null 2>&1
+registered19() { bash -c '( set +u; . "$1/bin/fm-pr-lib.sh"; . "$1/bin/fm-check-lib.sh"; fm_custom_check_registered "$2/state" bots ) >/dev/null 2>&1' _ "$FMROOT" "$H19"; }
+prev=$(cat "$H19/state/bots.check.sh")
+: > "$RS/fail-next"
+out=$(HOME="$DECOY" FM_HOME="$H19" FIRSTMATE_ROOT="$RS" "$BOT" check-install 2>&1)
+contains '15 a failed registration is refused' "$out" 'refused (check-register-failed)'
+check '15 the previous check bytes are restored' "$(cat "$H19/state/bots.check.sh")" "$prev"
+if registered19; then pass '15 the restored check is registered again through the official owner'; else fail '15 the restored check is registered again through the official owner'; fi
+contains '15 the restored registration is reported' "$out" 'previous check restored and registered'
+: > "$RS/fail-always"
+out=$(HOME="$DECOY" FM_HOME="$H19" FIRSTMATE_ROOT="$RS" "$BOT" check-install 2>&1)
+contains '15 a restore whose registration also fails says so' "$out" 'could not register the restored check'
+if registered19; then fail '15 an unregistered restore is not reported as registered'; else pass '15 an unregistered restore is not reported as registered'; fi
+rm -f "$RS/fail-always"
+
+H20="$TMP_ROOT/home-oneread"
+mkdir -p "$H20/data"
+cp "$H/data/projects.md" "$H20/data/"
+HOME="$DECOY" FM_HOME="$H20" FIRSTMATE_ROOT="$FMROOT" "$BOT" create twice "${BASE[@]}" >/dev/null
+# -B: loading bin/fm-bot as a module must not leave bin/__pycache__ in the checkout.
+out=$(HOME="$DECOY" FM_HOME="$H20" FIRSTMATE_ROOT="$FMROOT" python3 -B - "$BOT" <<'PY'
+import contextlib, importlib.machinery, importlib.util, io, sys
+loader = importlib.machinery.SourceFileLoader("fm_bot", sys.argv[1])
+mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("fm_bot", loader))
+loader.exec_module(mod)
+original, reads = mod.read_spec, []
+def changing(name):
+    # A spec rewritten between two reads: only the first read may plan.
+    spec = original(name)
+    reads.append(name)
+    if len(reads) > 1:
+        spec["scope"] = "SECOND READ"
+    return spec
+mod.read_spec = changing
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf), contextlib.suppress(SystemExit):
+    mod.main(["file", "twice-20261015", "--json", "--now", "2026-10-15T01:00Z"])
+print(buf.getvalue())
+PY
+)
+check '15 file plans from the spec it evaluated' "$(field "$out" scope)" 'src/ static review'
 
 # =============================================================================
 # Scenario 10: install.sh links commands/bots.md and skills/bot-builder into

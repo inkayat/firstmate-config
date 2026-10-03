@@ -656,11 +656,13 @@ A `check:` wake from `state/bots.check.sh` carries one line per bot;
 `bin/fm-bot` owns the line formats and their meaning.
 
 - **`bot due: <id> …`** - run `fm bot file <id>`. It is the only way to file a
-  bot's dated task: it re-checks the spec at that moment, files the id,
-  records the marker that keeps the bot silent for the rest of the day, and
-  prints the dispatch plan. Never file a bot id with a raw
-  `fm-tasks-axi.sh add`, which skips that marker. `already-filed:` or a
-  refusal means dispatch nothing.
+  bot's dated task: it re-checks the spec at that moment, files the id with
+  the plan in the row's body, records the marker that keeps the bot silent
+  for the rest of the day, and prints the dispatch plan. Never file a bot id
+  with a raw `fm-tasks-axi.sh add`, which skips that marker. `already-filed:`
+  or a refusal means dispatch nothing. `already-filed (queued, not started):`
+  followed by a plan means an interrupted filing never printed it: dispatch
+  exactly that plan, once. A missed window is never filed later.
 - **Dispatch exactly the plan.** Its role file, route rule, kind and
   delivery, scope, limits, excluded paths, access, notify, wall-clock limit,
   and stop rule go into the brief as printed. Never widen the scope or raise
@@ -671,5 +673,9 @@ A `check:` wake from `state/bots.check.sh` carries one line per bot;
   `needs-decision [key=commit-approval]`; any commit, and any push, still
   needs the captain's own approval for that commit.
 - **`bot invalid: <id> …`** - `fm bot file <id>` files and holds the id for
-  the captain; dispatch nothing. **`bot error: …`** - the check or the
-  backlog could not answer; investigate, dispatch nothing.
+  the captain through `fm-captain-hold.sh`, with the cause; dispatch nothing.
+  **`bot error: <id> reason=invalid-unheld`** - that invalid bot's row was
+  filed but never held; run `fm bot file <id>` again to hold it, dispatch
+  nothing. Any other **`bot error: …`** - the check or the backlog could not
+  answer; investigate, dispatch nothing. A per-bot fault repeats only when it
+  recurs, so a quiet sweep after one does not mean it cleared.
