@@ -38,7 +38,10 @@ mkdir -p "$CFG/roles/fixture-lead" "$CFG/roles/fixture-host"
 printf -- '---\nname: fm-fixture-lead\ndescription: "Test-only fixture lead; never installed."\nspawns:\n  - fm-fixture-host\n  - fm-frontend-master\n---\nTest-only fixture.\n' > "$CFG/roles/fixture-lead/ROLE.md"
 printf -- '---\nname: fm-fixture-host\ndescription: "Test-only fixture member that declares a helper; never installed."\nspawns:\n  - scout\n---\nTest-only fixture.\n' > "$CFG/roles/fixture-host/ROLE.md"
 export FM_HOME="$TMP_ROOT/fm-home"
-mkdir -p "$FM_HOME/data" "$FM_HOME/state"
+# bind reports whether the extension is linked; point it at an empty fixture
+# root so the operator's default ~/.omp/agent/extensions is never consulted.
+export FM_OMP_EXTENSIONS_ROOT="$TMP_ROOT/omp-extensions"
+mkdir -p "$FM_HOME/data" "$FM_HOME/state" "$FM_OMP_EXTENSIONS_ROOT"
 
 cat > "$CFG/teams/web-feature.json" <<'JSON'
 {
@@ -100,11 +103,19 @@ cat > "$CFG/teams/helper-host.json" <<'JSON'
 JSON
 
 BASE_SHA=0123456789abcdef0123456789abcdef01234567
+BIND_LOG="$TMP_ROOT/bind.log"
 for t in t-team t-freeze t-tampered t-missing t-badbind t-unknown; do
-  "$CFG/bin/fm-team" bind "$t" --profile web-feature --base "$BASE_SHA" >/dev/null || fail "fixture bind $t"
+  "$CFG/bin/fm-team" bind "$t" --profile web-feature --base "$BASE_SHA" >/dev/null 2>>"$BIND_LOG" || fail "fixture bind $t"
 done
-"$CFG/bin/fm-team" bind t-docs --profile docs-only --base "$BASE_SHA" >/dev/null || fail 'fixture bind t-docs'
-"$CFG/bin/fm-team" bind t-helper --profile helper-host --base "$BASE_SHA" >/dev/null || fail 'fixture bind t-helper'
+"$CFG/bin/fm-team" bind t-docs --profile docs-only --base "$BASE_SHA" >/dev/null 2>>"$BIND_LOG" || fail 'fixture bind t-docs'
+"$CFG/bin/fm-team" bind t-helper --profile helper-host --base "$BASE_SHA" >/dev/null 2>>"$BIND_LOG" || fail 'fixture bind t-helper'
+# Every bind reports the extension root it consulted when the extension is not
+# linked there; the fixture root is empty, so each bind names its root.
+case $(cat "$BIND_LOG") in
+  *"/.omp/agent/extensions/"*) fail "fixture binds consulted the default OMP extension root: $(head -1 "$BIND_LOG")" ;;
+  *"$FM_OMP_EXTENSIONS_ROOT/fm-team-policy.ts"*) pass 'fixture binds consult only the fixture extension root' ;;
+  *) fail "fixture binds named no extension root: $(head -1 "$BIND_LOG")" ;;
+esac
 BIND="$FM_HOME/data/team-bindings"
 printf ' ' >> "$BIND/t-tampered.profile.json"
 rm "$BIND/t-missing.profile.json"
