@@ -113,7 +113,9 @@ TASK_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 BASE_RE = re.compile(r"^[0-9a-f]{7,40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
-BRIEF_MARKER_RE = re.compile(r"^Team profile: (\S+)[ \t]*$", re.M)
+# The intake marker, tolerating the Markdown a brief may wrap it in (indent,
+# a list bullet, emphasis, label case); anything after the name is ignored.
+BRIEF_MARKER_RE = re.compile(r"^[ \t]*(?:[-*+][ \t]+)?[*_]{0,2}team profile[*_]{0,2}:[*_]{0,2}[ \t]+`?([^\s`*]+)", re.M | re.I)
 
 
 class TeamError(Exception):

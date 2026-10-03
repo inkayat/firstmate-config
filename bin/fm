@@ -74,7 +74,7 @@
 #                         opens the same static file through Lavish instead
 #   fm bot ...            bot specs and their dry due evaluation (bin/fm-bot's
 #                         own --help documents create/list/show/pause/resume/
-#                         remove/due/check-install); never dispatches
+#                         remove/due/file/check-install); never dispatches
 #   fm team ...           team profiles (bin/fm-team's own --help documents
 #                         validate/bind/check/audit); never spawns or commits
 #   fm --help

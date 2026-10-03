@@ -117,6 +117,7 @@ fm bot due [--check]
 fm bot file NAME-YYYYMMDD
 fm bot check-install</code></pre>
 <p>Shorthand for <code>bin/fm-bot</code>. It never spawns a worker or calls a model: <code>due</code> is a dry evaluation, and <code>file</code> files today's due id and prints the dispatch plan for the Captain. <code>check-install</code> activates the watcher check and is a separate, explicit step. Full options, levels, and the daily flow are on <a href="bots.html">Bots</a>.</p>
+<p>Like every <code>fm</code> subcommand, <code>fm bot</code> and <code>fm team</code> act on the env file's <code>FM_HOME</code>, not one exported in your shell (<a href="config.html">Configuration</a>). For a lab or other home, call <code>bin/fm-bot</code> or <code>bin/fm-team</code> directly with <code>FM_HOME</code>, or point <code>FM_CONFIG_ENV</code> at that home's env file.</p>
 
 <h2 id="team">fm team</h2>
 <pre data-label="usage"><code>fm team validate PROFILE.json

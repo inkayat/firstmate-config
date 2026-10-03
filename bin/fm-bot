@@ -97,6 +97,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import zoneinfo
 
 SCHEMA = "fm-bot.v1"
@@ -115,19 +116,25 @@ POSTURE_CEILING = {
     "no-mistakes": "push",
 }
 
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
-ROLE_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-PROJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-ROUTE_RE = re.compile(r"^([A-Z][A-Z/-]*) #([1-9][0-9]*)$")
-HM_RE = re.compile(r"^([01][0-9]|2[0-3]):([0-5][0-9])$")
-DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-ACCESS_RE = re.compile(r"^(none|secret:[A-Za-z0-9][A-Za-z0-9._/-]{0,99})$")
-REMOTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-BRANCH_PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*/$")
+# \Z, not $: Python's $ also matches before a trailing newline, so a value
+# such as "name\n" would pass here and read back as a different spec.
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}\Z")
+ROLE_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\Z")
+PROJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+ROUTE_RE = re.compile(r"^([A-Z][A-Z/-]*) #([1-9][0-9]*)\Z")
+HM_RE = re.compile(r"^([01][0-9]|2[0-3]):([0-5][0-9])\Z")
+DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
+ACCESS_RE = re.compile(r"^(none|secret:[A-Za-z0-9][A-Za-z0-9._/-]{0,99})\Z")
+REMOTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+BRANCH_PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*/\Z")
 SPEC_LINE_RE = re.compile(r"^([a-z_]+): (.*)$")
 LIST_ID_RE = re.compile(r"^\s+([A-Za-z0-9][A-Za-z0-9._-]*),")
 
 TEXT_LIMITS = {"scope": 500, "authorization": 1000, "authorization_scope": 500, "exclude": 300}
+# fm-watch.sh kills a check after 30 s: each backlog/posture call gets
+# CALL_TIMEOUT, and a sweep stops evaluating once CHECK_BUDGET has passed.
+CALL_TIMEOUT = 5
+CHECK_BUDGET = 20
 
 # Field order is the on-disk order. Required keys must be present in every
 # spec; the rest appear only when set. `exclude` may repeat.
@@ -282,11 +289,11 @@ def _refuse_symlink(path: str, what: str) -> None:
 
 
 @contextlib.contextmanager
-def _lock():
+def _lock(lock_name: str = ".lock"):
     _refuse_symlink(os.path.join(fm_home(), "data"), "data directory")
     _refuse_symlink(bots_dir(), "bots directory")
     os.makedirs(bots_dir(), mode=0o700, exist_ok=True)
-    lock_fd = os.open(os.path.join(bots_dir(), ".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    lock_fd = os.open(os.path.join(bots_dir(), lock_name), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         yield
@@ -311,7 +318,9 @@ def _atomic_write(path: str, content: str, mode: int) -> None:
 
 def parse_spec_text(text: str) -> dict:
     spec: dict = {"exclude": []}
-    for raw in text.splitlines():
+    # Only "\n" ends a spec line: splitlines() would also split at U+2028,
+    # NEL and similar, which can hide one field inside another's value.
+    for raw in text.split("\n"):
         if not raw.strip() or raw.startswith("#"):
             continue
         m = SPEC_LINE_RE.match(raw)
@@ -356,6 +365,8 @@ def load_spec(name: str) -> dict:
         return read_spec(name)
     except SpecError as exc:
         die(f"bot '{name}' spec is invalid: {exc.message}")
+    except ValueError as exc:
+        die(f"bot '{name}' spec is invalid: not UTF-8 text ({exc})")
 
 
 def spec_names() -> list[str]:
@@ -378,7 +389,7 @@ def _text(spec: dict, key: str) -> None:
     for value in values:
         if value is None or not value.strip():
             raise SpecError(f"missing-{code_of(key)}", f"{key} is required")
-        if any(ord(c) < 32 or ord(c) == 127 for c in value):
+        if not all(c.isprintable() for c in value):
             raise SpecError(f"bad-{code_of(key)}", f"{key} must be one line of printable text")
         if len(value) > TEXT_LIMITS.get(key, 200):
             raise SpecError(f"bad-{code_of(key)}", f"{key} is longer than {TEXT_LIMITS.get(key, 200)} characters")
@@ -400,7 +411,7 @@ def _positive_int(spec: dict, key: str) -> None:
     value = spec.get(key)
     if value is None:
         raise SpecError(f"missing-{code_of(key)}", f"{key} is required for level {spec.get('level')}")
-    if not value.isdigit() or int(value) < 1:
+    if not re.fullmatch(r"[0-9]+", value) or int(value) < 1:
         raise SpecError(f"bad-{code_of(key)}", f"{key} must be a positive integer (got '{value}')")
 
 
@@ -415,6 +426,11 @@ def _route_valid(route: str) -> bool:
 
 def normalize_words(text: str) -> str:
     return " ".join(text.split())
+
+
+def names_word(text: str, word: str) -> bool:
+    """`word` appears in `text` as a whole token, not inside a longer name."""
+    return re.search(rf"(?<![\w-]){re.escape(word)}(?![\w-])", text) is not None
 
 
 def check_base(spec: dict, name: str) -> None:
@@ -476,7 +492,7 @@ def project_posture(project: str) -> tuple[str, str]:
     if not os.path.isfile(script):
         raise SpecError("posture-unavailable", f"cannot read project posture: {script} is missing")
     try:
-        out = subprocess.run([script, project], capture_output=True, text=True, timeout=15,
+        out = subprocess.run([script, project], capture_output=True, text=True, timeout=CALL_TIMEOUT,
                              env={**os.environ, "FM_HOME": fm_home()})
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SpecError("posture-unavailable", f"cannot read project posture: {exc}") from None
@@ -515,7 +531,7 @@ def check_elevated(spec: dict, name: str, today: datetime.date) -> None:
         if spec.get("push_max_per_run") != "1":
             raise SpecError("bad-push-max-per-run", "push allows at most one push/PR per run (--push-max-per-run 1)")
         words = normalize_words(spec["authorization"])
-        if name not in words or spec["project"] not in words:
+        if not names_word(words, name) or not names_word(words, spec["project"]):
             raise SpecError("authorization-unscoped", "a push authorization must name both the bot and the project")
     mode, yolo = project_posture(spec["project"])
     if LEVELS.index(level) > LEVELS.index(POSTURE_CEILING[mode]):
@@ -541,7 +557,7 @@ def _tasks_axi(*args: str) -> subprocess.CompletedProcess | None:
     if not os.path.isfile(script):
         return None
     try:
-        return subprocess.run([script, *args], capture_output=True, text=True, timeout=15,
+        return subprocess.run([script, *args], capture_output=True, text=True, timeout=CALL_TIMEOUT,
                               env={**os.environ, "FM_HOME": fm_home()})
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -639,10 +655,14 @@ def evaluate(name: str, moment: datetime.datetime) -> dict:
               "local": local.strftime("%Y-%m-%d %H:%M %Z")}
     spec, unreadable = None, None
     try:
+        if os.path.islink(spec_path(name)):
+            # file/show/pause refuse a symlinked spec, so report it here too
+            # rather than raise a due line that can never be filed.
+            raise SpecError("symlink", "the spec is a symlink")
         spec = read_spec(name)
     except SpecError as exc:
         unreadable = {"reason": exc.code, "detail": exc.message}
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # ValueError: not UTF-8
         unreadable = {"reason": "unreadable", "detail": str(exc)}
     if spec is not None and spec.get("state") == "paused":
         return {**result, "verdict": "paused"}
@@ -814,16 +834,26 @@ def cmd_show(args: argparse.Namespace) -> None:
 
 def cmd_due(args: argparse.Namespace) -> None:
     if args.check:
-        # The watcher discards stderr and treats empty stdout as quiet, so a
-        # crash here must still print, or a broken check would look idle.
+        # The watcher discards stderr, treats empty stdout as quiet, and
+        # kills a check after 30 s, so each line is flushed as it is known,
+        # one bot's failure is reported without ending the sweep, and bots
+        # left when the budget runs out are named rather than dropped.
         try:
+            started = time.monotonic()
             moment = parse_now(args.now)
-            for name in spec_names():
-                line = watcher_line(evaluate(name, moment))
+            names = spec_names()
+            for i, name in enumerate(names):
+                if time.monotonic() - started > CHECK_BUDGET:
+                    print(f"bot error: check reason=deadline unevaluated={','.join(names[i:])}", flush=True)
+                    break
+                try:
+                    line = watcher_line(evaluate(name, moment))
+                except Exception as exc:  # noqa: BLE001 - surfaced as a wake, never swallowed
+                    line = f"bot error: {name} reason=check-failed-{type(exc).__name__}"
                 if line:
-                    print(line)
+                    print(line, flush=True)
         except Exception as exc:  # noqa: BLE001 - surfaced as a wake, never swallowed
-            print(f"bot error: check reason=check-failed-{type(exc).__name__}")
+            print(f"bot error: check reason=check-failed-{type(exc).__name__}", flush=True)
         return
     moment = parse_now(args.now)
     results = [evaluate(n, moment) for n in spec_names()]
@@ -840,7 +870,7 @@ def cmd_due(args: argparse.Namespace) -> None:
 
 # --- dispatch seam --------------------------------------------------------------
 
-FILE_ID_RE = re.compile(r"^([a-z0-9][a-z0-9-]{0,39})-([0-9]{8})$")
+FILE_ID_RE = re.compile(r"^([a-z0-9][a-z0-9-]{0,39})-([0-9]{8})\Z")
 
 STOP_RULES = {
     "local-proposal": (
@@ -914,6 +944,13 @@ def cmd_file(args: argparse.Namespace) -> None:
     _refuse_symlink(spec_path(name), "bot spec")
     if not os.path.isfile(spec_path(name)):
         die(f"no such bot '{name}'")
+    # Serialized, so two concurrent files of one id cannot both see it due
+    # and both print a dispatch plan; the second finds the marker.
+    with _lock(".file-lock"):
+        _file_locked(args, name)
+
+
+def _file_locked(args: argparse.Namespace, name: str) -> None:
     result = evaluate(name, parse_now(args.now))
     if result["id"] != args.id:
         die(f"refused (not-today): {args.id} is not {name}'s dated id at {result['local']} "
@@ -986,7 +1023,9 @@ def cmd_check_install(_args: argparse.Namespace) -> None:
 # --- CLI wiring -------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="fm-bot", description=__doc__.splitlines()[0])
+    p = argparse.ArgumentParser(prog="fm-bot", description=__doc__.splitlines()[0],
+                                epilog="\n".join(__doc__.splitlines()[1:]),
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
 
     # Field presence and shape are validated by check_base/check_elevated, not

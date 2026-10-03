@@ -90,8 +90,9 @@ Run `fm bot create <name> ...` with every collected flag. On refusal,
 is missing, and retry. Do not loosen a field to make it pass.
 
 On success, run `fm bot show <name>` and report: name, level, role, project,
-schedule (Europe/Stockholm), next window, and that the bot will not run until
-the watcher check is activated.
+schedule (Europe/Stockholm), and next window. If `$FM_HOME/state/bots.check.sh`
+does not exist, add that the bot will not run until the watcher check is
+activated; if it exists, say the bot runs in its next window.
 
 ## Other requests
 

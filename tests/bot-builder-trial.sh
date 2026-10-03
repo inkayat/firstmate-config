@@ -24,7 +24,7 @@ MODEL="${FM_BOT_TRIAL_MODEL:-anthropic/claude-sonnet-5-5}"
 LIVE_HOME="$HOME/.firstmate"
 
 if [ "${FM_LIVE_BOT_TRIAL:-}" != 1 ]; then
-  printf 'bot-builder-trial.sh: SKIPPED (set FM_LIVE_BOT_TRIAL=1 to run real omp sessions)\n'
+  printf 'SKIP - bot-builder-trial.sh: set FM_LIVE_BOT_TRIAL=1 to run real omp sessions (never reported as PASS)\n'
   exit 0
 fi
 for tool in omp python3 tasks-axi git; do

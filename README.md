@@ -223,7 +223,7 @@ Read-only drift check:
 | `fm version` | Print compact stack identity and version information |
 | `fm update` | Fast-forward the official FirstMate checkout (`FIRSTMATE_ROOT`), then the `firstmate-config` checkout, then reconcile and verify this machine via its own `install.sh`; check both checkouts before changing either, refuse anything that is not a clean, plain fast-forward, and report a failure after the official stage as a partial update |
 | `fm board` / `fm board --lavish` | Open the persistent Kanban board (terminal-browser by default, Lavish with `--lavish`); render a deterministically refreshed, LLM-free data projection with the same static template, keep re-rendering it while the viewer is open, and let the page re-read it every few seconds so transitions appear without a manual refresh |
-| `fm bot ...` | Create, list, show, pause, resume, or remove home-local bot specs and dry-run which are due; never dispatches (`bin/fm-bot --help`) |
+| `fm bot ...` | Create, list, show, pause, resume, or remove home-local bot specs, dry-run which are due, and file today's due id with its dispatch plan; never dispatches (`bin/fm-bot --help`) |
 | `fm team ...` | Validate a team profile, bind one to a task, check a binding, or audit a team task's changed paths against its scope; never spawns, commits, or merges (`bin/fm-team --help`) |
 | `ponytail-update` | Prepare and validate a local Ponytail pin update without committing or pushing |
 
@@ -261,7 +261,7 @@ not a captain-selected team.
 | `members[].talk_to` | which members a member may message (`agent://all` is never allowed); a member may always message the lead | policy extension, `write agent://<id>` |
 | `members[].spawn` | helpers a member may spawn, inside its role's declared `spawns` list; a role without one allows no helper (no shipped member role declares one), and helpers are read-only | policy extension |
 | `members[].https_read` | optional boolean, absent means false: whether that member, and every helper it spawns, may read `https://` and `www.` URLs through `read`, `grep`, `glob`, `find`, and `ast_grep`; plain `http://` is never readable by a member or helper | policy extension |
-| `members[].skills` | extra shared skills the lead names in that member's brief, counted against the per-task budget of three with the role's `autoloadSkills`; `autoloadSkills` themselves cannot be removed per task | advisory |
+| `members[].skills` | extra shared skills the lead names in that member's brief - by path, `~/.agents/skills/<name>/SKILL.md`, because members cannot read `skill://` - counted against the per-task budget of three with the role's `autoloadSkills`; `autoloadSkills` themselves cannot be removed per task | advisory |
 | `workflow` | ordered phases and at most two rework rounds; the lead coordinates them | advisory (`team-lead` role) |
 | `ops` | `commit: none\|request`, `push: none`, `merge: none` - limits, never authority | policy extension (best-effort command patterns); FirstMate's guarded merge path |
 

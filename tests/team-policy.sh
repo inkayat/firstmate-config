@@ -148,6 +148,8 @@ rm "$BIND/t-missing.profile.json"
 printf 'not json' > "$BIND/t-badbind.json"
 mkdir -p "$FM_HOME/data/t-marker"
 printf '# brief\nTeam profile: web-feature\n' > "$FM_HOME/data/t-marker/brief.md"
+mkdir -p "$FM_HOME/data/t-marker-md"
+printf '# brief\n- **Team profile:** web-feature\n' > "$FM_HOME/data/t-marker-md/brief.md"
 cp "$CFG/teams/wide-open.json" "$TMP_ROOT/wide-open.json"
 WIDE_SHA=$(shasum -a 256 < "$TMP_ROOT/wide-open.json" | cut -d' ' -f1)
 # A snapshot whose grant is not a boolean, consistent with its binding (bind
@@ -343,7 +345,7 @@ const stranger = session({ kind: "sub", id: "Ref", name: "fm-refactorist", paren
 await expect("H a non-member spawned past the policy cannot write", stranger.tool("write", { path: "apps/api/a.py", content: "x" }), "team-identity-unresolved");
 
 // --- C. a known team task whose required profile cannot be used ---------------------------
-for (const [id, code] of [["t-marker", "team-binding-missing"], ["t-tampered", "team-profile-tampered"],
+for (const [id, code] of [["t-marker", "team-binding-missing"], ["t-marker-md", "team-binding-missing"], ["t-tampered", "team-profile-tampered"],
                           ["t-missing", "team-profile-missing"], ["t-badbind", "team-binding-corrupt"]]) {
   task(id);
   const s = session({ kind: "main", id: "Main", name: "main" });
@@ -467,6 +469,16 @@ task("t-helper");
 await expect("R a helper reads its worktree", helper.tool("read", { path: "apps/api/a.py" }), "allow");
 await expect("R a helper reads an outside file", helper.tool("read", { path: `${OUT}/cred.txt` }), R);
 await expect("R a helper reads skill://", helper.tool("read", { path: "skill://x" }), S);
+// A refused skill:// read names the shared copy, which is then judged like
+// any other host path: readable for a real entry, refused for a link out.
+const hintOf = async (p: Promise<unknown>): Promise<string> => {
+  const r = await p;
+  const reason = r !== null && typeof r === "object" && "reason" in r ? String(r.reason) : "";
+  return /read (~\/\.agents\/skills\/\S+)/.exec(reason)?.[1] ?? "/no-hint-in-refusal";
+};
+task("t-team");
+await expect("R the shared copy a skill:// refusal names is readable", api.tool("read", { path: await hintOf(api.tool("read", { path: "skill://e" })) }), "allow");
+await expect("R the shared copy named for a linked-out skill file stays refused", api.tool("read", { path: await hintOf(api.tool("read", { path: "skill://e/leak" })) }), R);
 
 // --- S. HTTPS reads only where the bound profile grants https_read ------------------------
 const N = "https-read-not-granted";
