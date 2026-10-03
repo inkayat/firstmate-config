@@ -88,9 +88,23 @@ Captain that never loaded it would not be a FirstMate Captain. Two consequences:
 <p>"Available" means credentials resolve. Live validity and quota are not probed.</p>
 
 <div class="callout note"><span class="t">Two ids for the same family</span>
-<p>OMP names Sonnet <code>anthropic/claude-sonnet-5-5</code>. Pi reaches it only through the Claude Code provider as the unversioned alias <code>sonnet</code>, which Claude Code resolves to its own current Sonnet. The alias moves when the installed Claude Code does; nothing here changes.</p></div>
+<p>OMP names Sonnet <code>anthropic/claude-sonnet-5-5</code>. Pi's chain step reaches it through the Claude Code provider as the unversioned alias <code>sonnet</code>, which Claude Code resolves to its own current Sonnet. The alias moves when the installed Claude Code does; nothing here changes. Pi also has a built-in, version-pinned <code>anthropic/claude-sonnet-5-5</code> that uses Anthropic credentials configured in Pi; the chain does not use it, the <code>claude</code> preset below does.</p></div>
 
 <p>The selected model and effort are passed to the harness as <code>--model</code> and <code>--thinking</code>, for this launch only.</p>
+
+<h3 id="model-override">Choosing a model for one launch</h3>
+<pre data-label="shell"><code>fm --model claude
+fm --model claude --harness pi</code></pre>
+<p><code>--model</code>, before or after <code>--harness</code>, takes one of two presets. Each resolves to the selected harness's own id for that model, with a fixed effort:</p>
+<table>
+<thead><tr><th>Preset</th><th>OMP</th><th>Pi</th><th>Effort</th></tr></thead>
+<tbody>
+<tr><td><code>codex</code></td><td><code>openai-codex/gpt-6.1-sol</code></td><td><code>openai-codex/gpt-6.1-sol</code></td><td>medium</td></tr>
+<tr><td><code>claude</code></td><td><code>anthropic/claude-sonnet-5-5</code></td><td><code>anthropic/claude-sonnet-5-5</code></td><td>high</td></tr>
+</tbody>
+</table>
+<p>Both ids are exact, version-pinned entries in OMP's native catalog and in Pi's built-in registry. Pi's <code>pi-claude-code-provider/sonnet</code> is an unversioned Claude Code alias and is never used for <code>claude</code>, so a Pi Captain needs Anthropic credentials configured in Pi for this preset.</p>
+<p>The preset is checked by the same probe as the chain and used only when its exact model and effort are <code>AVAILABLE</code>. Any other value, an unavailable model, an unsupported effort, or an unverifiable catalog prints <code>fm: warning: requested model ...</code>, and the launcher walks the unchanged chain - default model and effort - on the same harness. A raw model id is never passed through, and nothing is persisted. A missing harness, Herdr, or an empty chain still stops the launch.</p>
 
 <h2 id="extensions">Extensions</h2>
 <p>The Captain needs FirstMate's primary watcher and turn-end guard extensions from the official checkout. <code>fm --check</code> and <code>fm doctor</code> fail if they are missing.</p>

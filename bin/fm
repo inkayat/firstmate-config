@@ -26,6 +26,12 @@
 #   harness         OMP by default; --harness pi selects explicit Pi fallback.
 #   model chain     firstmate/captain-startup-models.tsv, applied only to this
 #                   Captain launch with availability-only fallback.
+#   --model PRESET  codex (openai-codex/gpt-6.1-sol, medium) or claude
+#                   (anthropic/claude-sonnet-5-5, high) for this launch only,
+#                   used only when the selected harness reports that exact
+#                   model and effort AVAILABLE. Any other value, or an
+#                   unavailable or unverifiable preset, warns and uses the
+#                   unchanged model chain on the same harness.
 #   extensions      OMP discovers .omp/extensions from the official cwd.
 #                   Never pass duplicate -e flags or the worker posture overlay.
 #                   Pi retains its trust-aware explicit/discover mode.
@@ -47,6 +53,10 @@
 #   fm                    launch the Captain on OMP
 #   fm --harness omp      explicitly select OMP
 #   fm --harness pi       explicitly select Pi (also before check/doctor/version)
+#   fm --model codex|claude
+#                         launch on a model preset instead of the model chain;
+#                         combines with --harness in either order and with
+#                         --check or --print-command, never with a subcommand
 #   fm --check            run the preflight and print the resolution
 #   fm --print-command    print the resolved environment and command
 #   fm doctor             run read-only architecture diagnostics
@@ -112,6 +122,8 @@ SELECTED_AVAILABILITY_REASON=
 PREFERRED_MODEL=
 PREFERRED_EFFORT=
 FALLBACK_REASON=
+REQUESTED_MODEL=
+REQUESTED_MODEL_FALLBACK=
 
 die() { printf 'fm: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,/^set -u$/p' "$self" | sed -e 's/^# \{0,1\}//' -e '/^set -u$/d'; }
@@ -120,15 +132,33 @@ usage() { sed -n '2,/^set -u$/p' "$self" | sed -e 's/^# \{0,1\}//' -e '/^set -u$
 # shellcheck source=firstmate/fm-captain-lib.sh
 . "$CONFIG_ROOT/firstmate/fm-captain-lib.sh"
 harness=
-if [ "${1:-}" = --harness ]; then
-  [ "$#" -ge 2 ] && [ -n "$2" ] || die "--harness requires omp or pi"
-  harness=$2
+# Leading options in either order, each at most once; a repeat falls through
+# to the usual unknown-argument error below.
+while :; do
+  case ${1:-} in
+    --harness)
+      [ -z "$harness" ] || break
+      [ "$#" -ge 2 ] && [ -n "$2" ] || die "--harness requires omp or pi"
+      harness=$2
+      ;;
+    --model)
+      [ -z "$REQUESTED_MODEL" ] || break
+      [ "$#" -ge 2 ] && [ -n "$2" ] && [ "${2#-}" = "$2" ] || die "--model requires codex or claude"
+      REQUESTED_MODEL=$2
+      ;;
+    *) break ;;
+  esac
   shift 2
-fi
+done
 captain_harness_init "$harness" || exit 1
 WATCH_EXT=$CAPTAIN_WATCH_EXT
 TURNEND_EXT=$CAPTAIN_TURNEND_EXT
 
+case ${1:-} in
+  version|doctor|update|board)
+    [ -z "$REQUESTED_MODEL" ] || die "--model applies only to Captain startup, not '$1'"
+    ;;
+esac
 case ${1:-} in
   version|doctor)
     subcommand=$1
@@ -166,6 +196,40 @@ resolve_model_chain() {
   done < "$MODEL_CHAIN"
   [ -n "$SELECTED_MODEL" ] || die "no configured captain startup model is available ($(IFS='; '; printf '%s' "${reasons[*]}"))"
   [ "$SELECTED_MODEL" = "$PREFERRED_MODEL" ] || FALLBACK_REASON=$(IFS='; '; printf '%s' "${reasons[*]}")
+}
+
+# --model replaces the chain for this launch only. Both presets are exact,
+# version-pinned ids that OMP's native catalog and Pi's built-in registry each
+# define; Pi's pi-claude-code-provider/sonnet is an unversioned Claude Code
+# alias, so it never stands in for Sonnet 5.5. The pair is used only when the
+# harness's availability owner reports that exact model and effort AVAILABLE.
+# Anything else warns and resolves the unchanged chain.
+resolve_startup_model() {
+  local model='' effort='' result state reason
+  [ -n "$REQUESTED_MODEL" ] || { resolve_model_chain; return; }
+  case $REQUESTED_MODEL in
+    codex) model=openai-codex/gpt-6.1-sol effort=medium ;;
+    claude) model=anthropic/claude-sonnet-5-5 effort=high ;;
+  esac
+  if [ -z "$model" ]; then
+    REQUESTED_MODEL_FALLBACK="is not a preset (expected codex or claude)"
+  else
+    result=$(captain_model_availability "$model" "$effort")
+    state=${result%%$'\t'*}
+    reason=${result#*$'\t'}
+    if [ "$state" = AVAILABLE ]; then
+      PREFERRED_MODEL=$model PREFERRED_EFFORT=$effort
+      SELECTED_MODEL=$model SELECTED_EFFORT=$effort SELECTED_AVAILABILITY=$state
+      return
+    fi
+    if [ "$state" = UNKNOWN ]; then
+      REQUESTED_MODEL_FALLBACK="($model $effort) could not be verified on $CAPTAIN_HARNESS ($reason)"
+    else
+      REQUESTED_MODEL_FALLBACK="($model $effort) is not available on $CAPTAIN_HARNESS ($reason)"
+    fi
+  fi
+  printf 'fm: warning: requested model %q %s; using the default startup model chain\n' "$REQUESTED_MODEL" "$REQUESTED_MODEL_FALLBACK" >&2
+  resolve_model_chain
 }
 
 # Harness identity markers leak from whatever shell launched us and upstream's
@@ -232,6 +296,8 @@ print_resolution() {
   printf 'SELECTED_AVAILABILITY=%s\n' "$SELECTED_AVAILABILITY"
   [ -z "$SELECTED_AVAILABILITY_REASON" ] || printf 'SELECTED_AVAILABILITY_REASON=%s\n' "$SELECTED_AVAILABILITY_REASON"
   [ -z "$FALLBACK_REASON" ] || printf 'FALLBACK_REASON=%s\n' "$FALLBACK_REASON"
+  [ -z "$REQUESTED_MODEL" ] || printf 'REQUESTED_MODEL=%q\n' "$REQUESTED_MODEL"
+  [ -z "$REQUESTED_MODEL_FALLBACK" ] || printf 'REQUESTED_MODEL_FALLBACK=%s\n' "$REQUESTED_MODEL_FALLBACK"
   printf 'SCRUBBED_ENV=%s\n' "${SCRUB[*]}"
 }
 
@@ -245,7 +311,7 @@ case ${1:-} in
   --check)
     preflight
     mode=$(resolve_extension_mode) || exit 1
-    resolve_model_chain
+    resolve_startup_model
     print_resolution "$mode"
     printf 'PREFLIGHT=ok\n'
     exit 0
@@ -253,7 +319,7 @@ case ${1:-} in
   --print-command)
     preflight
     mode=$(resolve_extension_mode) || exit 1
-    resolve_model_chain
+    resolve_startup_model
     print_resolution "$mode"
     resolve_command
     printf 'COMMAND='
@@ -267,7 +333,7 @@ esac
 
 preflight
 mode=$(resolve_extension_mode) || exit 1
-resolve_model_chain
+resolve_startup_model
 resolve_command
 
 printf 'FirstMate Captain harness: %s\n' "$CAPTAIN_HARNESS"

@@ -22,13 +22,14 @@ case ${1:-} in
       invalid_schema) echo '{"models":[{}]}'; exit ;;
       failed) exit 1 ;;
       empty) echo '{"models":[]}'; exit ;;
+      duplicate) printf '{"models":[{"provider":"openai-codex","id":"gpt-6.1-sol","reasoning":true,"thinking":["medium"]},{"provider":"openai-codex","id":"gpt-6-astra","reasoning":true,"thinking":["xhigh"]},{"provider":"openai-codex","id":"gpt-6-astra","reasoning":true,"thinking":["high"]}]}\n'; exit ;;
     esac
     printf '{"models":['
     if [ "${CATALOG:-normal}" != astra ] && [ "${CATALOG:-normal}" != sonnet ]; then
       printf '{"provider":"openai-codex","id":"gpt-6.1-sol","selector":"openai-codex/gpt-6.1-sol","reasoning":true,"thinking":["%s"]},' "${SOL_EFFORT:-medium}"
     fi
-    if [ "${CATALOG:-normal}" = sonnet ]; then
-      printf '{"provider":"anthropic","id":"claude-sonnet-5-5","selector":"anthropic/claude-sonnet-5-5","reasoning":true,"thinking":["high","xhigh"]},'
+    if [ "${CATALOG:-normal}" = sonnet ] || [ "${CATALOG:-normal}" = full ]; then
+      printf '{"provider":"anthropic","id":"claude-sonnet-5-5","selector":"anthropic/claude-sonnet-5-5","reasoning":true,"thinking":["%s","xhigh"]},' "${SONNET_EFFORT:-high}"
     fi
     printf '{"provider":"openai-codex","id":"gpt-6-astra","selector":"openai-codex/gpt-6-astra","reasoning":true,"thinking":["xhigh"]}]}\n'
     exit ;;
@@ -43,15 +44,34 @@ cat > "$TMP/bin/pi" <<'SH'
 #!/usr/bin/env bash
 case ${1:-} in
   --version) echo 'pi 0.85.1' ;;
-  --list-models) printf 'openai-codex gpt-6.1-sol 1K 1K yes no\n' ;;
-  auth) printf '{"status":"ready"}\n' ;;
-  list) echo 'No packages installed.' ;;
+  --list-models)
+    [ "${PI_LIST:-ok}" = ok ] || exit 1
+    printf 'openai-codex gpt-6.1-sol 1K 1K yes no\nopenai-codex gpt-6-astra 1K 1K yes no\n'
+    # Pi lists only models whose provider is usable: the Claude Code
+    # provider's unversioned alias once installed, Anthropic's exact id once
+    # credentials are configured.
+    [ "${PI_CLAUDE:-absent}" != installed ] || printf 'pi-claude-code-provider sonnet 1K 1K yes no\n'
+    [ "${PI_ANTHROPIC:-absent}" != configured ] || printf 'anthropic claude-sonnet-5-5 1M 128K %s yes\n' "${PI_SONNET_THINKING:-yes}"
+    ;;
+  auth)
+    case ${PI_AUTH:-ready} in
+      ready) printf '{"status":"ready"}\n' ;;
+      *) printf '{"status":"error","reason":"auth service unreachable"}\n' ;;
+    esac ;;
+  list)
+    if [ "${PI_CLAUDE:-absent}" = installed ]; then printf 'User packages:\n  npm:pi-claude-code-provider\n'; else echo 'No packages installed.'; fi ;;
   *)
     printf 'EXEC_HARNESS=pi\n'
     printf 'EXEC_OMP_MARKER=%s\nEXEC_TIMEOUT=%s\n' "${FM_OMP_HARNESS-}" "${FM_TIMEOUT_MECHANISM_OVERRIDE-}"
     printf 'EXEC_VAULT=%s\n' "${FM_SKILL_VAULT_ROOT-}"
+    printf 'EXEC_ARGS=%s\n' "$*"
     ;;
 esac
+SH
+cat > "$TMP/bin/claude" <<'SH'
+#!/usr/bin/env bash
+[ "$*" = 'auth status' ] || exit 64
+printf '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"max"}\n'
 SH
 cat > "$TMP/bin/herdr" <<'SH'
 #!/usr/bin/env bash
@@ -60,7 +80,7 @@ case ${1:-} in
   status) echo '{"server":{"running":true,"compatible":true}}' ;;
 esac
 SH
-chmod +x "$TMP/bin/omp" "$TMP/bin/pi" "$TMP/bin/herdr"
+chmod +x "$TMP/bin/omp" "$TMP/bin/pi" "$TMP/bin/herdr" "$TMP/bin/claude"
 export PATH="$TMP/bin:$PATH" HOME="$TMP/home" FM_CONFIG_ENV="$TMP/absent"
 export FIRSTMATE_ROOT="$TMP/official" FM_HOME="$TMP/fleet" FM_BACKEND=herdr
 export FM_PI_BIN="$TMP/bin/pi" FM_OMP_BIN="$TMP/bin/omp" FM_PI_EXTENSIONS=explicit
@@ -126,5 +146,89 @@ for harness in omp pi; do
   [ "$harness" != pi ] || expected=openai-codex/gpt-6.1-sol
   check "doctor uses the same $harness candidate detector as launch" "$expected" "$actual"
 done
+
+# --model codex|claude: one-launch Captain model presets, verified as a full
+# model+effort pair through the selected harness's own availability owner.
+# Anything short of AVAILABLE, and any other value, warns and restores the
+# same harness's exact default command (model AND effort).
+has() { case $2 in *"$3"*) check "$1" yes yes ;; *) check "$1" "output containing '$3'" "$2" ;; esac; }
+lacks() { case $2 in *"$3"*) check "$1" "no '$3'" "$2" ;; *) check "$1" yes yes ;; esac; }
+OMP_DEFAULT="$FM_OMP_BIN --model openai-codex/gpt-6.1-sol --thinking medium"
+OMP_CLAUDE="$FM_OMP_BIN --model anthropic/claude-sonnet-5-5 --thinking high"
+PI_EXTS="-e $FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts -e $FIRSTMATE_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
+PI_DEFAULT="$FM_PI_BIN --model openai-codex/gpt-6.1-sol --thinking medium $PI_EXTS"
+PI_SONNET55="$FM_PI_BIN --model anthropic/claude-sonnet-5-5 --thinking high $PI_EXTS"
+
+preset() { # label expected-command fm-args...
+  local label=$1 expected=$2 out
+  shift 2
+  out=$(run "$@" --print-command 2>&1)
+  check "$label" "$expected" "$(field "$out" COMMAND)"
+  lacks "$label is accepted without a warning" "$out" 'fm: warning'
+}
+CATALOG=full preset 'claude on OMP selects Sonnet 5.5 at high' "$OMP_CLAUDE" --model claude
+CATALOG=full preset '--model claude --harness omp selects the same command' "$OMP_CLAUDE" --model claude --harness omp
+CATALOG=full preset '--harness omp --model claude selects the same command' "$OMP_CLAUDE" --harness omp --model claude
+CATALOG=full preset 'codex on OMP selects Sol 6.1 at medium' "$OMP_DEFAULT" --model codex
+PI_ANTHROPIC=configured preset '--model claude --harness pi selects Pi exact Sonnet 5.5 at high' "$PI_SONNET55" --model claude --harness pi
+PI_ANTHROPIC=configured preset '--harness pi --model claude selects the same command' "$PI_SONNET55" --harness pi --model claude
+preset '--model codex --harness pi selects Sol 6.1 at medium' "$PI_DEFAULT" --model codex --harness pi
+
+fallback() { # label expected-command fm-args...
+  local label=$1 expected=$2 out
+  shift 2
+  out=$(run "$@" --print-command 2>&1)
+  check "$label restores the exact default command" "$expected" "$(field "$out" COMMAND)"
+  has "$label warns plainly" "$out" 'fm: warning: requested model'
+}
+fallback 'claude absent from the OMP catalog' "$OMP_DEFAULT" --model claude
+CATALOG=full SONNET_EFFORT=medium fallback 'claude without high effort on OMP' "$OMP_DEFAULT" --model claude
+CATALOG=full SOL_EFFORT=low fallback 'codex without medium effort keeps the default chain precedence' "$FM_OMP_BIN --model anthropic/claude-sonnet-5-5 --thinking high" --model codex
+fallback 'claude without Pi Anthropic credentials' "$PI_DEFAULT" --harness pi --model claude
+PI_CLAUDE=installed fallback 'claude never treats the unversioned Pi sonnet alias as Sonnet 5.5' "$PI_DEFAULT" --harness pi --model claude
+PI_ANTHROPIC=configured PI_SONNET_THINKING=no fallback 'claude without Pi thinking support' "$PI_DEFAULT" --harness pi --model claude
+fallback 'unknown preset' "$OMP_DEFAULT" --model gpt-6-astra
+fallback 'raw model id on OMP' "$OMP_DEFAULT" --model openai-codex/gpt-6-astra
+fallback 'raw model id on Pi' "$PI_DEFAULT" --harness pi --model openai-codex/gpt-6-astra
+CATALOG=full fallback 'preset names are exact' "$OMP_DEFAULT" --model Claude
+fallback 'shell metacharacters' "$OMP_DEFAULT" --model "\$(touch $TMP/pwned);\`touch $TMP/pwned\`"
+check 'shell metacharacters in --model are never evaluated' absent "$([ -e "$TMP/pwned" ] && echo present || echo absent)"
+out=$(CATALOG=failed run --model claude --print-command 2>&1)
+check 'unreachable OMP catalog restores the default command' "$OMP_DEFAULT" "$(field "$out" COMMAND)"
+has 'unreachable OMP catalog is reported as unverified' "$out" 'could not be verified'
+out=$(PI_AUTH=unknown run --harness pi --model codex --print-command 2>&1)
+check 'unverifiable Pi auth restores the default command' "$PI_DEFAULT" "$(field "$out" COMMAND)"
+has 'unverifiable Pi auth is reported as unverified' "$out" 'could not be verified'
+
+out=$(PI_LIST=failed run --harness pi --model codex 2>&1); rc=$?
+check 'a failing Pi default chain still refuses launch after --model fallback' 1 "$rc"
+has 'the default-chain blocker stays visible' "$out" 'no configured captain startup model is available'
+out=$(FM_OMP_BIN="$TMP/missing-omp" run --model claude 2>&1); rc=$?
+check 'a missing harness executable is still a blocker with --model' 1 "$rc"
+has 'the missing executable stays visible' "$out" 'is not on PATH'
+
+out=$(CATALOG=full run --model claude 2>&1)
+check 'real OMP launch receives the claude preset model and effort' '--model anthropic/claude-sonnet-5-5 --thinking high' "$(field "$out" EXEC_ARGS)"
+out=$(PI_ANTHROPIC=configured run --model claude --harness pi 2>&1)
+check 'real Pi launch receives the claude preset model and effort' "--model anthropic/claude-sonnet-5-5 --thinking high $PI_EXTS" "$(field "$out" EXEC_ARGS)"
+out=$(run --model claude 2>&1)
+check 'real fallback launch execs OMP once with the default flags' '--model openai-codex/gpt-6.1-sol --thinking medium' "$(field "$out" EXEC_ARGS)"
+
+usage_error() { # label fm-args...
+  local label=$1 out rc
+  shift
+  out=$(run "$@" 2>&1); rc=$?
+  check "$label is an argument error" 1 "$rc"
+  check "$label never launches" '' "$(field "$out" EXEC_HARNESS)"
+}
+usage_error 'missing --model value' --model
+usage_error 'empty --model value' --model ''
+usage_error 'flag in place of --model value' --model --check
+usage_error 'missing --model value after --harness' --harness pi --model
+usage_error 'repeated --model' --model claude --model codex
+usage_error '--model before doctor' --model claude doctor
+usage_error '--model before --' --model claude --
+usage_error '--model before an unknown flag' --model claude --bogus
+check 'no --model run wrote account or user configuration' '' "$(find "$HOME" "$FM_HOME/config" -type f 2>/dev/null)"
 printf '\nCAPTAIN HARNESS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]
