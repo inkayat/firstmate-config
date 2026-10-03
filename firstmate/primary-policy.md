@@ -417,6 +417,27 @@ planning phases:
 
 This in-team review does not replace section 7's merge-gate review.
 
+Team profiles (README.md "Team profiles"). A team task may carry a profile,
+`$FM_CONFIG_ROOT/teams/<name>.json`, naming its members, their write globs,
+message recipients, helper spawns, workflow, and `ops` limits. It only ever
+narrows the global role files; never edit a role file for one task. When the
+captain asks for a configured team:
+
+- at intake, run `fm team bind <task> --profile <name> --base <commit>` and
+  write a `Team profile: <name>` line in the brief, which also tells the lead
+  to follow that profile's phases and scopes. A refused bind is a refused
+  dispatch, not a reason to dispatch without the profile;
+- before relaunching a team task, run `fm team check <task>`; any refusal
+  stops the relaunch until the binding is repaired;
+- before review or landing, run `fm team audit <task>`; a refused path is a
+  delivery defect for the owning member, not something to waive silently.
+
+`ops` never authorizes anything: `commit: request` means the lead stops
+uncommitted with `needs-decision [key=commit-approval]`, and push and merge
+stay on Firstmate's guarded path under the captain's word. Report the
+limits honestly: `bash` writes, reads, and credentials are not contained, and
+the binding is same-user writable.
+
 Name the role in the brief and point the worker at its file by absolute path.
 A role describes how to work. It never outranks the project.
 

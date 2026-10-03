@@ -14,9 +14,10 @@
 #   5. selects the herdr runtime backend
 #   6. links the dispatch profiles and seeds the captain file
 #   7. links our skills and the pinned external packs into ~/.agents/skills,
-#      our slash commands (commands/*.md) into ~/.agents/commands, and each
+#      our slash commands (commands/*.md) into ~/.agents/commands, each
 #      role file (roles/<name>/ROLE.md) as OMP agent fm-<name> into
-#      ~/.omp/agent/agents
+#      ~/.omp/agent/agents, and the team policy extension
+#      (extensions/fm-team-policy.ts) into ~/.omp/agent/extensions
 #   8. links the fm launcher onto PATH
 #   9. reconciles the Pi Ponytail package: a separate pinned checkout (never
 #      the shared skill cache from step 7), a skills filter in Pi's own
@@ -47,6 +48,7 @@ ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
 SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
 COMMANDS_ROOT="${FM_COMMANDS_ROOT:-$HOME/.agents/commands}"
 AGENTS_ROOT="${FM_OMP_AGENTS_ROOT:-$HOME/.omp/agent/agents}"
+EXTENSIONS_ROOT="${FM_OMP_EXTENSIONS_ROOT:-$HOME/.omp/agent/extensions}"
 SKILL_CACHE="${FM_SKILL_CACHE:-$HOME/.local/share/firstmate-config/skills-src}"
 BIN_DIR="${FM_BIN_DIR:-$HOME/.local/bin}"
 # Every git probe below inspects a repository it must not silently write to
@@ -211,8 +213,8 @@ elif would 'seed data/captain.md from the template'; then
   fi
 fi
 
-# --- 7. global skills, commands, and role agents ---------------------------
-step '7. global skills, commands, and role agents'
+# --- 7. global skills, commands, role agents, and team policy ---------------
+step '7. global skills, commands, role agents, and team policy'
 mkdir -p "$SKILLS_ROOT" 2>/dev/null || true
 
 for skill_dir in "$CONFIG_ROOT"/skills/*/; do
@@ -244,6 +246,19 @@ for role_file in "$CONFIG_ROOT"/roles/*/ROLE.md; do
   fi
   link_to "$role_file" "$agent_link"
 done
+
+# OMP loads every module in its user extension root into every session, so
+# the team policy extension is a no-op unless the session's FM_TASK_ID has a
+# `bin/fm-team bind` record or a brief naming a team profile (README.md "Team
+# profiles"). A symlink already there is ours only when it points at an
+# extensions/fm-team-policy.ts (this or another firstmate-config checkout);
+# any other entry under that name belongs to the user and is left alone.
+policy_link="$EXTENSIONS_ROOT/fm-team-policy.ts"
+if [ -L "$policy_link" ] && case $(readlink "$policy_link") in */extensions/fm-team-policy.ts) false ;; *) true ;; esac; then
+  warn "$policy_link exists and is not one of ours; leaving it alone"
+else
+  link_to "$CONFIG_ROOT/extensions/fm-team-policy.ts" "$policy_link"
+fi
 
 lock="$CONFIG_ROOT/skills/external.lock"
 if [ ! -f "$lock" ]; then

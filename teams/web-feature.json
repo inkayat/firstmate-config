@@ -1,0 +1,24 @@
+{
+  "schema": "fm-team-profile.v1",
+  "name": "web-feature",
+  "description": "PROPOSED example, not a captain-selected team: a Django API under apps/api plus a web client under apps/web. Planning members are read-only; the two implementers each own one tree and may message only each other; QA and review stay read-only. The team stops uncommitted for the captain's approval and never pushes or merges.",
+  "lead": "fm-team-lead",
+  "members": [
+    {"agent": "fm-product-owner", "mode": "read-only"},
+    {"agent": "fm-architecture", "mode": "read-only"},
+    {"agent": "fm-backend-contract", "mode": "read-only"},
+    {"agent": "fm-django-pro", "mode": "mutating", "paths": {"write": ["apps/api/**"]}, "talk_to": ["fm-frontend-master"]},
+    {"agent": "fm-frontend-master", "mode": "mutating", "paths": {"write": ["apps/web/**"]}, "talk_to": ["fm-django-pro"]},
+    {"agent": "fm-qa", "mode": "read-only"},
+    {"agent": "fm-code-reviewer", "mode": "read-only"}
+  ],
+  "workflow": {
+    "phases": [
+      {"name": "planning", "members": ["fm-product-owner", "fm-architecture", "fm-backend-contract"]},
+      {"name": "implement", "members": ["fm-django-pro", "fm-frontend-master"]},
+      {"name": "verify", "members": ["fm-qa", "fm-code-reviewer"]}
+    ],
+    "max_rework_rounds": 2
+  },
+  "ops": {"commit": "request", "push": "none", "merge": "none"}
+}
