@@ -278,11 +278,30 @@ contains '2 a task with no binding and no team brief is reported none' "$out" 'n
 mkdir -p "$FM_HOME/data/lost-task"
 printf '# Task\nRole: team-lead\nTeam profile: web-feature\n' > "$FM_HOME/data/lost-task/brief.md"
 check_refuses '2 a team brief without a binding' team-binding-missing lost-task
+# The marker is the only record of a team task outside the binding directory,
+# so ordinary Markdown around it must not hide the team task.
+n=0
+while IFS= read -r marker; do
+  n=$((n+1)); mkdir -p "$FM_HOME/data/lost-$n"
+  printf '# Task\nRole: team-lead\n%s\n' "$marker" > "$FM_HOME/data/lost-$n/brief.md"
+  check_refuses "2 a team brief without a binding, marker written as: $marker" team-binding-missing "lost-$n"
+done <<'EOF'
+- Team profile: web-feature
+**Team profile:** web-feature
+Team Profile: web-feature
+  Team profile:  web-feature
+EOF
+mkdir -p "$FM_HOME/data/prose-task"
+printf '# Task\nNotes: no team profile: plain work\n' > "$FM_HOME/data/prose-task/brief.md"
+contains '2 prose that only mentions a team profile is not a marker' "$("$FMT" check prose-task 2>&1)" 'none: prose-task'
 mkdir -p "$FM_HOME/data/task-a"
 printf 'Team profile: docs-only\n' > "$FM_HOME/data/task-a/brief.md"
 check_refuses '2 a brief naming a different profile than the binding' team-binding-mismatch task-a
 printf 'Team profile: web-feature\n' > "$FM_HOME/data/task-a/brief.md"
 contains '2 a brief naming the bound profile resolves' "$("$FMT" check task-a 2>&1)" 'team: task-a'
+printf -- '- **Team profile:** web-feature\n' > "$FM_HOME/data/task-a/brief.md"
+contains '2 a decorated marker naming the bound profile resolves' "$("$FMT" check task-a 2>&1)" 'team: task-a'
+printf 'Team profile: web-feature\n' > "$FM_HOME/data/task-a/brief.md"
 
 for t in t-missing t-tampered t-corrupt t-badbind t-wrongtask t-linkbind; do
   "$FMT" bind "$t" --profile web-feature --base "$BASE_SHA" >/dev/null 2>&1

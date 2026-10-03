@@ -82,7 +82,8 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const AGENT_RE = /^fm-[a-z0-9][a-z0-9-]*$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const BASE_RE = /^[0-9a-f]{7,40}$/;
-const MARKER_RE = /^Team profile: (\S+)[ \t]*$/m;
+// bin/fm-team's BRIEF_MARKER_RE: the marker in whatever Markdown wraps it.
+const MARKER_RE = /^[ \t]*(?:[-*+][ \t]+)?[*_]{0,2}team profile[*_]{0,2}:[*_]{0,2}[ \t]+`?([^\s`*]+)/im;
 const GLOB_SEGMENT_RE = /^[A-Za-z0-9._@+*?-]+$/;
 const SAFE_TARGET_RE = /^[A-Za-z0-9._/@+*?~ -]+$/;
 // Tools every resolved team identity keeps; tools handled below are judged on
@@ -433,6 +434,11 @@ function uriScheme(t: string): string | undefined {
 function decideReadEntry(team: Team, who: Who, cwd: unknown, https: boolean, t: string): Verdict {
   const scheme = uriScheme(t);
   if (scheme === "https") return https ? undefined : refuse("https-read-not-granted", `${t}: team ${team.profile} grants this ${who.role} no https_read`);
+  if (scheme === "skill") {
+    const name = t.replace(/^skill:\/*/i, "");
+    const copy = name ? `; read ~/.agents/skills/${name.includes("/") ? name : `${name}/SKILL.md`} for a shared skill, or a project skill by its worktree path` : "";
+    return refuse("read-scheme-not-allowed", `skill:// can reach any host file through a link${copy}`);
+  }
   if (scheme !== undefined) {
     return READ_SCHEMES[scheme] === true ? undefined : refuse("read-scheme-not-allowed", `${scheme}: targets are not readable by a ${who.role} of team ${team.profile}`);
   }

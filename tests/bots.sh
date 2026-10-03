@@ -458,6 +458,63 @@ not_contains '11 held invalid bot: silent afterwards' "$out" 'seam-'
 if [ -e "$H3/state/bots.check.sh" ]; then fail '11 file never activates the watcher'; else pass '11 file never activates the watcher'; fi
 
 # =============================================================================
+# Scenario 12: reliability. A spec the parser cannot decode is reported and
+# fileable without hiding the other bots; create refuses text that would not
+# read back as written; filing is serialized; a symlinked spec is reported;
+# a stalled backlog still reports every bot inside fm-watch.sh's 30 s limit;
+# a push authorization must name the bot and project as whole words.
+# =============================================================================
+H4="$TMP_ROOT/home-rel"
+mkdir -p "$H4/data"
+cp "$H/data/projects.md" "$H/data/captain.md" "$H4/data/"
+run4() { HOME="$DECOY" FM_HOME="$H4" FIRSTMATE_ROOT="$FMROOT" "$BOT" "$@"; }
+run4 create aa "${BASE[@]}" >/dev/null
+run4 create zz "${BASE[@]}" >/dev/null
+printf '\xff\n' >> "$H4/data/bots/aa.md"
+out=$(run4 due --check --now 2026-10-15T01:00Z)
+has_line '12 undecodable spec: reported as invalid by name' "$out" 'bot invalid: aa-20261015 spec=data/bots/aa.md reason=unreadable'
+has_line '12 undecodable spec: the next bot is still evaluated' "$out" 'bot due: zz-20261015 spec=data/bots/zz.md level=local-proposal'
+out=$(run4 pause aa 2>&1)
+check '12 undecodable spec: pause refuses' "$?" 1
+contains '12 undecodable spec: pause names the invalid spec' "$out" "bot 'aa' spec is invalid"
+not_contains '12 undecodable spec: no traceback' "$out" 'Traceback'
+out=$(run4 file aa-20261015 --json --now 2026-10-15T01:00Z 2>&1)
+check '12 undecodable spec: filed and held for the captain' "$(field "$out" held)" aa-20261015
+not_contains '12 undecodable spec: silent once filed' "$(run4 due --check --now 2026-10-15T01:05Z)" 'aa-'
+
+refuses '12 scope with a line separator' bad-scope ls1 "${BASE[@]}" --scope "$(printf 'review src\342\200\250max_candidates: 1')"
+refuses '12 scope with a NEL' bad-scope ls2 "${BASE[@]}" --scope "$(printf 'review src\302\205then report')"
+refuses '12 superscript digit in a limit' bad-wall-clock-min sup "${BASE[@]}" --wall-clock-min ²
+refuses '12 full-width digits in a limit' bad-wall-clock-min fw "${BASE[@]}" --wall-clock-min "$(printf '\357\274\224\357\274\225')"
+out=$(run create $'nl\n' "${BASE[@]}" 2>&1)
+check '12 a bot name ending in a newline: refused nonzero' "$?" 1
+if [ -n "$(find "$H/data/bots" -name 'nl*')" ]; then fail '12 a bot name ending in a newline: nothing written'; else pass '12 a bot name ending in a newline: nothing written'; fi
+
+H5="$TMP_ROOT/home-race"
+mkdir -p "$H5/data"
+cp "$H/data/projects.md" "$H5/data/"
+HOME="$DECOY" FM_HOME="$H5" FIRSTMATE_ROOT="$FMROOT" "$BOT" create cc "${BASE[@]}" >/dev/null
+for k in 1 2; do HOME="$DECOY" FM_HOME="$H5" FIRSTMATE_ROOT="$FMROOT" "$BOT" file cc-20261015 --json --now 2026-10-15T01:00Z > "$TMP_ROOT/race-$k" 2>&1 & done
+wait
+check '12 two concurrent files of one id: one dispatch plan' "$(cat "$TMP_ROOT/race-1" "$TMP_ROOT/race-2" | grep -c '"kind"')" 1
+contains '12 two concurrent files of one id: the other is already filed' "$(cat "$TMP_ROOT/race-1" "$TMP_ROOT/race-2")" 'already-filed: cc-20261015'
+
+sed 's/^name:\( *\)zz$/name:\1lnk/' "$H4/data/bots/zz.md" > "$TMP_ROOT/lnk.md"
+ln -s "$TMP_ROOT/lnk.md" "$H4/data/bots/lnk.md"
+contains '12 symlinked spec: reported as invalid, as file and show refuse it' "$(run4 due --check --now 2026-10-15T01:10Z)" 'bot invalid: lnk-20261015 spec=data/bots/lnk.md reason=symlink'
+rm "$H4/data/bots/lnk.md"
+
+H6="$TMP_ROOT/home-stall"
+mkdir -p "$H6" "$TMP_ROOT/stall-firstmate/bin"
+printf '#!/bin/sh\nexec sleep 60\n' > "$TMP_ROOT/stall-firstmate/bin/fm-tasks-axi.sh"
+chmod +x "$TMP_ROOT/stall-firstmate/bin/fm-tasks-axi.sh"
+for n in st1 st2 st3 st4 st5 st6 st7; do HOME="$DECOY" FM_HOME="$H6" "$BOT" create "$n" "${BASE[@]}" >/dev/null; done
+out=$(HOME="$DECOY" FM_HOME="$H6" FIRSTMATE_ROOT="$TMP_ROOT/stall-firstmate" perl -e 'alarm shift; exec @ARGV' 30 "$BOT" due --check --now 2026-10-15T01:00Z 2>/dev/null)
+for n in st1 st2 st3 st4 st5 st6 st7; do contains "12 stalled backlog under the 30 s check limit: $n still reported" "$out" "$n"; done
+
+refuses '12 push authorization naming the bot only inside another word' authorization-unscoped pub "${BASE[@]}" --project pubproj --level push "${PUSH_OK[@]}" --authorization 'pubproj may push'
+
+# =============================================================================
 # Scenario 10: install.sh links commands/bots.md and skills/bot-builder into
 # the shared roots, by its own conventions, run only against a disposable copy
 # of install.sh with a fixture HOME (the default roots resolve under it), fake

@@ -54,7 +54,7 @@ LAB_HOME_HELPER="$FMROOT/bin/fm-lab-home.sh"
 LIVE_HOME="$HOME/.firstmate"
 
 if [ "${FM_LIVE_BOT_PILOT:-}" != 1 ]; then
-  printf 'bot-pilot.sh: SKIPPED (set FM_LIVE_BOT_PILOT=1 to run real omp workers in a Herdr lab)\n'
+  printf 'SKIP - bot-pilot.sh: set FM_LIVE_BOT_PILOT=1 to run real omp workers in a Herdr lab (never reported as PASS)\n'
   exit 0
 fi
 for tool in omp herdr python3 tasks-axi git; do
