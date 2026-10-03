@@ -74,7 +74,7 @@
 <li><code>fm update</code> has no multi-repository rollback.</li>
 <li>A running Captain is not notified of updates and keeps what it loaded at startup.</li>
 <li><code>fm doctor</code>'s runtime task-staleness check reports <code>UNKNOWN</code> when tasks are in flight, because no safe bulk read-only classifier exists. Use FirstMate's per-task state check for an authoritative answer.</li>
-<li>Role rules such as "own paths only" or "write no files" are instructions, not a sandbox. A bound team profile adds tool-level refusals in OMP - spawns, write and edit targets, message recipients - but <code>bash</code> can still write, read, and use every credential wherever the operating-system user can. <code>fm team audit</code> catches an out-of-scope change in the final tree only, never which member made it.</li>
+<li>Role rules such as "own paths only" or "write no files" are instructions, not a sandbox. A bound team profile adds tool-level refusals in OMP - spawns, write and edit targets, message recipients, and member reads outside the worktree and shared skill roots - but <code>bash</code> can still write, read, and use every credential wherever the operating-system user can. An <code>https_read</code> grant opens an egress channel for what that member can read. <code>fm team audit</code> catches an out-of-scope change in the final tree only, never which member made it.</li>
 <li>A team binding, its snapshot, and the brief are writable by the same user, so the sha256 check is consistency, not authorization. There is no OS sandbox, worker-specific credential, or branch protection.</li>
 </ul></div>
 </article></main>

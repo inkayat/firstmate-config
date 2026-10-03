@@ -101,6 +101,30 @@ cat > "$CFG/teams/helper-host.json" <<'JSON'
   "ops": {"commit": "none", "push": "none", "merge": "none"}
 }
 JSON
+# https_read fixtures: one member per grant state (true, false, absent), and the
+# helper host again with its grant set, so a helper's right is judged against
+# its own parent member's.
+cat > "$CFG/teams/https-mix.json" <<'JSON'
+{
+  "schema": "fm-team-profile.v1",
+  "name": "https-mix",
+  "lead": "fm-team-lead",
+  "members": [
+    {"agent": "fm-product-owner", "mode": "read-only", "https_read": true},
+    {"agent": "fm-qa", "mode": "read-only", "https_read": false},
+    {"agent": "fm-django-pro", "mode": "mutating", "paths": {"write": ["apps/api/**"]}}
+  ],
+  "workflow": {"phases": [{"name": "all", "members": ["fm-product-owner", "fm-qa", "fm-django-pro"]}], "max_rework_rounds": 0},
+  "ops": {"commit": "none", "push": "none", "merge": "none"}
+}
+JSON
+python3 - "$CFG/teams/helper-host.json" "$CFG/teams/helper-open.json" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1]))
+p["name"] = "helper-open"
+p["members"][0]["https_read"] = True
+json.dump(p, open(sys.argv[2], "w"))
+PY
 
 BASE_SHA=0123456789abcdef0123456789abcdef01234567
 BIND_LOG="$TMP_ROOT/bind.log"
@@ -109,6 +133,8 @@ for t in t-team t-freeze t-tampered t-missing t-badbind t-unknown; do
 done
 "$CFG/bin/fm-team" bind t-docs --profile docs-only --base "$BASE_SHA" >/dev/null 2>>"$BIND_LOG" || fail 'fixture bind t-docs'
 "$CFG/bin/fm-team" bind t-helper --profile helper-host --base "$BASE_SHA" >/dev/null 2>>"$BIND_LOG" || fail 'fixture bind t-helper'
+"$CFG/bin/fm-team" bind t-https --profile https-mix --base "$BASE_SHA" >/dev/null 2>>"$BIND_LOG" || fail 'fixture bind t-https'
+"$CFG/bin/fm-team" bind t-helper-open --profile helper-open --base "$BASE_SHA" >/dev/null 2>>"$BIND_LOG" || fail 'fixture bind t-helper-open'
 # Every bind reports the extension root it consulted when the extension is not
 # linked there; the fixture root is empty, so each bind names its root.
 case $(cat "$BIND_LOG") in
@@ -124,6 +150,16 @@ mkdir -p "$FM_HOME/data/t-marker"
 printf '# brief\nTeam profile: web-feature\n' > "$FM_HOME/data/t-marker/brief.md"
 cp "$CFG/teams/wide-open.json" "$TMP_ROOT/wide-open.json"
 WIDE_SHA=$(shasum -a 256 < "$TMP_ROOT/wide-open.json" | cut -d' ' -f1)
+# A snapshot whose grant is not a boolean, consistent with its binding (bind
+# itself would refuse it), so only the extension's own parse can catch it.
+python3 - "$CFG/teams/helper-host.json" "$BIND/t-badhttps.profile.json" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1]))
+p["members"][0]["https_read"] = "yes"
+open(sys.argv[2], "w").write(json.dumps(p))
+PY
+printf '{"schema": "fm-team-binding.v1", "task": "t-badhttps", "profile": "helper-host", "profile_sha256": "%s", "base": "%s"}\n' \
+  "$(shasum -a 256 < "$BIND/t-badhttps.profile.json" | cut -d' ' -f1)" "$BASE_SHA" > "$BIND/t-badhttps.json"
 
 # Worktree fixture: two owned trees, an unowned one, and three kinds of link.
 W="$TMP_ROOT/worktree"
@@ -133,6 +169,21 @@ printf 'a\n' > "$W/apps/api/a.py"; printf 'b\n' > "$W/apps/web/b.js"
 ln -s "$OUTSIDE" "$W/apps/api/link-out"
 ln -s ../web "$W/apps/api/link-web"
 ln -s "$OUTSIDE/nowhere.txt" "$W/apps/api/dangle"
+# Shared skill and reference roots under a fixture HOME, linked the way
+# install.sh links them: entry links into a skill tree (one entry holding links
+# that leave it), a sibling entry, the references link, and a host secret.
+FHOME="$TMP_ROOT/home"
+SKILLS_SRC="$TMP_ROOT/skills-src"
+mkdir -p "$FHOME/.agents/skills" "$FHOME/.ssh" "$SKILLS_SRC/e" "$SKILLS_SRC/other" "$SKILLS_SRC/refs" "$W/.agents/skills/p"
+printf 'skill\n' > "$SKILLS_SRC/e/SKILL.md"; printf 'other\n' > "$SKILLS_SRC/other/x.md"; printf 'ref\n' > "$SKILLS_SRC/refs/x.md"
+printf 'secret\n' > "$OUTSIDE/cred.txt"; printf 'key\n' > "$FHOME/.ssh/x"
+ln -s "$OUTSIDE/cred.txt" "$SKILLS_SRC/e/leak"
+ln -s ../other/x.md "$SKILLS_SRC/e/sib"
+ln -s "$OUTSIDE/nowhere.txt" "$SKILLS_SRC/e/dangle"
+ln -s "$SKILLS_SRC/e" "$FHOME/.agents/skills/e"
+ln -s "$SKILLS_SRC/other" "$FHOME/.agents/skills/other"
+ln -s "$SKILLS_SRC/refs" "$FHOME/.agents/references"
+ln -s "$OUTSIDE/cred.txt" "$W/.agents/skills/p/leak"   # a repository-shipped link
 
 cat > "$TMP_ROOT/driver.ts" <<'TS'
 import policy, { globMatch } from "@EXT@";
@@ -301,6 +352,7 @@ for (const [id, code] of [["t-marker", "team-binding-missing"], ["t-tampered", "
   await expect(`C ${code}: message refused`, s.tool("write", { path: "agent://Api", content: "x" }), code);
   await expect(`C ${code}: spawn refused`, s.spawn("fm-django-pro"), code);
   await expect(`C ${code}: read allowed`, s.tool("read", { path: "apps/api/a.py" }), "allow");
+  await expect(`C ${code}: an outside read is unchanged`, s.tool("read", { path: "/etc/hosts" }), "allow");
   await expect(`C ${code}: yield allowed`, s.tool("yield", { result: "blocked" }), "allow");
 }
 
@@ -327,6 +379,142 @@ const lead2 = session({ kind: "main", id: "Main", name: "main" });
 await expect("E back on the web-feature task: apps/api is in scope again", lead2.tool("write", { path: "apps/api/a.py", content: "x" }), "allow");
 await expect("E web-feature identities did not leak into docs-only", lead2.tool("write", { path: "docs/x.md", content: "x" }), "path-outside-scope");
 
+// --- R. member and helper reads stay in the worktree and the shared skill roots ----------
+const OUT = process.env.FIXTURE_OUTSIDE!;
+const FH = process.env.HOME!;
+const R = "read-outside-worktree";
+const S = "read-scheme-not-allowed";
+task("t-team");
+const memberReads: Array<[string, string, Record<string, unknown>, string]> = [
+  ["reads a worktree file", "read", { path: "apps/api/a.py" }, "allow"],
+  ["reads a worktree line range", "read", { path: "apps/api/a.py:1-5" }, "allow"],
+  ["reads a worktree archive member", "read", { path: "apps/x.zip:inner" }, "allow"],
+  ["reads the worktree by absolute path", "read", { path: `${W}/apps/web/b.js` }, "allow"],
+  ["greps a worktree list", "grep", { pattern: "x", path: "apps; other" }, "allow"],
+  ["greps the default scope", "grep", { pattern: "x" }, "allow"],
+  ["globs inside the worktree", "glob", { path: "apps/**/*.py" }, "allow"],
+  ["finds inside the worktree", "find", { query: "x", grep_keywords: [], path: "apps" }, "allow"],
+  ["ast_greps inside the worktree", "ast_grep", { pat: "x", path: "apps/api" }, "allow"],
+  ["lsp navigation inside the worktree", "lsp", { action: "definition", file: "apps/web/b.js" }, "allow"],
+  ["reads local://", "read", { path: "local://notes.md" }, "allow"],
+  ["reads a local:// range", "read", { path: "local://notes.md:1-5" }, "allow"],
+  ["reads artifact://", "read", { path: "artifact://3" }, "allow"],
+  ["reads agent://", "read", { path: "agent://Api" }, "allow"],
+  ["reads rule://", "read", { path: "rule://r" }, "allow"],
+  ["reads omp://", "read", { path: "omp://tools/read.md" }, "allow"],
+  ["reads a shared skill", "read", { path: "~/.agents/skills/e/SKILL.md" }, "allow"],
+  ["reads a shared skill by absolute path", "read", { path: `${FH}/.agents/skills/e/SKILL.md` }, "allow"],
+  ["reads a shared reference", "read", { path: "~/.agents/references/x.md" }, "allow"],
+  ["reads an outside file", "read", { path: `${OUT}/cred.txt` }, R],
+  ["reads ~/.ssh", "read", { path: "~/.ssh/x" }, R],
+  ["reads out through ..", "read", { path: "../outside/cred.txt" }, R],
+  ["reads through a worktree link to outside", "read", { path: "apps/api/link-out/f.txt" }, R],
+  ["reads a dangling worktree link to outside", "read", { path: "apps/api/dangle" }, R],
+  ["reads a repository-shipped skill link to outside", "read", { path: ".agents/skills/p/leak" }, R],
+  ["reads an outside line range", "read", { path: "/etc/passwd:1-5" }, R],
+  ["reads an outside archive member", "read", { path: `${OUT}/x.zip:inner` }, R],
+  ["hides an outside path after whitespace", "read", { path: `apps/api/a.py ${OUT}/cred.txt` }, R],
+  ["hides an outside path after a comma", "read", { path: `apps/api/a.py,${OUT}/cred.txt` }, R],
+  ["escapes with backslash separators", "read", { path: "..\\outside\\cred.txt" }, R],
+  ["escapes behind a glob character", "read", { path: "apps/*/../../../outside/cred.txt" }, R],
+  ["greps a list reaching outside", "grep", { pattern: "x", path: `apps; ${OUT}` }, R],
+  ["globs from an outside root", "glob", { path: `${OUT}/**/*.txt` }, R],
+  ["finds outside", "find", { query: "x", grep_keywords: [], path: OUT }, R],
+  ["ast_greps outside", "ast_grep", { pat: "x", path: OUT }, R],
+  ["lsp navigation on an outside file", "lsp", { action: "definition", file: `${OUT}/cred.txt` }, R],
+  ["lsp through the xd device on an outside file", "write", { path: "xd://lsp", content: JSON.stringify({ action: "hover", file: `${OUT}/cred.txt` }) }, R],
+  ["leaves the skills root through ..", "read", { path: "~/.agents/skills/../.ssh/x" }, R],
+  ["reads a look-alike skills root", "read", { path: "~/.agents/skillsX/a" }, R],
+  ["leaves the references root through ..", "read", { path: "~/.agents/references/../x" }, R],
+  ["follows a skill link to outside", "read", { path: "~/.agents/skills/e/leak" }, R],
+  ["follows a skill link into another entry", "read", { path: "~/.agents/skills/e/sib" }, R],
+  ["follows a dangling skill link", "read", { path: "~/.agents/skills/e/dangle" }, R],
+  ["greps a skill link to outside in a list", "grep", { pattern: "x", path: "apps; ~/.agents/skills/e/leak" }, R],
+  ["reads skill://", "read", { path: "skill://x" }, S],
+  ["reads a file inside a skill://", "read", { path: "skill://x/leak" }, S],
+  ["lists history://", "read", { path: "history://" }, S],
+  ["reads the lead transcript", "read", { path: "history://Main" }, S],
+  ["reads history://current/full", "read", { path: "history://current/full" }, S],
+  ["reads ssh://", "read", { path: "ssh://h/etc/passwd" }, S],
+  ["reads vault://", "read", { path: "vault://n" }, S],
+  ["reads cfg://", "read", { path: "cfg://x" }, S],
+  ["reads mcp://", "read", { path: "mcp://x" }, S],
+  ["reads pr://", "read", { path: "pr://1" }, S],
+  ["reads issue://", "read", { path: "issue://1" }, S],
+  ["reads proc://", "read", { path: "proc://x" }, S],
+  ["reads xd://", "read", { path: "xd://lsp" }, S],
+  ["reads file://", "read", { path: "file:///etc/passwd" }, S],
+  ["reads an unknown scheme", "read", { path: "foo://x" }, S],
+  ["reads an opaque ssh: target", "read", { path: "ssh:h/etc/passwd" }, S],
+  ["reads a single-slash skill: alias", "read", { path: "skill:/x" }, S],
+  ["reads an upper-case scheme", "read", { path: "SKILL://x" }, S],
+  ["reads a scheme embedded after a path", "read", { path: "apps/skill://x" }, S],
+  ["greps a skill:// entry in a list", "grep", { pattern: "x", path: "apps; skill://x" }, S],
+  ["reads plain http", "read", { path: "http://example.com" }, S],
+  ["reads a non-string path", "read", { path: ["apps"] }, "unparsed-read-target"],
+  ["calls a tool named browser", "browser", { action: "open" }, "tool-not-allowed"],
+];
+for (const [label, tool, input, want] of memberReads) await expect(`R member ${label}`, api.tool(tool, input), want);
+await expect("R read-only member reads an outside file", qa.tool("read", { path: `${OUT}/cred.txt` }), R);
+await expect("R the lead reads an outside file (unchanged)", lead.tool("read", { path: `${OUT}/cred.txt` }), "allow");
+await expect("R the lead reads skill:// (unchanged)", lead.tool("read", { path: "skill://x" }), "allow");
+await expect("R the lead reads history:// (unchanged)", lead.tool("read", { path: "history://Main" }), "allow");
+await expect("R the lead reads plain http (unchanged)", lead.tool("read", { path: "http://example.com" }), "allow");
+await expect("R a member still may not write local://", api.tool("write", { path: "local://notes.md", content: "x" }), "local-write-not-allowed");
+task("t-plain");
+await expect("R a session without a team reads anywhere (unchanged)", plain.tool("read", { path: `${OUT}/cred.txt` }), "allow");
+task("t-helper");
+await expect("R a helper reads its worktree", helper.tool("read", { path: "apps/api/a.py" }), "allow");
+await expect("R a helper reads an outside file", helper.tool("read", { path: `${OUT}/cred.txt` }), R);
+await expect("R a helper reads skill://", helper.tool("read", { path: "skill://x" }), S);
+
+// --- S. HTTPS reads only where the bound profile grants https_read ------------------------
+const N = "https-read-not-granted";
+const URL1 = "https://example.com/a";
+task("t-https");
+const slead = session({ kind: "main", id: "Main", name: "main" });
+await slead.start();
+const po = session({ kind: "sub", id: "Po", name: "fm-product-owner", parentId: "Main" });
+await po.start();
+const sqa = session({ kind: "sub", id: "Qa", name: "fm-qa", parentId: "Main" });
+await sqa.start();
+const sapi = session({ kind: "sub", id: "Api", name: "fm-django-pro", parentId: "Main" });
+await sapi.start();
+await expect("S https_read true: https read allowed", po.tool("read", { path: URL1 }), "allow");
+await expect("S https_read true: www. read allowed", po.tool("read", { path: "www.example.com" }), "allow");
+await expect("S https_read true: https grep allowed", po.tool("grep", { pattern: "x", path: URL1 }), "allow");
+await expect("S https_read true: plain http still refused", po.tool("read", { path: "http://example.com" }), S);
+await expect("S https_read true: an outside host read still refused", po.tool("read", { path: `${OUT}/cred.txt` }), R);
+await expect("S https_read true: skill:// still refused", po.tool("read", { path: "skill://x" }), S);
+await expect("S https_read false: https refused", sqa.tool("read", { path: URL1 }), N);
+await expect("S https_read absent: https refused", sapi.tool("read", { path: URL1 }), N);
+await expect("S https_read absent: www. refused", sapi.tool("read", { path: "www.example.com" }), N);
+await expect("S https_read absent: collapsed https:/ refused", sapi.tool("read", { path: "https:/example.com" }), N);
+await expect("S https_read absent: upper-case HTTPS refused", sapi.tool("read", { path: "HTTPS://example.com" }), N);
+await expect("S https_read absent: https hidden in a grep list refused", sapi.tool("grep", { pattern: "x", path: "apps; https://example.com" }), N);
+await expect("S https_read absent: ast_grep of a web URL refused", sapi.tool("ast_grep", { pat: "x", path: "https://example.com/a.js" }), N);
+await expect("S the lead reads https with no grant (unchanged)", slead.tool("read", { path: URL1 }), "allow");
+task("t-helper-open");
+const olead = session({ kind: "main", id: "Main", name: "main" });
+await olead.start();
+const ohost = session({ kind: "sub", id: "Api", name: "fm-fixture-host", parentId: "Main" });
+await ohost.start();
+const ohelper = session({ kind: "sub", id: "Api.Scout", name: "scout", parentId: "Api" });
+await ohelper.start();
+await expect("S a granted member reads https", ohost.tool("read", { path: URL1 }), "allow");
+await expect("S the helper of a granted member reads https", ohelper.tool("read", { path: URL1 }), "allow");
+await expect("S the helper of a granted member stays read-confined", ohelper.tool("read", { path: `${OUT}/cred.txt` }), R);
+await expect("S the helper of a granted member stays read-only", ohelper.tool("write", { path: "apps/api/a.py", content: "x" }), "read-only-member");
+task("t-helper");
+await expect("S another task's same-named helper without the grant: https refused", helper.tool("read", { path: URL1 }), N);
+await expect("S another task's same-named member without the grant: https refused", hapi.tool("read", { path: URL1 }), N);
+task("t-helper-open");
+await expect("S back on the granted task: its helper still reads https", ohelper.tool("read", { path: URL1 }), "allow");
+task("t-badhttps");
+const bad = session({ kind: "main", id: "Main", name: "main" });
+await expect("S a non-boolean https_read snapshot refuses the task", bad.tool("write", { path: "apps/api/a.py", content: "x" }), "team-profile-corrupt");
+await expect("S a non-boolean https_read snapshot keeps reads", bad.tool("read", { path: "apps/api/a.py" }), "allow");
+
 process.exit(failed);
 TS
 
@@ -338,7 +526,7 @@ GLOB_TABLE='[["apps/api/**","apps/api/a.py",true],["apps/api/**","apps/api",true
 ["a.b","axb",false],["**","anything/at/all",true]]'
 
 sed "s#@EXT@#$CONFIG_ROOT/extensions/fm-team-policy.ts#" "$TMP_ROOT/driver.ts" > "$TMP_ROOT/run.ts"
-FIXTURE_WORKTREE="$W" FIXTURE_BINDINGS="$BIND" WIDE_PROFILE="$TMP_ROOT/wide-open.json" WIDE_SHA="$WIDE_SHA" \
+FIXTURE_WORKTREE="$W" FIXTURE_BINDINGS="$BIND" FIXTURE_OUTSIDE="$OUTSIDE" HOME="$FHOME" WIDE_PROFILE="$TMP_ROOT/wide-open.json" WIDE_SHA="$WIDE_SHA" \
   GLOB_TABLE="$GLOB_TABLE" FM_TASK_INBOX='' bun "$TMP_ROOT/run.ts"
 check 'extension fixture driver exits 0' "$?" 0
 

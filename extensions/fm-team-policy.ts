@@ -17,10 +17,10 @@
 // Identity, per call from ctx.agent: the main session is the lead; a top-level
 // subagent whose agent name is a profile member is that member; a subagent of
 // a member session is that member's helper (read-only, may message only that
-// member, may not spawn); anything else - including a missing identity or an
-// unregistered parent - is refused like a broken profile. Sessions register
-// their agent id on their first hook call; recipient ids are resolved only
-// through that registry.
+// member, may not spawn, reads https only if that member may); anything
+// else - including a missing identity or an unregistered parent - is
+// refused like a broken profile. Sessions register their agent id on their
+// first hook call; recipient ids are resolved only through that registry.
 //
 // Enforced at OMP's own hooks:
 // - before_subagent_spawn: the lead spawns only profile members, a member
@@ -34,12 +34,22 @@
 //   refused because they edit arbitrary files;
 // - write agent://<id>: never agent://all; a member may message the lead and
 //   its talk_to members, the lead any registered session of its task;
+// - tool_call read/grep/glob/find/ast_grep `path` and lsp `file` (also via
+//   xd://lsp) of a member or helper: host paths must resolve inside the
+//   worktree, or under one ~/.agents/skills/<entry> or ~/.agents/references
+//   (judged against that entry's own realpath); of internal URLs only
+//   local, artifact, agent, rule and omp are read - skill:// and history://
+//   reach past these checks and are refused with every other scheme and
+//   plain http; https only with the member's `https_read: true`. The whole
+//   target and every `;`, comma or whitespace part, colon prefix and glob
+//   base is judged. The lead reads as before;
 // - eval is refused in a team, and an unlisted tool is refused.
 // Best effort only: bash commands matching git commit/cherry-pick/revert/am/
 // rebase/merge/push, gh pr merge/create, gh release/repo create, and gh api
 // mutations are refused. A pattern cannot see through eval'd strings, scripts,
 // aliases or indirection, and bash may still write any file, read anything,
-// and use any credential the user account holds; the Captain's `fm-team
+// and use any credential the user account holds. A permitted https read is
+// an egress channel for whatever its reader can see. The Captain's `fm-team
 // audit` is the delivery-time check for the final tree, and FirstMate alone
 // commits, pushes and merges.
 import { createHash } from "node:crypto";
@@ -54,7 +64,7 @@ type ExtensionAPI = { on: (event: string, handler: Handler) => void };
 type Fields = Record<string, unknown>;
 type AgentInfo = { kind: "main" | "sub"; id: string | undefined; name: string; parentId: string | undefined };
 type Registered = AgentInfo & { id: string };
-type Member = { mode: string; write: RegExp[]; talkTo: Set<string>; spawn: Set<string> };
+type Member = { mode: string; write: RegExp[]; talkTo: Set<string>; spawn: Set<string>; https: boolean };
 type Team = { task: string; profile: string; members: Map<string, Member>; scope: RegExp[]; commit: string };
 type Resolution =
   | { kind: "none" }
@@ -63,7 +73,7 @@ type Resolution =
 type Who =
   | { role: "lead" }
   | { role: "member"; member: Member; name: string }
-  | { role: "helper"; parentId: string }
+  | { role: "helper"; parentId: string; https: boolean }
   | { role: "unknown"; why: string };
 type Verdict = { block: true; reason: string } | undefined;
 
@@ -78,9 +88,20 @@ const SAFE_TARGET_RE = /^[A-Za-z0-9._/@+*?~ -]+$/;
 // Tools every resolved team identity keeps; tools handled below are judged on
 // their input, and any other tool is refused.
 const SAFE_TOOLS: Record<string, true> = {
-  read: true, grep: true, glob: true, find: true, ast_grep: true, yield: true, todo: true, wait: true,
-  web_search: true, ask: true, checkpoint: true, rewind: true, recall: true, browser: true, resolve: true, reject: true,
+  yield: true, todo: true, wait: true, web_search: true, ask: true, checkpoint: true, rewind: true, recall: true, resolve: true, reject: true,
 };
+// Schemes a member or helper may read: virtual docs and rules, and task-local
+// files OMP itself contains (local:// by realpath; artifact:// and agent://
+// by id or listed name). https is judged separately, by the https_read grant.
+const READ_SCHEMES: Record<string, true> = { local: true, artifact: true, agent: true, rule: true, omp: true };
+// OMP 18.5.0's own scheme detection (internal-urls/parse.ts extractUriScheme):
+// `x://...`, or an opaque `xy:rest` whose name has no dot and whose rest is no
+// line/raw/conflicts selector. EMBEDDED_URL_RE is its single-slash-alias scan.
+const URL_RE = /^([a-z][a-z0-9+.-]*):\/\//i;
+const OPAQUE_RE = /^([a-z][a-z0-9+.-]*):(.+)$/is;
+const SEL = String.raw`(?:raw|conflicts|-?\d+(?:[-+]\d+)?(?:,\d+(?:[-+]\d+)?)*)`;
+const SELECTOR_RE = new RegExp(`^${SEL}(?::${SEL})*$`, "i");
+const EMBEDDED_URL_RE = /[\\/]([a-z][a-z0-9+.-]*):\/\/(?=[^/]|$)/gi;
 // The only tools a refused or unidentified team session keeps.
 const REFUSED_TOOLS: Record<string, true> = { read: true, grep: true, glob: true, find: true, ast_grep: true, yield: true };
 const MUTATING_LSP: Record<string, true> = { rename: true, rename_file: true, request: true };
@@ -166,14 +187,15 @@ function parseTeam(task: string, parsed: unknown, name: string): Team | string {
     const spawn = m.spawn ?? [];
     const agent = str(m.agent);
     const mode = str(m.mode);
+    const https = m.https_read === undefined ? false : m.https_read;
     if (!agent || !AGENT_RE.test(agent) || (mode !== "read-only" && mode !== "mutating") || members.has(agent)
-        || !isStrList(write) || !isStrList(talkTo) || !isStrList(spawn)
+        || !isStrList(write) || !isStrList(talkTo) || !isStrList(spawn) || typeof https !== "boolean"
         || (mode === "read-only" && write.length > 0) || !write.every(globOk)) {
       return `snapshot member ${JSON.stringify(m.agent)} is malformed`;
     }
     const rx = write.map(globRegExp);
     scope.push(...rx);
-    members.set(agent, { mode, write: rx, talkTo: new Set(talkTo), spawn: new Set(spawn.map((s) => s.toLowerCase())) });
+    members.set(agent, { mode, write: rx, talkTo: new Set(talkTo), spawn: new Set(spawn.map((s) => s.toLowerCase())), https });
   }
   const ops = fields(p.ops);
   const commit = str(ops.commit);
@@ -273,7 +295,8 @@ function identify(team: Team, a: AgentInfo | undefined): Who {
     const parent = ids.get(a.parentId);
     if (!parent) return { role: "unknown", why: `${a.name} (${a.id}) has parent ${a.parentId}, which is no registered session of task ${team.task}` };
     if (parent.kind === "sub") {
-      if (topLevel(ids, parent) && team.members.has(parent.name)) return { role: "helper", parentId: parent.id };
+      const host = topLevel(ids, parent) ? team.members.get(parent.name) : undefined;
+      if (host) return { role: "helper", parentId: parent.id, https: host.https };
       return { role: "unknown", why: `${a.name} (${a.id}) descends from ${parent.name}, which is not a member of ${team.profile}` };
     }
   }
@@ -313,26 +336,34 @@ function realpathDeep(p: string, hops = 0): string | null {
   }
 }
 
+type Root = { abs: string; real: string };
+
+function sessionRoot(cwd: unknown): Root | string {
+  if (typeof cwd !== "string" || !cwd) return "this session has no working directory to judge paths against";
+  const abs = resolve(cwd);
+  try {
+    return { abs, real: realpathSync(abs) };
+  } catch {
+    return `the session directory ${cwd} does not resolve`;
+  }
+}
+
+function expandHome(p: string): string {
+  return p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
+}
+
 function decidePath(team: Team, who: Who, cwd: unknown, raw: unknown): Verdict {
   const scope = who.role === "lead" ? team.scope : who.role === "member" && who.member.mode === "mutating" ? who.member.write : null;
   if (!scope) return refuse("read-only-member", `a read-only ${who.role} of team ${team.profile} writes no files`);
   if (typeof raw !== "string" || !raw || raw.includes("\0")) return refuse("unparsed-edit-target", `cannot read a target path from ${JSON.stringify(raw)}`);
   if (raw.includes(":")) return refuse("colon-target-not-allowed", `${raw}: archive and sqlite targets are not judged, so they are refused`);
-  if (typeof cwd !== "string" || !cwd) return refuse("path-outside-worktree", "this session has no working directory to judge paths against");
-  const cwdAbs = resolve(cwd);
-  let realRoot: string;
-  try {
-    realRoot = realpathSync(cwdAbs);
-  } catch {
-    return refuse("path-outside-worktree", `the session directory ${cwd} does not resolve`);
-  }
-  const home = homedir();
-  const expanded = raw === "~" ? home : raw.startsWith("~/") ? join(home, raw.slice(2)) : raw;
-  const lexical = resolve(cwdAbs, expanded);
-  const relLexical = within(cwdAbs, lexical) ?? within(realRoot, lexical);
+  const root = sessionRoot(cwd);
+  if (typeof root === "string") return refuse("path-outside-worktree", root);
+  const lexical = resolve(root.abs, expandHome(raw));
+  const relLexical = within(root.abs, lexical) ?? within(root.real, lexical);
   if (relLexical === null) return refuse("path-outside-worktree", `${raw} is outside the task worktree`);
   const real = realpathDeep(lexical);
-  const relReal = real === null ? null : within(realRoot, real);
+  const relReal = real === null ? null : within(root.real, real);
   if (relReal === null) return refuse("path-outside-worktree", `${raw} resolves through a link to outside the task worktree`);
   if (!scope.some((g) => g.test(relLexical)) || !scope.some((g) => g.test(relReal))) {
     const as = relReal === relLexical ? relLexical : `${relLexical} (resolves to ${relReal})`;
@@ -345,6 +376,92 @@ function decideEach(team: Team, who: Who, cwd: unknown, targets: string[]): Verd
   if (targets.length === 0) return decidePath(team, who, cwd, undefined);
   for (const t of targets) {
     const v = decidePath(team, who, cwd, t);
+    if (v) return v;
+  }
+  return undefined;
+}
+
+// The realpath of the shared root a lexical path sits under: one entry of
+// ~/.agents/skills (anchored to that entry, so a link out of it or into a
+// sibling entry fails) or ~/.agents/references, the roots install.sh links.
+function sharedAnchor(lexical: string): string | null {
+  const agents = join(homedir(), ".agents");
+  const rel = within(agents, lexical);
+  if (rel === null) return null;
+  const [top, entry] = rel.split("/");
+  const anchor = top === "references" ? join(agents, "references") : top === "skills" && entry ? join(agents, "skills", entry) : null;
+  if (anchor === null) return null;
+  try {
+    return realpathSync(anchor);
+  } catch {
+    return null;
+  }
+}
+
+function readable(root: Root, p: string): boolean {
+  const lexical = resolve(root.abs, expandHome(p));
+  const real = realpathDeep(lexical);
+  if (real === null) return false;
+  if ((within(root.abs, lexical) ?? within(root.real, lexical)) !== null && within(root.real, real) !== null) return true;
+  const anchor = sharedAnchor(lexical);
+  return anchor !== null && within(anchor, real) !== null;
+}
+
+// Every path OMP may read for one entry: the whole entry and each prefix
+// before a `:` (selectors, archive members, views), each also cut before its
+// first glob character (the base a glob walks).
+function readCandidates(p: string): string[] {
+  const out: string[] = [];
+  for (let i = p.indexOf(":"); ; i = p.indexOf(":", i + 1)) {
+    const s = i < 0 ? p : p.slice(0, i);
+    const g = s.search(/[*?[{]/);
+    out.push(s);
+    if (g >= 0) out.push(s.slice(0, g));
+    if (i < 0) return out;
+  }
+}
+
+function uriScheme(t: string): string | undefined {
+  if (/^www\./i.test(t)) return "https";
+  const url = URL_RE.exec(t);
+  if (url) return url[1].toLowerCase();
+  const opaque = OPAQUE_RE.exec(t);
+  if (!opaque || opaque[1].length === 1 || opaque[1].includes(".") || SELECTOR_RE.test(opaque[2])) return undefined;
+  return opaque[1].toLowerCase();
+}
+
+function decideReadEntry(team: Team, who: Who, cwd: unknown, https: boolean, t: string): Verdict {
+  const scheme = uriScheme(t);
+  if (scheme === "https") return https ? undefined : refuse("https-read-not-granted", `${t}: team ${team.profile} grants this ${who.role} no https_read`);
+  if (scheme !== undefined) {
+    return READ_SCHEMES[scheme] === true ? undefined : refuse("read-scheme-not-allowed", `${scheme}: targets are not readable by a ${who.role} of team ${team.profile}`);
+  }
+  for (const m of t.matchAll(EMBEDDED_URL_RE)) {
+    const v = decideReadEntry(team, who, cwd, https, t.slice(m.index + 1));
+    if (v) return v;
+  }
+  const root = sessionRoot(cwd);
+  if (typeof root === "string") return refuse("read-outside-worktree", root);
+  for (const variant of new Set([t, t.replace(/\\/g, "/")])) {
+    for (const p of readCandidates(variant)) {
+      if (!readable(root, p)) return refuse("read-outside-worktree", `${t} is outside the task worktree and the shared skill roots`);
+    }
+  }
+  return undefined;
+}
+
+// A member's or helper's read-family target (read/grep/glob/find/ast_grep
+// `path`, lsp `file`). OMP splits `;` lists, and comma or whitespace lists
+// once a part exists, so the whole value and every part are judged. The lead
+// reads as before.
+function decideRead(team: Team, who: Who, cwd: unknown, raw: unknown): Verdict {
+  if (who.role === "lead" || raw === undefined) return undefined;
+  if (typeof raw !== "string" || raw.includes("\0")) return refuse("unparsed-read-target", `cannot read a target from ${JSON.stringify(raw)}`);
+  const https = who.role === "member" ? who.member.https : who.role === "helper" && who.https;
+  for (const entry of new Set([raw, ...raw.split(/[;,\s]+/)])) {
+    const t = entry.trim();
+    if (!t) continue;
+    const v = decideReadEntry(team, who, cwd, https, t);
     if (v) return v;
   }
   return undefined;
@@ -385,13 +502,13 @@ function decideAst(team: Team, who: Who, cwd: unknown, args: unknown): Verdict {
   return decideEach(team, who, cwd, paths);
 }
 
-function decideLsp(args: unknown): Verdict {
+function decideLsp(team: Team, who: Who, cwd: unknown, args: unknown): Verdict {
   const a = fields(args);
   const action = String(a.action ?? "");
   if (MUTATING_LSP[action] === true || (action === "code_actions" && a.apply === true)) {
     return refuse("lsp-refactor-not-allowed", `lsp ${action} edits files outside any write-glob check`);
   }
-  return undefined;
+  return decideRead(team, who, cwd, a.file);
 }
 
 function decideMessage(team: Team, who: Who, target: string): Verdict {
@@ -421,7 +538,7 @@ function decideWrite(team: Team, who: Who, cwd: unknown, path: unknown, content:
       args = undefined;
     }
     if (device === "ast_edit") return decideAst(team, who, cwd, args);
-    if (device === "lsp") return decideLsp(args);
+    if (device === "lsp") return decideLsp(team, who, cwd, args);
     if (device === "resolve" || device === "reject") return undefined;
     return refuse("device-not-allowed", `xd://${device} is not available in a team`);
   }
@@ -463,7 +580,13 @@ function decideTool(res: Resolution, ctx: unknown, event: unknown): Verdict {
     case "ast_edit":
       return decideAst(team, who, cwd, input);
     case "lsp":
-      return decideLsp(input);
+      return decideLsp(team, who, cwd, input);
+    case "read":
+    case "grep":
+    case "glob":
+    case "find":
+    case "ast_grep":
+      return decideRead(team, who, cwd, input.path);
     case "bash":
       return decideCommand(team, input.command);
     case "eval":
