@@ -46,7 +46,7 @@ cd firstmate-config
 <li><strong>Environment file</strong> - writes <code>~/.config/firstmate-config/env</code> with the resolved paths.</li>
 <li><strong>Runtime backend</strong> - sets <code>$FM_HOME/config/backend</code> to <code>herdr</code>.</li>
 <li><strong>Dispatch and Captain file</strong> - symlinks <code>crew-dispatch.json</code> into <code>$FM_HOME/config/</code> and seeds <code>$FM_HOME/data/captain.md</code> once; an existing copy is never overwritten.</li>
-<li><strong>Global skills, commands, role agents, and team policy</strong> - links this repository's skills and the pinned external skills into <code>~/.agents/skills</code>, its slash commands (<code>commands/*.md</code>, such as <code>/bots</code>) into <code>~/.agents/commands</code>, each role file into <code>~/.omp/agent/agents/fm-&lt;role&gt;.md</code>, and the team policy extension into <code>~/.omp/agent/extensions/fm-team-policy.ts</code>. A file or directory already at a link path is reported and left alone; so is a role-agent or extension symlink that does not point at a firstmate-config file.</li>
+<li><strong>Global skills, commands, and role agents</strong> - links this repository's skills and the pinned external skills into <code>~/.agents/skills</code>, its slash commands (<code>commands/*.md</code>, such as <code>/bots</code>) into <code>~/.agents/commands</code>, and each role file into <code>~/.omp/agent/agents/fm-&lt;role&gt;.md</code>. A file or directory already at a link path is reported and left alone; so is a role-agent symlink that does not point at a firstmate-config file.</li>
 <li><strong>Launchers</strong> - links <code>fm</code> and <code>ponytail-update</code> into <code>~/.local/bin</code> and warns if that directory is not on <code>PATH</code>.</li>
 <li><strong>Pi Ponytail package</strong> - a separate pinned checkout for Pi, with a skills filter so its bundled duplicates never shadow the shared ones.</li>
 </ol>
@@ -59,11 +59,10 @@ cd firstmate-config
   ok      present at ~/Developer/tools/firstmate
   ok      matches the validated baseline commit <sha>
 ...
-7. global skills, commands, role agents, and team policy
+7. global skills, commands, and role agents
   ok      ~/.agents/skills/systematic-debugging
   ok      ~/.agents/commands/bots.md
   ok      ~/.omp/agent/agents/fm-senior-fullstack.md
-  ok      ~/.omp/agent/extensions/fm-team-policy.ts
   ...
 8. command launchers
   ok      ~/.local/bin is on PATH

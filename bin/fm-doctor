@@ -923,31 +923,6 @@ for role in "${ROLE_NAMES[@]}"; do
   fi
 done
 
-# A role's frontmatter `spawns` allowlist names the agents it may start as team
-# members. OMP refuses a name it cannot discover only when the spawn is
-# attempted, so check here that each one is another role (fm-<role>) or an
-# agent OMP bundles.
-ROLE_SPAWN_COUNT=0
-ROLE_SPAWN_UNKNOWN=()
-for role in "${ROLE_NAMES[@]}"; do
-  rf="$CONFIG_ROOT/roles/$role/ROLE.md"
-  [ -r "$rf" ] || continue
-  while IFS= read -r target; do
-    [ -n "$target" ] || continue
-    ROLE_SPAWN_COUNT=$((ROLE_SPAWN_COUNT + 1))
-    case $target in
-      scout|reviewer|security-reviewer|task|sonic) continue ;;
-      fm-*) [ -r "$CONFIG_ROOT/roles/${target#fm-}/ROLE.md" ] && continue ;;
-    esac
-    ROLE_SPAWN_UNKNOWN+=("$role:$target")
-  done < <(role_frontmatter "$rf" spawns)
-done
-if [ "${#ROLE_SPAWN_UNKNOWN[@]}" -eq 0 ]; then
-  add_check roles.spawns PASS "$ROLE_SPAWN_COUNT spawn allowlist entr(y/ies), all known roles or bundled OMP agents" "$CONFIG_ROOT/roles"
-else
-  add_check roles.spawns FAIL "spawn allowlist names no role file or bundled OMP agent: ${ROLE_SPAWN_UNKNOWN[*]}" "$CONFIG_ROOT/roles"
-fi
-
 # =============================================================================
 # SKILLS
 # =============================================================================

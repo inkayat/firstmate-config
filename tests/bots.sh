@@ -840,6 +840,10 @@ done
 deferred=$(printf '%s\n' "$s1" | sed -n 's/.*bot error: check reason=deadline unevaluated=\([^,]*\).*/\1/p')
 if [ -n "$deferred" ] && printf '%s\n' "$s2" | grep -q "bot [a-z]*: $deferred-20261015"; then pass '15 a bot deferred by one sweep is evaluated by the next'
 else fail "15 a bot deferred by one sweep is evaluated by the next (deferred '$deferred'; next: $(printf '%s' "$s2" | tr '\n' '|'))"; fi
+all_deferred=$(printf '%s\n' "$s1" | sed -n 's/.*bot error: check reason=deadline unevaluated=\([a-z0-9,]*\).*/\1/p' | tr ',' ' ')
+missing=""; for d in $all_deferred; do printf '%s\n' "$s2" | grep -q "bot [a-z]*: $d-20261015" || missing="$missing $d"; done
+if [ -n "$all_deferred" ] && [ -z "$missing" ]; then pass '15 every bot deferred by one sweep is evaluated by the next (deferred bots go first)'
+else fail "15 every bot deferred by one sweep is evaluated by the next (deferred '$all_deferred'; not evaluated next:$missing)"; fi
 
 H18="$TMP_ROOT/home-latin1"
 mkdir -p "$H18/data"
@@ -915,6 +919,144 @@ print(buf.getvalue())
 PY
 )
 check '15 file plans from the spec it evaluated' "$(field "$out" scope)" 'src/ static review'
+
+# =============================================================================
+# Scenario 16: a missed window (I5, captain decision 2026-10-04). Outside the
+# scheduled window nothing is filed until the next scheduled occurrence: no
+# same-day late filing and no cross-day backfill. Recovering an id that WAS
+# filed (an interrupted filing) is not a catch-up: `file` still answers it
+# after its window closes and after its day ends, printing the stored plan at
+# most once, and never touches a later day's markers. Window 03:00-05:59
+# Europe/Stockholm = 01:00Z-03:59Z in October.
+# =============================================================================
+H16i="$TMP_ROOT/home-missed"
+mkdir -p "$H16i/data"
+cp "$H/data/projects.md" "$H16i/data/"
+run16i() { HOME="$DECOY" FM_HOME="$H16i" FIRSTMATE_ROOT="$FMROOT" "$BOT" "$@"; }
+axi16i() { HOME="$DECOY" FM_HOME="$H16i" "$FMROOT/bin/fm-tasks-axi.sh" "$@"; }
+interrupt16i() {  # file <id> at <now> with the marker directory unwritable
+  mkdir -p "$H16i/data/bots/.filed"; chmod 500 "$H16i/data/bots/.filed"
+  run16i file "$1" --now "$2" >/dev/null 2>&1
+  chmod 700 "$H16i/data/bots/.filed"
+}
+for b in mw rw xd pw; do run16i create "$b" "${BASE[@]}" >/dev/null; done
+# before the window (01:30 local, same Stockholm day)
+out=$(run16i file mw-20261020 --now 2026-10-19T23:30Z 2>&1)
+contains '16 before the window: file is refused' "$out" 'refused (not-due)'
+not_contains '16 before the window: the check is silent' "$(run16i due --check --now 2026-10-19T23:30Z)" 'mw-'
+# open and last inclusive minute
+contains '16 at window open: due' "$(run16i due --check --now 2026-10-20T01:00Z)" 'bot due: mw-20261020'
+contains '16 at the last window minute: still due' "$(run16i due --check --now 2026-10-20T03:59Z)" 'bot due: mw-20261020'
+# the window passes unfiled: nothing happens for the rest of the day
+out=$(run16i file mw-20261020 --now 2026-10-20T04:00Z 2>&1)
+contains '16 missed window: a same-day late file is refused' "$out" 'refused (not-due)'
+not_contains '16 missed window: the check stays silent after the window' "$(run16i due --check --now 2026-10-20T04:00Z)" 'mw-'
+if axi16i show mw-20261020 >/dev/null 2>&1; then fail '16 missed window: nothing filed'; else pass '16 missed window: nothing filed'; fi
+check '16 missed window: no marker' "$(cat "$H16i/data/bots/.filed/mw" 2>/dev/null)" ''
+# the next day: no backfill of the missed id; the next scheduled occurrence fires
+out=$(run16i file mw-20261020 --now 2026-10-20T23:30Z 2>&1)
+contains '16 next day: the missed id is never backfilled' "$out" 'refused (not-today)'
+not_contains '16 next day before its window: silent' "$(run16i due --check --now 2026-10-20T23:30Z)" 'mw-'
+out=$(run16i due --check --now 2026-10-21T01:00Z)
+contains '16 next scheduled occurrence: due with the new day id' "$out" 'bot due: mw-20261021'
+not_contains '16 next scheduled occurrence: the missed id is not reported' "$out" 'mw-20261020'
+contains '16 next scheduled occurrence: files normally' "$(run16i file mw-20261021 --now 2026-10-21T01:00Z 2>&1)" 'stop_rule:'
+# same-day recovery after the window: an already-filed id is not a catch-up
+interrupt16i rw-20261020 2026-10-20T03:59Z
+if axi16i show rw-20261020 >/dev/null 2>&1; then pass '16 fixture: interrupted filing left its row'; else fail '16 fixture: interrupted filing left its row'; fi
+out=$(run16i file rw-20261020 --now 2026-10-20T04:05Z 2>&1)
+contains '16 recovery after the window: labelled already filed' "$out" 'already-filed (queued, not started): rw-20261020'
+check '16 recovery after the window: the stored plan once' "$(printf '%s\n' "$out" | grep -c '^stop_rule:')" 1
+has_line '16 recovery after the window: a later file does not re-plan' "$(run16i file rw-20261020 --now 2026-10-20T04:06Z 2>&1)" 'already-filed: rw-20261020'
+# cross-day recovery: yesterday's interrupted id, after today's own filing
+interrupt16i xd-20261020 2026-10-20T03:59Z
+run16i file xd-20261021 --now 2026-10-21T01:00Z >/dev/null 2>&1
+out=$(run16i file xd-20261020 --now 2026-10-21T01:05Z 2>&1)
+contains "16 recovery next day: yesterday's filed id is labelled already filed" "$out" 'already-filed (queued, not started): xd-20261020'
+check '16 recovery next day: the stored plan once' "$(printf '%s\n' "$out" | grep -c '^stop_rule:')" 1
+has_line '16 recovery next day: a later file does not re-plan' "$(run16i file xd-20261020 --now 2026-10-21T01:06Z 2>&1)" 'already-filed: xd-20261020'
+check "16 recovery next day: today's filed marker untouched" "$(cat "$H16i/data/bots/.filed/xd" 2>/dev/null)" xd-20261021
+check "16 recovery next day: today's planned marker untouched" "$(head -n 1 "$H16i/data/bots/.filed/xd.planned" 2>/dev/null)" xd-20261021
+has_line "16 recovery next day: today's id is still not re-planned" "$(run16i file xd-20261021 --now 2026-10-21T01:07Z 2>&1)" 'already-filed: xd-20261021'
+not_contains '16 recovery next day: the check never reports the earlier id' "$(run16i due --check --now 2026-10-21T01:10Z)" 'xd-'
+# a pause still wins over recovery
+interrupt16i pw-20261020 2026-10-20T03:59Z
+run16i pause pw >/dev/null
+out=$(run16i file pw-20261020 --now 2026-10-20T04:05Z 2>&1)
+contains '16 a paused bot is not re-planned by recovery' "$out" 'refused (not-due)'
+not_contains '16 a paused bot prints no plan' "$out" 'stop_rule'
+
+# =============================================================================
+# Scenario 17: a plan printed by a Captain session that ended before any
+# dispatch (live L3). FirstMate's own session lock identifies the printing
+# session; the stored plan is printed again, once, only from inside the session
+# that now owns the lock, when the recorded dispatcher is provably gone, the row
+# is still queued, unheld, and unstarted, and official fm-spawn left no record
+# for the id. Fake Captain sessions are a copy of a non-platform bash named
+# `omp` (the official harness matcher's name); without one this scenario SKIPs.
+# =============================================================================
+H17r="$TMP_ROOT/home-dispatcher"; HB17="$TMP_ROOT/harness-bin"
+mkdir -p "$H17r/data" "$H17r/state" "$HB17"; cp "$H/data/projects.md" "$H17r/data/"
+harness17=0
+for b in "$(command -v bash)" /opt/homebrew/bin/bash /usr/local/bin/bash; do
+  [ -x "$b" ] || continue
+  cp "$(readlink -f "$b" 2>/dev/null || printf '%s' "$b")" "$HB17/omp" 2>/dev/null || continue
+  if "$HB17/omp" -c true 2>/dev/null; then harness17=1; break; fi
+done
+if [ "$harness17" = 1 ] && [ -x "$FMROOT/bin/fm-lock.sh" ] && [ -f "$FMROOT/bin/fm-session-lock-lib.sh" ]; then
+run17r() { HOME="$DECOY" FM_HOME="$H17r" FIRSTMATE_ROOT="$FMROOT" "$BOT" "$@"; }
+axi17r() { HOME="$DECOY" FM_HOME="$H17r" "$FMROOT/bin/fm-tasks-axi.sh" "$@"; }
+sess17() {  # <tag> <cmd>: a Captain session that takes FirstMate's lock, runs <cmd>, then stays alive
+  HOME="$DECOY" FM_HOME="$H17r" FIRSTMATE_ROOT="$FMROOT" FM_BOT_TEST_CLOCK=1 "$HB17/omp" -c \
+    "echo \$\$ > '$TMP_ROOT/s17-$1'; '$FMROOT/bin/fm-lock.sh' >/dev/null 2>&1; $2; touch '$TMP_ROOT/s17-$1.done'; sleep 300; true" &
+  for _ in $(seq 1 100); do [ -e "$TMP_ROOT/s17-$1.done" ] && return 0; sleep 0.1; done
+}
+end17() { local p; p=$(cat "$TMP_ROOT/s17-$1"); pkill -9 -P "$p" 2>/dev/null; kill -9 "$p" 2>/dev/null; sleep 0.3; }
+file17() { printf "'%s' file %s --now 2026-10-15T01:00Z > '%s' 2>&1" "$BOT" "$1" "$TMP_ROOT/s17-$2.out"; }
+for b in dg hd rs st ss lg; do run17r create "$b" "${BASE[@]}" >/dev/null; done
+sess17 a "$(file17 dg-20261015 a)"
+check '17 the printing session holds the lock and prints the plan once' "$(grep -c '^stop_rule:' "$TMP_ROOT/s17-a.out")" 1
+check '17 the plan marker records the lock pid and its full start time on one line' \
+  "$(awk 'NR == 2' "$H17r/data/bots/.filed/dg.planned" | grep -cE "^dispatcher $(head -n 1 "$H17r/state/.lock") [A-Z][a-z]{2} [A-Z][a-z]{2} [0-9]{1,2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}$"):$(wc -l < "$H17r/data/bots/.filed/dg.planned" | tr -d ' ')" '1:2'
+has_line '17 while the printer lives, a process outside its session gets only already-filed' "$(run17r file dg-20261015 --now 2026-10-15T01:01Z 2>&1)" 'already-filed: dg-20261015'
+sess17 b "$(file17 dg-20261015 b)"; end17 b
+has_line '17 while the printer lives, another session cannot own the lock: only already-filed' "$(cat "$TMP_ROOT/s17-b.out")" 'already-filed: dg-20261015'
+end17 a
+sess17 c "$(file17 dg-20261015 c)"
+contains '17 printer gone, row queued, no record: the lock owner gets the stored plan' "$(cat "$TMP_ROOT/s17-c.out")" 'already-filed (planned, dispatcher gone, not started): dg-20261015'
+check '17 that recovery prints the stored plan once' "$(grep -c '^stop_rule:' "$TMP_ROOT/s17-c.out")" 1
+sess17 c2 "$(file17 dg-20261015 c2)"
+has_line '17 the recovering session is now the live dispatcher: a later file does not re-plan' "$(cat "$TMP_ROOT/s17-c2.out")" 'already-filed: dg-20261015'
+end17 c2; end17 c
+has_line '17 printer gone, but a process outside the lock-owning session never re-plans' "$(run17r file dg-20261015 --now 2026-10-15T01:02Z 2>&1)" 'already-filed: dg-20261015'
+sess17 d "$(file17 hd-20261015 d)"; end17 d
+axi17r hold hd-20261015 --reason "scenario 17 hold" --kind captain >/dev/null
+sess17 e "$(file17 hd-20261015 e)"; end17 e
+has_line '17 printer gone but the row is held: only already-filed' "$(cat "$TMP_ROOT/s17-e.out")" 'already-filed: hd-20261015'
+sess17 f "$(file17 rs-20261015 f)"; end17 f
+mkdir -p "$H17r/state/rs-20261015.git-hooks"   # the strip official fm-spawn keeps while a launched agent may survive
+sess17 g "$(file17 rs-20261015 g)"; end17 g
+has_line '17 printer gone but a dispatch record remains: only already-filed' "$(cat "$TMP_ROOT/s17-g.out")" 'already-filed: rs-20261015'
+sess17 h "$(file17 st-20261015 h)"; end17 h
+axi17r start st-20261015 >/dev/null
+sess17 i "$(file17 st-20261015 i)"; end17 i
+has_line '17 printer gone but the row already started: only already-filed' "$(cat "$TMP_ROOT/s17-i.out")" 'already-filed: st-20261015'
+# the live printer asks again before any dispatch, then again after a dispatch record appears
+MS="$H17r/data/bots/.filed/ss.planned"
+( for _ in $(seq 1 100); do [ -e "$TMP_ROOT/s17-s.ready" ] && break; sleep 0.1; done
+  mkdir -p "$H17r/state/ss-20261015.git-hooks"; touch "$TMP_ROOT/s17-s.go" ) &
+sess17 s "$(file17 ss-20261015 s); cp '$MS' '$TMP_ROOT/s17-s.m1'; $(file17 ss-20261015 s2); cp '$MS' '$TMP_ROOT/s17-s.m2'; touch '$TMP_ROOT/s17-s.ready'; while [ ! -e '$TMP_ROOT/s17-s.go' ]; do sleep 0.1; done; $(file17 ss-20261015 s3)"; end17 s
+has_line '17 the live printing session asks again before any dispatch: its earlier plan stays pending' "$(cat "$TMP_ROOT/s17-s2.out")" 'already-filed (planned in this session, not started): ss-20261015'
+check '17 that answer prints no second plan and leaves the plan marker untouched' \
+  "$(grep -c '^stop_rule:' "$TMP_ROOT/s17-s2.out"):$(cmp -s "$TMP_ROOT/s17-s.m1" "$TMP_ROOT/s17-s.m2" && echo same || echo changed)" '0:same'
+has_line '17 after a dispatch record exists, the same session gets only already-filed' "$(cat "$TMP_ROOT/s17-s3.out")" 'already-filed: ss-20261015'
+sess17 l "$(file17 lg-20261015 l)"; end17 l
+printf 'lg-20261015\ndispatcher %s Sun\n' "$(cat "$TMP_ROOT/s17-l")" > "$H17r/data/bots/.filed/lg.planned"   # a truncated (pre-fix) record
+sess17 m "$(file17 lg-20261015 m)"; end17 m
+has_line '17 printer gone but its recorded start time is incomplete: only already-filed' "$(cat "$TMP_ROOT/s17-m.out")" 'already-filed: lg-20261015'
+else
+  printf 'SKIP - 17 no runnable non-platform bash to stand in for a Captain harness, or no official session lock in %s (never reported as PASS)\n' "$FMROOT"
+fi
 
 # =============================================================================
 # Scenario 10: install.sh links commands/bots.md and skills/bot-builder into

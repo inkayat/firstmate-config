@@ -366,7 +366,6 @@ contains 'healthy: an explicit heartbeat check is reported' "$out" 'runtime.hear
 contains 'healthy: roles all readable' "$out" 'PASS          roles.tenth-man'
 contains 'healthy: skills fully installed' "$out" 'PASS          skills.global_installation'
 contains 'healthy: every role default skill is a managed shared skill' "$out" 'PASS          skills.role_defaults'
-contains 'healthy: every team spawn allowlist entry resolves' "$out" 'PASS          roles.spawns'
 contains 'healthy: no official-internal skill leakage' "$out" 'PASS          skills.no_official_internal_leak'
 contains 'healthy: Opus 5.5 is an active available routing model' "$out" 'PASS          routing.model.omp.anthropic/claude-opus-5-5'
 contains 'healthy: Qwen/Ollama remain deferred' "$out" 'DEFERRED      routing.qwen_ollama_deferred'
@@ -463,7 +462,7 @@ printf '# skill\n' > "$FAKE_CFG/skills/architecture-review/SKILL.md"
 # A specialist role is discovered, not listed; one of its frontmatter default
 # skills is managed (architecture-review), the other is not.
 mkdir -p "$FAKE_CFG/roles/refactorist" "$FAKE_CFG/roles/no-frontmatter" "$FAKE_CFG/roles/wrong-name" "$FAKE_CFG/roles/no-description"
-printf -- '---\nname: fm-refactorist\ndescription: fixture role\nautoloadSkills:\n  - architecture-review\n  - not-managed-skill\nspawns:\n  - fm-architecture\n  - fm-ghost\n  - scout\n---\n# role\n' > "$FAKE_CFG/roles/refactorist/ROLE.md"
+printf -- '---\nname: fm-refactorist\ndescription: fixture role\nautoloadSkills:\n  - architecture-review\n  - not-managed-skill\n---\n# role\n' > "$FAKE_CFG/roles/refactorist/ROLE.md"
 # Role files OMP itself would not load as fm-<role> agents.
 printf '# role\n' > "$FAKE_CFG/roles/no-frontmatter/ROLE.md"
 printf -- '---\nname: fm-something-else\ndescription: fixture role\n---\n# role\n' > "$FAKE_CFG/roles/wrong-name/ROLE.md"
@@ -488,11 +487,6 @@ contains 'role frontmatter: a role file without agent frontmatter is reported FA
 contains 'role frontmatter: a name other than fm-<role> is reported FAIL' "$out" "FAIL          roles.wrong-name"
 contains 'role frontmatter: the wrong name is shown' "$(printf '%s\n' "$out" | grep 'roles.wrong-name')" 'fm-something-else'
 contains 'role frontmatter: a missing description is reported FAIL' "$out" 'FAIL          roles.no-description'
-spawns_line=$(printf '%s\n' "$out" | grep 'roles.spawns')
-contains 'spawn allowlist: an entry naming no role or bundled agent is reported FAIL' "$out" 'FAIL          roles.spawns'
-contains 'spawn allowlist: names the role and the unknown entry' "$spawns_line" 'refactorist:fm-ghost'
-not_contains 'spawn allowlist: an existing fm-<role> entry is not named' "$spawns_line" 'fm-architecture'
-not_contains 'spawn allowlist: a bundled OMP agent entry is not named' "$spawns_line" 'scout'
 
 # =============================================================================
 # 8. Multi-project reporting: registry, confident current project, no leakage

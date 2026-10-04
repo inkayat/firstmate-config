@@ -11,7 +11,7 @@
 <body>
 <main><article>
 <h1>CLI reference</h1>
-<p class="lede">Everything here exists in the repository's scripts. <code>fm</code> is the single entry point; it dispatches <code>doctor</code>, <code>version</code>, <code>update</code>, <code>board</code>, <code>bot</code>, and <code>team</code> to their own scripts.</p>
+<p class="lede">Everything here exists in the repository's scripts. <code>fm</code> is the single entry point; it dispatches <code>doctor</code>, <code>version</code>, <code>update</code>, <code>board</code>, and <code>bot</code> to their own scripts.</p>
 
 <table>
 <thead><tr><th>Command</th><th>Purpose</th><th>Changes anything?</th></tr></thead>
@@ -22,7 +22,6 @@
 <tr><td><a href="#update"><code>fm update</code></a></td><td class="wrap">Fast-forward both checkouts, then reconcile.</td><td class="wrap">Yes: fast-forwards and runs <code>install.sh</code>.</td></tr>
 <tr><td><a href="#board"><code>fm board</code></a></td><td class="wrap">Open the Kanban board.</td><td class="wrap">Writes board data under <code>$FM_HOME/data/board/</code>.</td></tr>
 <tr><td><a href="#bot"><code>fm bot</code></a></td><td class="wrap">Manage bot specs; evaluate and file due bots.</td><td class="wrap"><code>create</code>, <code>pause</code>, <code>resume</code>, <code>remove</code> write specs under <code>$FM_HOME/data/bots/</code>; <code>file</code> adds a backlog row; <code>check-install</code> registers the watcher check. An evaluation only records an already-filed id in the bot's filed marker.</td></tr>
-<tr><td><a href="#team"><code>fm team</code></a></td><td class="wrap">Validate team profiles, bind one to a task, check a binding, audit a team task's changes.</td><td class="wrap"><code>bind</code> writes a binding and profile snapshot under <code>$FM_HOME/data/team-bindings/</code>; the rest read only.</td></tr>
 <tr><td><a href="#ponytail-update"><code>ponytail-update</code></a></td><td class="wrap">Prepare a Ponytail pin update.</td><td class="wrap">Edits <code>skills/external.lock</code>; never commits.</td></tr>
 <tr><td><a href="#install"><code>./install.sh</code></a></td><td class="wrap">Reconcile this machine.</td><td class="wrap">Yes, unless <code>--verify</code>.</td></tr>
 </tbody>
@@ -118,14 +117,7 @@ fm bot due [--check]
 fm bot file NAME-YYYYMMDD
 fm bot check-install</code></pre>
 <p>Shorthand for <code>bin/fm-bot</code>. It never spawns a worker or calls a model: <code>due</code> is a dry evaluation, and <code>file</code> files today's due id and prints the dispatch plan for the Captain. <code>check-install</code> activates the watcher check and is a separate, explicit step. Full options, levels, and the daily flow are on <a href="bots.html">Bots</a>.</p>
-<p>Like every <code>fm</code> subcommand, <code>fm bot</code> and <code>fm team</code> act on the env file's <code>FM_HOME</code>, not one exported in your shell (<a href="config.html">Configuration</a>). For a lab or other home, call <code>bin/fm-bot</code> or <code>bin/fm-team</code> directly with <code>FM_HOME</code>, or point <code>FM_CONFIG_ENV</code> at that home's env file.</p>
-
-<h2 id="team">fm team</h2>
-<pre data-label="usage"><code>fm team validate PROFILE.json
-fm team bind TASK --profile NAME --base COMMIT
-fm team check TASK
-fm team audit TASK [--worktree PATH]</code></pre>
-<p>Shorthand for <code>bin/fm-team</code>. <code>validate</code> checks a profile against the real role frontmatter and prints every refusal as <code>refused (code)</code>. <code>bind</code> validates <code>teams/NAME.json</code>, snapshots it for the task, and warns when the policy extension is not linked, because then nothing enforces it at runtime. <code>check</code> prints <code>none</code>, <code>team</code>, or a refusal such as <code>team-profile-tampered</code>; it is the relaunch check. <code>audit</code> lists every committed, staged, unstaged, untracked, deleted, and renamed path since the bound base and exits nonzero on a path outside the team scope, a symlink leaving the worktree, or a gitlink. It never spawns, commits, pushes, or merges. See <a href="roles-skills.html#team-profiles">Team profiles</a>.</p>
+<p>Like every <code>fm</code> subcommand, <code>fm bot</code> acts on the env file's <code>FM_HOME</code>, not one exported in your shell (<a href="config.html">Configuration</a>). For a lab or other home, either run <code>fm bot</code> with <code>FM_CONFIG_ENV</code> pointing at that home's env file, or call <code>bin/fm-bot</code> directly with <code>FM_HOME</code> and <code>FIRSTMATE_ROOT</code> exported. <code>bin/fm-bot</code> never reads <code>FM_CONFIG_ENV</code>: with <code>FM_HOME</code> unset it uses <code>~/.firstmate</code>, and with <code>FIRSTMATE_ROOT</code> unset it uses <code>~/Developer/tools/firstmate</code>.</p>
 
 <h2 id="ponytail-update">ponytail-update</h2>
 <pre data-label="usage"><code>ponytail-update</code></pre>

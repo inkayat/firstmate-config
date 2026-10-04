@@ -384,60 +384,6 @@ role file plus its line here, never a new dispatch category:
 - `frontend-master` - web UI implementation against a fixed contract,
   verified through the real client
 
-Team roles. A `team-lead` worker runs one task as a small team of OMP
-subagents (section 6's micro-orchestration). It may spawn only the agents its
-frontmatter `spawns` lists, and OMP refuses any other. The planning members
-run in order, read-only, before any implementer starts:
-
-- `team-lead` - an OMP worker only, never Pi. It runs the planning phases and
-  stops with `needs-decision` on any open question the product owner labels
-  `scope`. It may resolve a `technical` one with cited evidence and a recorded
-  conditional stop, but never relabels a `scope` question. It owns
-  integration, the rework loop, and the result
-- `product-owner` - requirements with acceptance criteria, the work split,
-  stated assumptions, and open questions labeled `scope` or `technical` that
-  it does not decide
-- `backend-contract` - the endpoint contract inside the technical plan's API
-  boundaries, before implementation
-- `qa` - after integration, runs the tests and exercises each changed flow
-  end to end; reports pass or fail with evidence and never fixes code
-
-Inside a team, `architecture` writes the technical plan and API boundaries.
-That is a member's work under the lead's task, not an ARCHITECTURE dispatch;
-section 3's fixed role-to-category rule governs macro dispatch only. After the
-planning phases:
-
-- implementers - `django-pro` for a Django backend, `frontend-master` for web
-  UI, `senior-fullstack` otherwise - work in
-  parallel against the fixed contract;
-- `qa` runs on the integrated change, then `code-reviewer` runs once QA
-  passes;
-- each failure goes back to the member who owns the path, for at most two
-  rework rounds before `needs-decision`.
-
-This in-team review does not replace section 7's merge-gate review.
-
-Team profiles (README.md "Team profiles"). A team task may carry a profile,
-`$FM_CONFIG_ROOT/teams/<name>.json`, naming its members, their write globs,
-message recipients, helper spawns, workflow, and `ops` limits. It only ever
-narrows the global role files; never edit a role file for one task. When the
-captain asks for a configured team:
-
-- at intake, run `fm team bind <task> --profile <name> --base <commit>` and
-  write a `Team profile: <name>` line in the brief, which also tells the lead
-  to follow that profile's phases and scopes. A refused bind is a refused
-  dispatch, not a reason to dispatch without the profile;
-- before relaunching a team task, run `fm team check <task>`; any refusal
-  stops the relaunch until the binding is repaired;
-- before review or landing, run `fm team audit <task>`; a refused path is a
-  delivery defect for the owning member, not something to waive silently.
-
-`ops` never authorizes anything: `commit: request` means the lead stops
-uncommitted with `needs-decision [key=commit-approval]`, and push and merge
-stay on Firstmate's guarded path under the captain's word. Report the
-limits honestly: `bash` writes, reads, and credentials are not contained, and
-the binding is same-user writable.
-
 Name the role in the brief and point the worker at its file by absolute path.
 A role describes how to work. It never outranks the project.
 
@@ -660,9 +606,21 @@ A `check:` wake from `state/bots.check.sh` carries one line per bot;
   the plan in the row's body, records the marker that keeps the bot silent
   for the rest of the day, and prints the dispatch plan. Never file a bot id
   with a raw `fm-tasks-axi.sh add`, which skips that marker. `already-filed:`
-  or a refusal means dispatch nothing. `already-filed (queued, not started):`
+  or a refusal means dispatch nothing. `already-filed (planned in this
+  session, not started):` with no plan means this same session already printed
+  that id's plan and nothing was dispatched: the earlier plan stays valid -
+  dispatch it exactly once (its stored copy is the row body in
+  `fm-tasks-axi.sh show <id> --full`); never file again for a new plan.
+  `already-filed (queued, not started):`
   followed by a plan means an interrupted filing never printed it: dispatch
-  exactly that plan, once. A missed window is never filed later.
+  exactly that plan, once - also after that id's window closed or its day
+  ended, because recovering a filed id is not a catch-up.
+  `already-filed (planned, dispatcher gone, not started):` followed by a plan
+  means the Captain session that printed it ended before any dispatch:
+  FirstMate's session lock shows this session now owns the home and the
+  printer is gone, and official fm-spawn left no record for the id. Dispatch
+  exactly that plan, once. A missed window (an id never filed in its window) is
+  never filed later: the bot waits for its next scheduled occurrence.
 - **Dispatch exactly the plan.** Its role file, route rule, kind and
   delivery, scope, limits, excluded paths, access, notify, wall-clock limit,
   and stop rule go into the brief as printed. Never widen the scope or raise

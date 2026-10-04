@@ -42,13 +42,13 @@
 <p>The standalone <a href="https://github.com/inkayat/agent-skill-vault"><code>agent-skill-vault</code></a> repository is a separate, manually curated collection. Promoting one of its skills into the shared set is a deliberate decision, not an automatic sync.</p>
 
 <h2 id="roles">Roles</h2>
-<p>A role describes <em>how to work</em> and never outranks the project. There are twelve, at <code>roles/&lt;name&gt;/ROLE.md</code>. Each file opens with OMP task-agent frontmatter - <code>name: fm-&lt;name&gt;</code>, a <code>description</code>, and optional <code>autoloadSkills</code>, <code>tools</code>, <code>spawns</code>, and <code>model</code> - so the same file is the role a brief points at and an OMP agent. <code>install.sh</code> links each one into <code>~/.omp/agent/agents/fm-&lt;name&gt;.md</code>, so every OMP session can spawn <code>fm-&lt;name&gt;</code>; an entry there that it did not create is left alone.</p>
+<p>A role describes <em>how to work</em> and never outranks the project. There are eight, at <code>roles/&lt;name&gt;/ROLE.md</code>. Each file opens with OMP task-agent frontmatter - <code>name: fm-&lt;name&gt;</code>, a <code>description</code>, and optional <code>autoloadSkills</code>, <code>tools</code>, and <code>model</code> - so the same file is the role a brief points at and an OMP agent. <code>install.sh</code> links each one into <code>~/.omp/agent/agents/fm-&lt;name&gt;.md</code>, so every OMP session can spawn <code>fm-&lt;name&gt;</code>; an entry there that it did not create is left alone.</p>
 <h3>Core roles</h3>
 <table>
 <thead><tr><th>Role</th><th>Used for</th><th>Character</th></tr></thead>
 <tbody>
 <tr><td><code>senior-fullstack</code></td><td class="wrap">The default in every category except the two below.</td><td class="wrap">Read before writing, make the smallest change that solves the problem, cut over cleanly, demonstrate the behavior by running it.</td></tr>
-<tr><td><code>architecture</code></td><td class="wrap">The ARCHITECTURE category only, and the technical plan inside a team.</td><td class="wrap">Starts from constraints, offers at most three ranked options, prefers structure that is easy to delete, refuses speculative layers.</td></tr>
+<tr><td><code>architecture</code></td><td class="wrap">The ARCHITECTURE category only.</td><td class="wrap">Starts from constraints, offers at most three ranked options, prefers structure that is easy to delete, refuses speculative layers.</td></tr>
 <tr><td><code>tenth-man</code></td><td class="wrap">The TENTH-MAN category only.</td><td class="wrap">Attacks the claim, not the author; steelmans first; ranks failures by consequence. "No material objection" is a valid answer.</td></tr>
 </tbody>
 </table>
@@ -66,53 +66,6 @@
 </table>
 <p>The dispatch category picks harness, model, and effort. It never picks a role, and a strong model never implies a special role. Outside ARCHITECTURE and TENTH-MAN a task may use a specialist role when its work shape matches; the category and rule are chosen first and never change because of it.</p>
 <p>A role's <code>autoloadSkills</code> are its default skill selection, still inside the per-task budget below and still displaced by a project-local skill on the same ground. OMP injects them before a spawned agent's first prompt. <code>fm doctor</code> reports a default skill this repository does not manage and a role file whose frontmatter OMP would reject.</p>
-
-<h2 id="team">Team mode</h2>
-<p>Opt-in: a task runs as a team only when its brief names the <code>team-lead</code> role. The lead is an OMP worker (never Pi) that runs the task as a small team of OMP subagents inside its own worktree. It may spawn only the agents its <code>spawns</code> list names; OMP refuses any other with <code>Cannot spawn</code>.</p>
-<table>
-<thead><tr><th>Team role</th><th>Does</th></tr></thead>
-<tbody>
-<tr><td><code>team-lead</code></td><td class="wrap">Runs the phases below, owns integration, the rework loop, and the result. Never relabels a <code>scope</code> question.</td></tr>
-<tr><td><code>product-owner</code></td><td class="wrap">Requirements with acceptance criteria, the work split, stated assumptions, and open questions labeled <code>scope</code> or <code>technical</code> that it does not decide. Read-only.</td></tr>
-<tr><td><code>backend-contract</code></td><td class="wrap">The endpoint contract inside the technical plan's API boundaries, before implementation. Read-only.</td></tr>
-<tr><td><code>qa</code></td><td class="wrap">After integration, runs the tests and exercises each changed flow end to end; reports pass or fail with evidence and never fixes code.</td></tr>
-</tbody>
-</table>
-<ol class="flow">
-<li><strong>Requirements.</strong> <code>product-owner</code>. Any <code>scope</code> question stops the task with <code>needs-decision</code>; a <code>technical</code> one the lead may resolve with cited evidence and a recorded condition that would reopen it.</li>
-<li><strong>Technical plan.</strong> <code>architecture</code> writes the plan and API boundaries.</li>
-<li><strong>Contract.</strong> <code>backend-contract</code> writes the endpoint contract when the plan has an API seam.</li>
-<li><strong>Implementation.</strong> Implementers start together, in parallel: <code>django-pro</code> for a Django backend, <code>frontend-master</code> for web UI, <code>senior-fullstack</code> otherwise. Each reads the plan and contract before its first edit and touches only its owned paths.</li>
-<li><strong>Integration, QA, review.</strong> The lead integrates and runs the tests, then a fresh <code>qa</code>, then - only after QA passes - a fresh <code>code-reviewer</code>.</li>
-<li><strong>Rework.</strong> Each failure goes to the member who owns the path, for at most two rounds across QA and review; a third failure is <code>needs-decision</code>. The lead commits nothing unless its brief allows it.</li>
-</ol>
-<div class="callout note"><span class="t">Not a merge gate</span>
-<p>The in-team review does not replace the independent review before merge. The planning members and the reviewer are read-only; members report to the lead, and only the lead reports to FirstMate.</p></div>
-
-<h2 id="team-profiles">Team profiles</h2>
-<p>Optional: a team task can carry a profile, <code>teams/&lt;name&gt;.json</code>, that configures who is on the team, what each member may write and whom it may message, and which operations the team may only request. <code>fm team validate</code> judges it against the real role frontmatter, so a profile only narrows what the global roles already allow; no role file is ever rewritten for one task. <code>teams/web-feature.json</code> is a proposed example, not a selected team.</p>
-<table>
-<thead><tr><th>Field</th><th>Limits</th><th>Applied by</th></tr></thead>
-<tbody>
-<tr><td><code>members[].agent</code></td><td class="wrap">Who the lead may spawn, inside the lead role's own <code>spawns</code> list.</td><td class="wrap">Policy extension</td></tr>
-<tr><td><code>mode</code>, <code>paths.write</code></td><td class="wrap"><code>read-only</code>, or <code>mutating</code> with repository-relative globs; no two members own an overlapping glob.</td><td class="wrap">Policy extension and <code>fm team audit</code></td></tr>
-<tr><td><code>talk_to</code></td><td class="wrap">Which members a member may message; the lead is always reachable and <code>agent://all</code> never is.</td><td class="wrap">Policy extension</td></tr>
-<tr><td><code>spawn</code></td><td class="wrap">Helpers a member may start, inside its role's declared <code>spawns</code> list. A role without one allows no helper, and no shipped member role declares one. Helpers are read-only.</td><td class="wrap">Policy extension</td></tr>
-<tr><td><code>https_read</code></td><td class="wrap">Optional, absent means false: whether a member, and every helper it starts, may read <code>https://</code> and <code>www.</code> URLs. Plain <code>http://</code> stays refused.</td><td class="wrap">Policy extension</td></tr>
-<tr><td><code>skills</code></td><td class="wrap">Extra shared skills the lead names in a member's brief, by path (<code>~/.agents/skills/NAME/SKILL.md</code>), because members cannot read <code>skill://</code>. Counted with the role's <code>autoloadSkills</code> against the budget of three. Default skills cannot be removed per task.</td><td class="wrap">Advisory</td></tr>
-<tr><td><code>workflow</code></td><td class="wrap">Ordered phases and at most two rework rounds, coordinated by the lead.</td><td class="wrap">Advisory</td></tr>
-<tr><td><code>ops</code></td><td class="wrap"><code>commit: none</code> or <code>request</code>, <code>push: none</code>, <code>merge: none</code>. A limit, never authority.</td><td class="wrap">Policy extension (best effort); FirstMate's guarded merge path</td></tr>
-</tbody>
-</table>
-<ol class="flow">
-<li><strong>Bind at intake.</strong> The Captain runs <code>fm team bind TASK --profile NAME --base COMMIT</code> and writes a <code>Team profile: NAME</code> line in the brief. The task keeps its own snapshot under <code>$FM_HOME/data/team-bindings/</code>.</li>
-<li><strong>Apply in OMP.</strong> <code>install.sh</code> links <code>extensions/fm-team-policy.ts</code> into OMP's user extension root. It acts only in the bound task's sessions; a bound task whose binding or snapshot is missing, corrupt, or tampered refuses everything but reads.</li>
-<li><strong>Check before a relaunch.</strong> <code>fm team check TASK</code> re-validates the snapshot against the current roles.</li>
-<li><strong>Audit at delivery.</strong> <code>fm team audit TASK</code> lists every committed, staged, unstaged, untracked, deleted, and renamed path and refuses anything outside the team scope.</li>
-</ol>
-<p>Member and helper reads through OMP's tools stay inside the worktree and the shared skill and reference links that <code>install.sh</code> creates. Of internal URLs they read only <code>local://</code>, <code>artifact://</code>, <code>agent://</code>, <code>rule://</code>, and <code>omp://</code>; <code>skill://</code>, <code>history://</code>, credential-using schemes such as <code>ssh://</code>, and unknown schemes are refused. The lead reads as before.</p>
-<div class="callout warn"><span class="t">Where it stops</span>
-<p>These are in-process tool checks, not an OS boundary. <code>bash</code> can still write any file, read anything, and use every credential the user account holds, so read confinement binds only members without it. The lead is not confined and shares its session with members, rules loaded at startup never pass a tool call, and an <code>https_read</code> grant is an egress channel for everything its member can read; <code>web_search</code> stays available either way. The <code>ops</code> command patterns are best effort. The binding is writable by the same user, so its sha256 is a consistency check, not authorization. The audit proves the team's final-tree scope, not which member wrote what. The extension's decisions are tested against synthetic OMP hook events; a live OMP team session loading it has not been exercised yet.</p></div>
 
 <h2 id="shipped-skills">Shared skills that ship</h2>
 <p>Nineteen skills are installed under <code>~/.agents/skills</code>. Four live in this repository; fifteen are pinned by commit from three upstream repositories (all MIT-licensed, none vendored).</p>

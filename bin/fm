@@ -85,8 +85,6 @@
 #   fm bot ...            bot specs and their dry due evaluation (bin/fm-bot's
 #                         own --help documents create/list/show/pause/resume/
 #                         remove/due/file/check-install); never dispatches
-#   fm team ...           team profiles (bin/fm-team's own --help documents
-#                         validate/bind/check/audit); never spawns or commits
 #   fm --help
 set -u
 
@@ -181,10 +179,6 @@ case ${1:-} in
   bot)
     shift
     exec "$CONFIG_ROOT/bin/fm-bot" "$@"
-    ;;
-  team)
-    shift
-    exec "$CONFIG_ROOT/bin/fm-team" "$@"
     ;;
 esac
 

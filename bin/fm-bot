@@ -45,8 +45,8 @@ to re-arm it, so an unarmed watcher can still miss a window). 02:xx is
 refused because that hour is ambiguous on the autumn DST day and absent on
 the spring one. The dated task id is `<name>-<YYYYMMDD>` in Stockholm local
 date; once the official `fm-tasks-axi.sh show <id> --full` finds it the bot
-is silent for that day. A missed window is never backfilled, on the same or
-a later day.
+is silent for that day. A missed window is never filed later, on the same or
+a later day: nothing happens until the bot's next scheduled occurrence.
 `show --full` does not search the done archive, so each observed filing is
 also kept in a durable per-bot marker (`data/bots/.filed/<name>`); a dated
 task that is done and pruned to the archive later the same day stays filed.
@@ -63,8 +63,21 @@ for the effective level. Backlog writes are never killed on a timeout. A
 filing interrupted before its plan was printed (killed during the add, or a
 marker that could not be written) prints `already-filed (queued, not
 started):` and the stored plan once, on the next `file`, while the row is
-still queued, unheld, and unstarted; any other filed id prints only
-`already-filed:`. A bot that is due but invalid - an unreadable, symlinked,
+still queued, unheld, and unstarted. A plan printed by a Captain session that
+ended before any dispatch prints again once, as `already-filed (planned,
+dispatcher gone, not started):`, only from inside the session that now owns
+FirstMate's session lock, when the printer the plan marker recorded (the lock's
+harness pid and start time) is not a live harness started at that time, the
+row is still queued, unheld, and unstarted, and official fm-spawn left no
+record for the id. The live session that printed a plan and has not
+dispatched it yet gets `already-filed (planned in this session, not
+started):` and no second plan: its earlier plan stays valid, to dispatch once.
+Any other filed id prints only `already-filed:`. That recovery is not a
+catch-up: a filed id is still
+answered after its window closes or its day ends (an earlier day's id keeps
+its own `.filed/<id>.recovered` marker and never rewrites the current day's),
+while an id never filed stays refused. A bot that is due but invalid - an
+unreadable, symlinked,
 directory, or FIFO spec included, which is never followed or read - is filed
 and held for the captain through the official `fm-captain-hold.sh` with its
 cause, with no plan; the hold lands before the marker, and an invalid bot
@@ -103,8 +116,10 @@ Usage:
 
 `due --check` is the watcher form: only actionable lines, always exit 0. It
 starts no bot after CHECK_BUDGET (15 s, leaving at least 5 s before the
-watcher's 30 s kill), names the bots it did not reach, and starts one bot
-further along each 5-minute slot so no bot is deferred every sweep.
+watcher's 30 s kill), names the bots it did not reach and evaluates those
+first on the next recorded sweep that day (`data/bots/.deferred`), and starts
+one bot further along each 5-minute slot, so a deferred bot waits at most one
+sweep while the budget can reach it.
 `check-install` writes `$FM_HOME/state/bots.check.sh` and binds it with the
 official `bin/fm-check-register.sh bots`; if registration fails or times out
 it removes the new file, or restores the previous check's bytes and registers
@@ -737,15 +752,103 @@ def planned_marker_path(name: str) -> str:
     return os.path.join(bots_dir(), ".filed", f"{name}.planned")
 
 
-def plan_printed(name: str, task_id: str) -> bool:
-    path = planned_marker_path(name)
+# An earlier day's id recovered after its day ended records its printed plan
+# here, so recovering it never rewrites the current day's markers. The
+# `.recovered` suffix cannot collide with a bot's own markers (names have no dot).
+def recovered_marker_path(task_id: str) -> str:
+    return os.path.join(bots_dir(), ".filed", f"{task_id}.recovered")
+
+
+def _marker_lines(path: str) -> list[str] | None:
+    """The marker's lines, [] for no marker, None when it cannot be read."""
     if os.path.islink(path) or not os.path.isfile(path):
-        return False
+        return []
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return f.read().strip() == task_id
+            return f.read().splitlines()
     except (OSError, ValueError):
-        return True  # cannot prove the plan was never printed: never re-plan
+        return None
+
+
+def plan_printed(name: str, task_id: str) -> bool:
+    for path in (planned_marker_path(name), recovered_marker_path(task_id)):
+        lines = _marker_lines(path)
+        if lines is None:
+            return True  # cannot prove the plan was never printed: never re-plan
+        if lines and lines[0].strip() == task_id:
+            return True
+    return False
+
+
+def _printed_by(name: str, task_id: str) -> tuple[str, str] | None:
+    """(marker path, recorded dispatcher) of the marker that printed task_id's
+    plan; the dispatcher is `<pid> <start time>` or `none`."""
+    for path in (planned_marker_path(name), recovered_marker_path(task_id)):
+        lines = _marker_lines(path)
+        if lines and lines[0].strip() == task_id:
+            rec = lines[1].strip() if len(lines) > 1 else ""
+            return path, rec[len("dispatcher "):] if rec.startswith("dispatcher ") else "none"
+    return None
+
+
+# The Captain session that prints a plan is its dispatcher. It is identified by
+# FirstMate's own session lock (bin/fm-session-lock-lib.sh, read-only): the lock's
+# harness pid and that process's start time, recorded only when this process runs
+# inside the session that owns the lock. Anything else records `none`.
+_LOCK_IDENTITY = r'''
+. "$1" || exit 0
+fm_session_lock_owned_by_self "$2" || exit 0
+p=$(head -n 1 "$2/.lock" 2>/dev/null)
+case "$p" in ''|*[!0-9]*) exit 0 ;; esac
+s=$(ps -o lstart= -p "$p" 2>/dev/null)
+[ -n "$s" ] && printf '%s %s\n' "$p" "$(echo $s)"
+'''
+# Whether a recorded dispatcher `<pid> <start>` is provably gone, asked from
+# inside the current session: `gone` only when this process's session owns the
+# lock (so the recorder no longer does) and the recorded pid is not a live
+# verified harness started at the recorded time.
+_LOCK_GONE = r'''
+. "$1" || { echo unknown; exit 0; }
+fm_session_lock_owned_by_self "$2" || { echo not-owner; exit 0; }
+if fm_harness_pid_alive "$3"; then
+  now=$(ps -o lstart= -p "$3" 2>/dev/null); now=$(echo $now)
+  [ "$now" = "$4" ] && { echo alive; exit 0; }
+fi
+echo gone
+'''
+
+
+def _session_lock_call(script: str, *args: str) -> str:
+    lib = os.path.join(firstmate_root(), "bin", "fm-session-lock-lib.sh")
+    if not os.path.isfile(lib):
+        return ""
+    try:
+        out = subprocess.run(["bash", "-c", script, "fm-bot", lib, os.path.join(fm_home(), "state"), *args],
+                             capture_output=True, text=True, timeout=CALL_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def dispatcher_identity() -> str:
+    return _session_lock_call(_LOCK_IDENTITY) or "none"
+
+
+def dispatcher_gone(recorded: str) -> bool:
+    pid, _, start = recorded.partition(" ")
+    if not pid.isdigit() or len(start.split()) != 5:   # `ps -o lstart=`: weekday month day time year
+        return False
+    return _session_lock_call(_LOCK_GONE, pid, start) == "gone"
+
+
+# Every per-id record official fm-spawn leaves for a dispatch that may have
+# launched: the task record, the git-hooks strip it keeps while a launched agent
+# may survive, busy and pending-close records, and a worker's status or turn
+# marker. Any one of them means an execution was recorded or may survive.
+def execution_residue(task_id: str) -> list[str]:
+    state = os.path.join(fm_home(), "state")
+    return [s for s in (".meta", ".git-hooks", ".busy-state", ".busy-gen", ".backlog-close", ".status", ".turn-ended")
+            if os.path.lexists(os.path.join(state, task_id + s))]
 
 
 def _write_marker(path: str, task_id: str) -> None:
@@ -754,6 +857,14 @@ def _write_marker(path: str, task_id: str) -> None:
         _refuse_symlink(directory, "filed-marker directory")
         os.makedirs(directory, mode=0o700, exist_ok=True)
         _atomic_write(path, task_id + "\n", 0o600)
+
+
+def _write_plan_marker(path: str, task_id: str) -> None:
+    with _lock():
+        directory = os.path.dirname(path)
+        _refuse_symlink(directory, "filed-marker directory")
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        _atomic_write(path, f"{task_id}\ndispatcher {dispatcher_identity()}\n", 0o600)
 
 
 def last_runs(names: list[str]) -> dict | None:
@@ -1044,6 +1155,33 @@ def save_reported(day: str, lines: set[str], before: set[str]) -> None:
         _atomic_write(reported_path(), "\n".join([day, *sorted(lines)]) + "\n", 0o600)
 
 
+# The bots a budget cut left unevaluated, for the same Stockholm day, so the
+# next recorded sweep evaluates them first: a cut never keeps a bot waiting for
+# more than the next sweep while the budget can reach it.
+def deferred_path() -> str:
+    return os.path.join(bots_dir(), ".deferred")
+
+
+def read_deferred(day: str) -> list[str]:
+    path = deferred_path()
+    if os.path.islink(path) or not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except (OSError, ValueError):
+        return []
+    return [n for n in lines[1:] if NAME_RE.match(n)] if lines and lines[0] == day else []
+
+
+def save_deferred(day: str, names: list[str]) -> None:
+    with contextlib.suppress(OSError, SystemExit), _lock():
+        if names:
+            _atomic_write(deferred_path(), "\n".join([day, *names]) + "\n", 0o600)
+        elif os.path.isfile(deferred_path()) and not os.path.islink(deferred_path()):
+            os.remove(deferred_path())
+
+
 def cmd_due(args: argparse.Namespace) -> None:
     record = writes_allowed(args.now)
     if args.check:
@@ -1059,13 +1197,18 @@ def cmd_due(args: argparse.Namespace) -> None:
             seen: set[str] = set()
             names = spec_names()
             if names:
-                # One bot further along per 5-minute slot: a budget cut never
-                # defers the same tail bots every sweep.
+                # One bot further along per 5-minute slot, and the bots the
+                # previous recorded sweep could not reach go first.
                 k = int(moment.timestamp()) // 300 % len(names)
                 names = names[k:] + names[:k]
+                if record:
+                    first = [n for n in read_deferred(day) if n in names]
+                    names = first + [n for n in names if n not in first]
+            deferred: list[str] = []
             for i, name in enumerate(names):
                 if time.monotonic() - started > CHECK_BUDGET:
-                    print(f"bot error: check reason=deadline unevaluated={','.join(names[i:])}", flush=True)
+                    deferred = names[i:]
+                    print(f"bot error: check reason=deadline unevaluated={','.join(deferred)}", flush=True)
                     break
                 try:
                     r = evaluate(name, moment, record)
@@ -1080,6 +1223,7 @@ def cmd_due(args: argparse.Namespace) -> None:
                     print(line, flush=True)
             if record:
                 save_reported(day, seen, before)
+                save_deferred(day, deferred)
         except Exception as exc:  # noqa: BLE001 - surfaced as a wake, never swallowed
             print(f"bot error: check reason=check-failed-{type(exc).__name__}", flush=True)
         return
@@ -1182,6 +1326,9 @@ def cmd_file(args: argparse.Namespace) -> None:
 def _file_locked(args: argparse.Namespace, name: str) -> None:
     require_test_clock(args.now)
     result, spec = _evaluate(name, parse_now(args.now), True)
+    if _already_filed_elsewhen(result, args.id, name):
+        _already_filed(args, name, current_day=result["id"] == args.id)
+        return
     if result["id"] != args.id:
         die(f"refused (not-today): {args.id} is not {name}'s dated id at {result['local']} "
             f"({result['id']}); bots never backfill")
@@ -1223,28 +1370,66 @@ def _file_locked(args: argparse.Namespace, name: str) -> None:
     _print_record({"held": args.id, "spec": result["spec"], "reason": cause["reason"]}, args.json)
 
 
-def _already_filed(args: argparse.Namespace, name: str) -> None:
-    """A filed id prints its stored plan again only when no plan was printed
-    for it and its row is still queued, unheld, and unstarted, so an
-    interrupted filing can be dispatched once; a second `file`, or a started,
-    done, held, pruned, or unreadable row, never re-plans."""
-    filed, row = backlog_row(args.id) if not plan_printed(name, args.id) else (False, "")
+def _already_filed_elsewhen(result: dict, task_id: str, name: str) -> bool:
+    """A missed window is never filed later (I5), but recovering an id that was
+    already filed is not a catch-up: today's id after its window closed, or an
+    earlier day's id, is answered as already filed when it was filed. A paused
+    bot, a future id, or an id that was never filed keeps its refusal."""
+    earlier = result["id"] != task_id and task_id.rsplit("-", 1)[1] < result["id"].rsplit("-", 1)[1]
+    if not earlier and not (result["id"] == task_id and result["verdict"] == "outside-window"):
+        return False
+    if read_filed_marker(name) == task_id:
+        return True
+    filed, _row = backlog_row(task_id)
+    return filed is True
+
+
+def _already_filed(args: argparse.Namespace, name: str, current_day: bool = True) -> None:
+    """A filed id prints its stored plan again only while its row is still
+    queued, unheld, and unstarted, and either no plan was printed for it (an
+    interrupted filing) or the Captain session that printed it is provably gone
+    before any dispatch: this process's session owns FirstMate's session lock,
+    the recorded dispatcher is not a live harness started at the recorded time,
+    and official fm-spawn left no record for the id. When the asking session is
+    itself the recorded dispatcher and nothing was dispatched yet, it learns that
+    its earlier plan is still pending - without a second plan. A second `file`
+    from anywhere else, an unrecorded dispatcher, a started, done, held, pruned,
+    or unreadable row, or any dispatch residue never re-plans. An earlier day's
+    id records only its own recovery marker, never the current day's markers."""
+    printed = plan_printed(name, args.id)
+    filed, row = backlog_row(args.id)
     plan = stored_plan(row, args.id, name) if filed and row_queued(row) and not row_held(row) else None
+    label = "already-filed (queued, not started)"
+    if plan is not None and printed:
+        by = _printed_by(name, args.id)
+        if by is None or execution_residue(args.id):
+            plan = None
+        elif by[1] != "none" and by[1].split() == dispatcher_identity().split():
+            # this live session printed the plan and has not dispatched it: it stays valid
+            print(f"already-filed (planned in this session, not started): {args.id}")
+            return
+        elif not dispatcher_gone(by[1]):
+            plan = None
+        else:
+            label = "already-filed (planned, dispatcher gone, not started)"
     if plan is None:
         print(f"already-filed: {args.id}")
         return
-    _record_or_die(name, args.id)
-    _plan_or_die(name, args.id)
+    if current_day:
+        _record_or_die(name, args.id)
+        _plan_or_die(name, args.id)
+    else:
+        _plan_or_die(name, args.id, recovered_marker_path(args.id))
     if args.json:
-        print(json.dumps({**plan, "already_filed": True}, sort_keys=True))
+        print(json.dumps({**plan, "already_filed": True, "dispatcher_gone": printed}, sort_keys=True))
         return
-    print(f"already-filed (queued, not started): {args.id}")
+    print(f"{label}: {args.id}")
     _print_record(plan, False)
 
 
-def _plan_or_die(name: str, task_id: str) -> None:
+def _plan_or_die(name: str, task_id: str, path: str | None = None) -> None:
     try:
-        _write_marker(planned_marker_path(name), task_id)
+        _write_plan_marker(path or planned_marker_path(name), task_id)
     except OSError as exc:
         die(f"filed {task_id} but could not record that its plan is printed ({exc}); dispatch nothing now - "
             f"once it can be written, `fm bot file {task_id}` prints the stored plan of a queued row")
