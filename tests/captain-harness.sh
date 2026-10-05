@@ -38,6 +38,7 @@ printf 'EXEC_HARNESS=omp\nEXEC_CWD=%s\nEXEC_HOME=%s\nEXEC_BACKEND=%s\nEXEC_ORIGI
 printf 'EXEC_FOREIGN=%s%s%s\n' "${CLAUDECODE-}" "${PI_CODING_AGENT-}" "${FM_PI_HARNESS-}"
 printf 'EXEC_OMP_MARKER=%s\nEXEC_TIMEOUT=%s\n' "${FM_OMP_HARNESS-}" "${FM_TIMEOUT_MECHANISM_OVERRIDE-}"
 printf 'EXEC_VAULT=%s\n' "${FM_SKILL_VAULT_ROOT-}"
+printf 'EXEC_LIBRARY=%s\n' "${AGENT_LIBRARY_ROOT-<unset>}"
 printf 'EXEC_ARGS=%s\n' "$*"
 SH
 cat > "$TMP/bin/pi" <<'SH'
@@ -64,6 +65,7 @@ case ${1:-} in
     printf 'EXEC_HARNESS=pi\n'
     printf 'EXEC_OMP_MARKER=%s\nEXEC_TIMEOUT=%s\n' "${FM_OMP_HARNESS-}" "${FM_TIMEOUT_MECHANISM_OVERRIDE-}"
     printf 'EXEC_VAULT=%s\n' "${FM_SKILL_VAULT_ROOT-}"
+    printf 'EXEC_LIBRARY=%s\n' "${AGENT_LIBRARY_ROOT-<unset>}"
     printf 'EXEC_ARGS=%s\n' "$*"
     ;;
 esac
@@ -82,6 +84,8 @@ esac
 SH
 chmod +x "$TMP/bin/omp" "$TMP/bin/pi" "$TMP/bin/herdr" "$TMP/bin/claude"
 export PATH="$TMP/bin:$PATH" HOME="$TMP/home" FM_CONFIG_ENV="$TMP/absent"
+# The operator's own Library variables never leak into a fixture launch.
+unset AGENT_LIBRARY_ROOT XDG_DATA_HOME
 export FIRSTMATE_ROOT="$TMP/official" FM_HOME="$TMP/fleet" FM_BACKEND=herdr
 export FM_PI_BIN="$TMP/bin/pi" FM_OMP_BIN="$TMP/bin/omp" FM_PI_EXTENSIONS=explicit
 failed=0
@@ -230,5 +234,51 @@ usage_error '--model before doctor' --model claude doctor
 usage_error '--model before --' --model claude --
 usage_error '--model before an unknown flag' --model claude --bogus
 check 'no --model run wrote account or user configuration' '' "$(find "$HOME" "$FM_HOME/config" -type f 2>/dev/null)"
+
+# Agent Library root (primary-policy.md section 5 "Capability library"): an
+# explicit AGENT_LIBRARY_ROOT reaches the Captain process unchanged, valid or
+# not. Only when it is unset does the launcher try the portable per-user
+# default ${XDG_DATA_HOME:-$HOME/.local/share}/agent-library, expanded on this
+# machine, and hand it over only when it holds the Library CLI; otherwise the
+# Captain gets no root and proceeds without a Library. HOMEs below are
+# Mac-style (/Users/...) and Linux-style (/home/...) paths under the temp dir:
+# path simulation on this machine, not a run on Linux.
+mklib() { mkdir -p "$1/library/bin"; printf '// fixture CLI\n' > "$1/library/bin/agent-library.ts"; }
+lib_launch() { # <home> [fm args...] -> the AGENT_LIBRARY_ROOT the Captain process received
+  local h=$1 out
+  shift
+  out=$(HOME="$h" run "$@" 2>&1)
+  field "$out" EXEC_LIBRARY
+}
+MAC_HOME="$TMP/lib/Users/al ice"
+LIN_HOME="$TMP/lib/home/alice"
+mklib "$MAC_HOME/.local/share/agent-library"
+mklib "$LIN_HOME/.local/share/agent-library"
+mklib "$TMP/lib/explicit lib"
+check 'Library: Mac-style HOME default is discovered when the override is unset' \
+  "$MAC_HOME/.local/share/agent-library" "$(lib_launch "$MAC_HOME")"
+check 'Library: Linux-style HOME default is discovered when the override is unset' \
+  "$LIN_HOME/.local/share/agent-library" "$(lib_launch "$LIN_HOME")"
+check 'Library: the Pi Captain receives the same discovered default' \
+  "$LIN_HOME/.local/share/agent-library" "$(lib_launch "$LIN_HOME" --harness pi)"
+check 'Library: an explicit valid AGENT_LIBRARY_ROOT wins over a valid default' \
+  "$TMP/lib/explicit lib" "$(AGENT_LIBRARY_ROOT="$TMP/lib/explicit lib" lib_launch "$MAC_HOME")"
+check 'Library: an explicit invalid AGENT_LIBRARY_ROOT never falls through to a valid default' \
+  "$TMP/lib/no-such-library" "$(AGENT_LIBRARY_ROOT="$TMP/lib/no-such-library" lib_launch "$MAC_HOME")"
+mklib "$TMP/lib/mnt/xdg data/agent-library"
+check 'Library: an explicitly exported empty AGENT_LIBRARY_ROOT stays empty, never replaced by a valid default' \
+  '' "$(AGENT_LIBRARY_ROOT='' lib_launch "$MAC_HOME")"
+check 'Library: an explicitly exported empty AGENT_LIBRARY_ROOT never picks up a valid XDG default either' \
+  '' "$(AGENT_LIBRARY_ROOT='' XDG_DATA_HOME="$TMP/lib/mnt/xdg data" lib_launch "$LIN_HOME")"
+check 'Library: a relocated XDG_DATA_HOME default is discovered ahead of the HOME default' \
+  "$TMP/lib/mnt/xdg data/agent-library" "$(XDG_DATA_HOME="$TMP/lib/mnt/xdg data" lib_launch "$LIN_HOME")"
+check 'Library: with XDG_DATA_HOME set, the HOME default is never consulted' \
+  '<unset>' "$(XDG_DATA_HOME="$TMP/lib/mnt/empty" lib_launch "$LIN_HOME")"
+check 'Library: no default root leaves the Captain without one' '<unset>' "$(lib_launch "$TMP/lib/home/nobody")"
+mkdir -p "$TMP/lib/home/bob/.local/share/agent-library/library"
+printf 'not a Library\n' > "$TMP/lib/home/bob/.local/share/agent-library/README"
+check 'Library: a default directory without the Library CLI is not handed over' '<unset>' "$(lib_launch "$TMP/lib/home/bob")"
+out=$(HOME="$TMP/lib/home/nobody" run 2>&1)
+check 'Library: an absent Library still launches the ordinary Captain' omp "$(field "$out" EXEC_HARNESS)"
 printf '\nCAPTAIN HARNESS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]

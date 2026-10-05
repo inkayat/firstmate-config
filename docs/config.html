@@ -69,7 +69,7 @@
 <tr><td><code>FM_SKILL_CACHE</code></td><td class="wrap"><code>~/.local/share/firstmate-config/skills-src</code></td><td class="wrap">Where pinned skill repositories are cloned.</td></tr>
 <tr><td><code>FM_BIN_DIR</code></td><td class="wrap"><code>~/.local/bin</code></td><td class="wrap">Where <code>install.sh</code> links launchers.</td></tr>
 <tr><td><code>FIRSTMATE_ORIGIN</code></td><td class="wrap"><code>firstmate_repo</code> from the manifest</td><td class="wrap">Clone source, used by <code>install.sh</code> only when the checkout is missing. <code>fm update</code> still requires <code>origin</code> to equal the manifest value.</td></tr>
-<tr><td><code>AGENT_LIBRARY_ROOT</code></td><td class="wrap">unset</td><td class="wrap">Optional agent-library checkout the Captain may query for a task's required capabilities (<a href="roles-skills.html#library">Roles and skills</a>). Export it in the shell <code>fm</code> starts from; unset means no Library and ordinary behavior.</td></tr>
+<tr><td><code>AGENT_LIBRARY_ROOT</code></td><td class="wrap">unset</td><td class="wrap">Optional agent-library checkout the Captain may query for a task's required capabilities (<a href="roles-skills.html#library">Roles and skills</a>). An export in the shell <code>fm</code> starts from always wins, even when it is empty or names no Library. Unset, <code>fm</code> hands the Captain <code>${XDG_DATA_HOME:-$HOME/.local/share}/agent-library</code> when that directory holds <code>library/bin/agent-library.ts</code>, expanded for that launch and never written anywhere; otherwise there is no Library and behavior is ordinary.</td></tr>
 </tbody>
 </table>
 <div class="callout warn"><span class="t">The env file wins</span>

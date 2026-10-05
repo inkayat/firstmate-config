@@ -180,13 +180,72 @@ fi
 
 # --- 6. dispatch profiles and captain file ---------------------------------
 step '6. dispatch profiles and captain file'
-link_to() { # <target> <link> ; replaces only a symlink we own
-  local target=$1 link=$2 current
+# Shared links are stored relative to their own directory, so a moved HOME or
+# another machine's HOME spelling keeps them valid. A source is linkable only
+# when it exists and its physical path (parent directories resolved, its own
+# final component never followed) stays inside the tree it was named under:
+# this checkout or the external skill cache. An existing link is current when
+# its link chain reaches that physical path without any hop leaving that tree,
+# however it is spelled - absolute, relative, or through an alias inside the
+# tree - and is then left untouched. Any other existing link - wrong, broken,
+# or through a foreign alias - is a failure that is never rewritten: a name
+# alone proves nothing about who owns the link.
+physical() { # <path> -> <path> with its parent directories resolved
+  local dir
+  case $(basename "$1") in
+    # A terminal . or .. names a directory, not an entry: resolve it whole.
+    .|..) (CDPATH='' cd -P "$1" 2>/dev/null && pwd -P); return ;;
+  esac
+  dir=$(CDPATH='' cd -P "$(dirname "$1")" 2>/dev/null && pwd -P) || return 1
+  printf '%s/%s\n' "${dir%/}" "$(basename "$1")"
+}
+owned_source() { # <target> ; sets OWNED_ROOT and OWNED, fails when missing or outside its tree
+  OWNED_ROOT='' OWNED=''
+  case $1 in
+    "$CONFIG_ROOT"/*) OWNED_ROOT=$CONFIG_ROOT ;;
+    "$SKILL_CACHE"/*) OWNED_ROOT=$SKILL_CACHE ;;
+    *) return 1 ;;
+  esac
+  [ -e "$1" ] || return 1
+  OWNED_ROOT=$(CDPATH='' cd -P "$OWNED_ROOT" 2>/dev/null && pwd -P) || return 1
+  OWNED=$(physical "$1") || return 1
+  case $OWNED in "$OWNED_ROOT"/*) return 0 ;; esac
+  return 1
+}
+reaches_owned() { # <link> ; its chain reaches $OWNED and never leaves $OWNED_ROOT
+  local p=$1 text hop n=0
+  while [ "$n" -lt 40 ]; do
+    text=$(readlink "$p") || return 1
+    case $text in /*) hop=$text ;; *) hop="$(dirname "$p")/$text" ;; esac
+    hop=$(physical "$hop") || return 1
+    [ "$hop" != "$OWNED" ] || return 0
+    case $hop in "$OWNED_ROOT"/*) ;; *) return 1 ;; esac
+    [ -L "$hop" ] || return 1
+    p=$hop
+    n=$((n + 1))
+  done
+  return 1
+}
+relative_to() { # <physical dir> <physical path> -> <path> spelled from <dir>
+  local from=${1%/}/ up=''
+  while [ "${2#"$from"}" = "$2" ]; do
+    from=${from%/*/}/
+    up="../$up"
+  done
+  printf '%s%s\n' "$up" "${2#"$from"}"
+}
+link_to() { # <target> <link> ; creates a missing link, never rewrites an existing one
+  local target=$1 link=$2 dir
+  if ! owned_source "$target"; then
+    failf "$target is missing or outside its own tree; not linking $link"
+    return 0
+  fi
   if [ -L "$link" ]; then
-    current=$(readlink "$link")
-    if [ "$current" = "$target" ]; then ok "$link"; return 0; fi
-    would "repoint $link to $target" || return 0
-    if ln -sfn "$target" "$link"; then changedf "repointed $link"; else failf "cannot link $link"; fi
+    if reaches_owned "$link"; then
+      ok "$link"
+    else
+      failf "$link points at $(readlink "$link"), not $target; leaving it alone (remove it to relink)"
+    fi
     return 0
   fi
   if [ -e "$link" ]; then
@@ -195,7 +254,12 @@ link_to() { # <target> <link> ; replaces only a symlink we own
   fi
   would "link $link -> $target" || return 0
   mkdir -p "$(dirname "$link")"
-  if ln -s "$target" "$link"; then changedf "linked $link"; else failf "cannot link $link"; fi
+  if dir=$(CDPATH='' cd -P "$(dirname "$link")" 2>/dev/null && pwd -P) \
+     && ln -s "$(relative_to "$dir" "$OWNED")" "$link"; then
+    changedf "linked $link"
+  else
+    failf "cannot link $link"
+  fi
 }
 
 link_to "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$FM_HOME/config/crew-dispatch.json"

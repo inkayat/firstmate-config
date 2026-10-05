@@ -1093,8 +1093,9 @@ contains '10 verify before install: reports the missing bot-builder link' "$out"
 if [ -e "$IH/.agents/commands/bots.md" ]; then fail '10 verify writes nothing'; else pass '10 verify writes nothing'; fi
 out=$(install_fixture "$IH")
 check '10 install: exit 0' "$?" 0
-check '10 install: /bots linked into ~/.agents/commands' "$(readlink "$IH/.agents/commands/bots.md")" "$ICFG/commands/bots.md"
-check '10 install: bot-builder linked into ~/.agents/skills' "$(readlink "$IH/.agents/skills/bot-builder")" "$ICFG/skills/bot-builder"
+realp() { python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
+check '10 install: /bots linked into ~/.agents/commands' "$(realp "$IH/.agents/commands/bots.md")" "$(realp "$ICFG/commands/bots.md")"
+check '10 install: bot-builder linked into ~/.agents/skills' "$(realp "$IH/.agents/skills/bot-builder")" "$(realp "$ICFG/skills/bot-builder")"
 out=$(install_fixture "$IH")
 contains '10 rerun: idempotent' "$out" 'install: 0 change(s), 0 failure(s)'
 out=$(install_fixture "$IH" --verify)

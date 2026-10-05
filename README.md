@@ -166,7 +166,8 @@ a task or run it directly, the Captain assesses whether a specialized method
 would materially improve it; if so it records the task's required
 capabilities (for example `review.code`, `test.integration`) - separate from
 the dispatch category - and, when `AGENT_LIBRARY_ROOT` names a Library
-checkout in the environment `fm` starts from, runs its `agent-library
+checkout in the environment `fm` starts from (unset: `fm` tries
+`${XDG_DATA_HOME:-$HOME/.local/share}/agent-library`), runs its `agent-library
 firstmate` lookup for exactly those shelves. A selected artifact goes into
 the worker contract (or is applied by the Captain when it runs the task
 itself), firstmate-config trusted skills win their families by default, a

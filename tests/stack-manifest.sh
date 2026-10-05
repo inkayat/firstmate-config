@@ -411,7 +411,9 @@ chmod +x "$INST_CFG/install.sh"
 cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$INST_CFG/firstmate/fm-stack-manifest.sh"
 printf '{}\n' > "$INST_CFG/firstmate/crew-dispatch.json"
 printf '# captain notes\n' > "$INST_CFG/firstmate/captain.md"
-: > "$INST_CFG/bin/fm"; chmod +x "$INST_CFG/bin/fm"
+# Both launchers install.sh links exist in a real checkout; a missing one is
+# an installer failure (never a dangling link).
+: > "$INST_CFG/bin/fm"; : > "$INST_CFG/bin/ponytail-update"; chmod +x "$INST_CFG/bin/fm" "$INST_CFG/bin/ponytail-update"
 
 INST_FAKE_BIN="$TMP_ROOT/inst-fake-bin"
 mkdir -p "$INST_FAKE_BIN"

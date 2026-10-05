@@ -545,11 +545,14 @@ justified. Record them, each with its reason, in the brief's
 
 **Availability.** The Library is available only when `AGENT_LIBRARY_ROOT`
 names an agent-library checkout containing `library/bin/agent-library.ts`
-and `bun` is installed. It is an explicit machine-local dependency the
-operator exports in the environment `fm` is launched from (`install.sh`
-owns `~/.config/firstmate-config/env`, so not there); this repository never
-installs, pins, or defaults it. Otherwise the task proceeds exactly as it
-would without it.
+and `bun` is installed. An operator export in the environment `fm` is
+launched from always wins, even when it is empty or names no Library
+(`install.sh` owns `~/.config/firstmate-config/env`, so not there). Only
+when it is unset does
+`fm` hand the Captain the portable per-user root
+`${XDG_DATA_HOME:-$HOME/.local/share}/agent-library`, and only when that
+holds the CLI. This repository never installs or pins the Library.
+Otherwise the task proceeds exactly as it would without it.
 
 **Budget first, before any body is loaded.** Section 5's limit - two
 methods and one reference - applies to the optional picks, shared skills

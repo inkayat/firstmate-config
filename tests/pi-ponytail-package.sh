@@ -29,6 +29,7 @@ not_contains() { case $2 in *"$3"*) fail "$1 (unexpectedly found '$3' in '$2')" 
 link_target_real() {
   local target
   target=$(readlink "$1") || return 1
+  case $target in /*) ;; *) target="$(dirname "$1")/$target" ;; esac
   printf '%s/%s\n' "$(cd "$(dirname "$target")" && pwd -P)" "$(basename "$target")"
 }
 
@@ -194,11 +195,16 @@ check '2 missing launcher: verify stays read-only' '' \
 run_fake_install fresh >/dev/null
 ln -sfn "$TMP_ROOT/wrong-ponytail-update" "$TMP_ROOT/inst-bin-dir-fresh/ponytail-update"
 launcher_verify=$(run_fake_install fresh --verify)
-contains '2 wrong launcher: verify reports drift' "$launcher_verify" 'ponytail-update'
+contains '2 wrong launcher: verify reports it' "$launcher_verify" 'ponytail-update points at'
 check '2 wrong launcher: verify does not repoint it' "$TMP_ROOT/wrong-ponytail-update" \
   "$(readlink "$TMP_ROOT/inst-bin-dir-fresh/ponytail-update")"
+launcher_install=$(run_fake_install fresh)
+contains '2 wrong launcher: a real install refuses it too' "$launcher_install" 'ponytail-update points at'
+check '2 wrong launcher: a real install never repoints a link it does not own' "$TMP_ROOT/wrong-ponytail-update" \
+  "$(readlink "$TMP_ROOT/inst-bin-dir-fresh/ponytail-update")"
+rm "$TMP_ROOT/inst-bin-dir-fresh/ponytail-update"
 run_fake_install fresh >/dev/null
-check '2 launcher repair: real install restores the tracked helper' \
+check '2 launcher repair: once removed, a real install restores the tracked helper' \
   "$INST_CFG_REAL/bin/ponytail-update" "$(link_target_real "$TMP_ROOT/inst-bin-dir-fresh/ponytail-update")"
 check '2 launcher repair: unrelated bin file remains untouched' 'leave me alone' \
   "$(cat "$TMP_ROOT/inst-bin-dir-fresh/unrelated")"

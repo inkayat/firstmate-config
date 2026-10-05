@@ -50,6 +50,7 @@ cd firstmate-config
 <li><strong>Launchers</strong> - links <code>fm</code> and <code>ponytail-update</code> into <code>~/.local/bin</code> and warns if that directory is not on <code>PATH</code>.</li>
 <li><strong>Pi Ponytail package</strong> - a separate pinned checkout for Pi, with a skills filter so its bundled duplicates never shadow the shared ones.</li>
 </ol>
+<p>Every link the installer creates is relative to its own directory, so a HOME that moves or is spelled differently on another machine keeps it valid. A source is linked only when it exists inside this checkout or the skill cache; one that is missing or resolves outside them is reported as a failure and never linked. An existing link whose chain reaches that same source without leaving its tree - absolute, as older installs wrote them, relative, or through an alias inside the tree - is left exactly as it is, never rewritten for its spelling. Any other existing link - wrong, broken, or through an alias outside the tree - is reported as a failure by <code>--verify</code> and a normal run alike and is never rewritten; remove it and run the installer again to link it.</p>
 <p>A trimmed run on a settled machine looks like this:</p>
 <pre class="out" data-label="output, trimmed"><code>1. toolchain
   ok      git present
