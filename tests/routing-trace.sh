@@ -5,50 +5,103 @@
 #
 # Usage:
 #   tests/routing-trace.sh                     run the offline fixture suite
-#   tests/routing-trace.sh check <trace-file> <harness> <model> <effort> <skills|none> [<worker-transcript>]
+#   tests/routing-trace.sh check <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]] [--brief <brief-file>]
 #       check ONE worker's captured trace block against the actual spawn
 #       axes (the harness/model/effort really passed to fm-spawn, e.g. from
 #       state/<id>.meta or the worker's own process line) and the skills
 #       actually selected in its brief (comma-separated; absolute
 #       .../<name>/SKILL.md paths normalize to <name>, worktree-relative
-#       project-local paths stay as written). With a worker transcript,
-#       also check the block's "Skill evidence:" lines against it. Prints
-#       one PASS/FAIL line per check; exit 0 only when all pass.
+#       project-local paths stay as written; an absolute or ~/ required-
+#       companion path names that exact file). With an omp worker's
+#       retained OMP session record
+#       (~/.omp/agent/sessions/<worktree>/<id>.jsonl), also check the
+#       block's "Skill evidence:" lines against it; a `review` excerpt
+#       additionally needs another session's record. With
+#       --brief, also check the block's "Library:" lines (primary-policy.md
+#       section 5 "Capability library") against that brief's "Required
+#       capabilities:" block and the agent-library selections it carries,
+#       and check the brief itself: it must not carry the adapter's
+#       FirstMate-only report, and must not provably exceed section 5's
+#       budget (library picks have a known kind; other skills may be either,
+#       so only an overrun no method/reference split explains fails), and
+#       for a claude spawn every Library pick's path (trusted ones included)
+#       must be a copy materialized under the brief's own data dir
+#       (agent-library/). With a worker session record as well, each
+#       "Selected library artifact:" pick needs its own Skill evidence line,
+#       keyed by artifact id, whose READ is computed from the exact path the
+#       brief selected and is "mismatch" (only UNPROVEN passes) when that
+#       path's bytes differ from the sha256 the brief's Requirement records.
+#       A block with Library: lines and no --brief fails as unverifiable.
+#       Prints PASS/FAIL per check, INSPECT for located context the checker
+#       does not assess, and a SUMMARY per skill; exit 0 only when nothing
+#       FAILs.
 #
 # What this proves and what it cannot: `check` compares text the Captain
 # printed with facts supplied by the caller. The Routing line starts with
 # `CATEGORY` or `CATEGORY #n` only: `#n` names the matched rule within a
 # multi-rule category, the axes must be that rule's route (or a named
 # captain override), and any free-text sub-lane label is rejected because
-# nothing can verify it. `check` cannot observe the Captain printing the
-# trace, cannot classify a task into a category or rule, and cannot prove a
-# skill was applied: an evidence citation PASS means only that the text
-# occurs somewhere in the transcript - a quote or a denial matches too - so
-# each PASS prints the surrounding transcript text for the Captain to read
-# before reporting it. It also rejects duplicate per-skill lines and claims
-# for unselected skills. It is a diagnostic for the debugging period, never
-# a completion gate, dispatch hook, or monitor.
+# nothing can verify it. For skill evidence it computes READ of each listed
+# file from the record's successful `read` results against that exact
+# file's current bytes (complete before the first edit/write/ast_edit call,
+# late, partial, none, or unreadable when the listed path is no readable
+# file; bash/eval calls before the completing read are counted, not
+# assessed) and fails a read, excerpt, review, or `usage verified` claim
+# whose necessary links the records lack. Excerpts are located, never
+# judged: `result` only in bash/eval/background-bash output, each ordered by
+# its call (a background job by its launch), `review` only in a different
+# session's record. Located links never make usage verified: semantic
+# application stays UNPROVEN by this checker and a `usage verified`
+# declaration stands only on an independent task-relevant assessment. It
+# cannot observe the Captain printing the trace, classify a task into a
+# category or rule, prove understanding, why the worker acted, reviewer
+# independence, that the record is the assigned worker's, or a record's
+# authenticity; a non-omp harness's record supports only UNPROVEN fields.
+# It is a diagnostic for the debugging period, never a completion gate,
+# dispatch hook, or monitor.
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CREW_DISPATCH="$CONFIG_ROOT/firstmate/crew-dispatch.json"
 
-trace_check() { # <trace-file> <harness> <model> <effort> <skills|none> [<transcript>]
+trace_check() { # <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]] [--brief <brief>]
   python3 - "$CREW_DISPATCH" "$CONFIG_ROOT/roles" "$@" <<'PY'
-import json, os, re, sys
+import hashlib, json, os, re, sys
 
-dispatch, roles_dir, trace_path, harness, model, effort, skills_arg = sys.argv[1:8]
-transcript_path = sys.argv[8] if len(sys.argv) > 8 else None
-NO_EVIDENCE = "selected, but no strong application evidence observed"
+dispatch, roles_dir, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+brief_path = None
+if "--brief" in args:
+    at = args.index("--brief")
+    if at + 1 >= len(args):
+        print("FAIL - --brief needs a brief file")
+        sys.exit(2)
+    brief_path = args[at + 1]
+    del args[at:at + 2]
+trace_path, harness, model, effort, skills_arg = args[:5]
+transcript_path = args[5] if len(args) > 5 else None
+review_path = args[6] if len(args) > 6 else None
 # primary-policy.md sections 3-4: two roles are fixed to their categories;
 # every other category takes senior-fullstack or any specialist role file.
 FIXED_ROLES = {"ARCHITECTURE": "architecture", "TENTH-MAN": "tenth-man"}
+# Worker behavior in a retained OMP session record: these tools' calls and
+# results, plus a bash background job's delivered output. Brief text,
+# assistant prose/thinking, read output, and every other tool are not
+# behavior. Eligibility only: what the behavior means is the Captain's call.
+BEHAVIOR_TOOLS = {"bash", "eval", "edit", "write", "ast_edit"}
+# The first of these calls starts substantive work; a READ must be complete
+# before it.
+MUTATING_TOOLS = {"edit", "write", "ast_edit"}
+READ_STATES = ("complete", "late", "partial", "none")
 failed = False
 
 def result(ok, label):
     global failed
     failed |= not ok
     print(("PASS - " if ok else "FAIL - ") + label)
+
+def inspect(label):
+    # Located context for an independent assessment: neither a PASS nor a FAIL.
+    print("INSPECT - " + label)
 
 def skill_id(token):
     # Absolute (shared/core) skill paths normalize to the skill's name;
@@ -58,6 +111,17 @@ def skill_id(token):
     if os.path.isabs(token) and token.endswith("/SKILL.md"):
         return os.path.basename(os.path.dirname(token))
     return token
+
+def skill_source(token, cwd):
+    # The exact selected file: an absolute or ~/ path as given, a
+    # worktree-relative project-local path under the worker's own worktree
+    # (its session cwd), a bare shared skill name under ~/.agents/skills.
+    token = os.path.expanduser(token.strip().strip("`"))
+    if os.path.isabs(token):
+        return token
+    if "/" in token:
+        return os.path.join(cwd, token)
+    return os.path.join(os.path.expanduser("~"), ".agents", "skills", token, "SKILL.md")
 
 def citations(text):
     # Backticked excerpts -> (excerpts, ambiguous). Supported quoting: an
@@ -105,7 +169,171 @@ def citations(text):
             j = after
         i = after
 
-lines = open(trace_path).read().splitlines()
+def load_record(path):
+    # A retained OMP session record (JSONL under one session header), or
+    # None for any other text: prose shaped like a receipt is not one.
+    recs = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for l in f:
+                if l.strip():
+                    recs.append(json.loads(l))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    heads = [r for r in recs if isinstance(r, dict) and r.get("type") == "session"]
+    if len(heads) != 1 or not isinstance(heads[0].get("cwd"), str):
+        return None
+    # behavior: (index, timestamp, where, text, order). `order` is the index
+    # the behavior started at: a call's own message, a synchronous result's
+    # call (never its delivery), and a background job's launching bash call
+    # (located by the launch result's details.async.jobId) - None when that
+    # launch is not in the record, so its order is unassessed.
+    calls, launches, reads, behavior, mutation, brief = {}, {}, [], [], None, None
+    for i, r in enumerate(recs):
+        if not isinstance(r, dict):
+            continue
+        ts = r.get("timestamp", "?")
+        if r.get("type") == "custom_message" and r.get("customType") == "async-result":
+            jobs = (r.get("details") or {}).get("jobs") or []
+            if jobs and all(j.get("type") == "bash" for j in jobs) and isinstance(r.get("content"), str):
+                started = [launches.get(j.get("jobId")) for j in jobs]
+                behavior.append((i, ts, "background bash result", r["content"], None if None in started else max(started)))
+            continue
+        m = r.get("message") if r.get("type") == "message" else None
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "user" and brief is None:
+            brief = " ".join("".join(x.get("text", "") for x in m.get("content") or [] if isinstance(x, dict)).split())[:120]
+        elif m.get("role") == "assistant":
+            for c in m.get("content") or []:
+                if not isinstance(c, dict) or c.get("type") != "toolCall":
+                    continue
+                calls[c.get("id")] = (c, i)
+                args = c.get("arguments") if isinstance(c.get("arguments"), dict) else {}
+                if c.get("name") in MUTATING_TOOLS and mutation is None:
+                    mutation = (i, ts, c.get("name"))
+                if c.get("name") in BEHAVIOR_TOOLS:
+                    # The "i" intent argument is the worker describing itself.
+                    behavior.append((i, ts, "%s call" % c["name"], "\n".join(str(v) for k, v in sorted(args.items()) if k != "i"), i))
+        elif m.get("role") == "toolResult":
+            call, at = calls.get(m.get("toolCallId"), (None, None))
+            if not call or call.get("name") != m.get("toolName"):
+                continue
+            text = "".join(x.get("text", "") for x in m.get("content") or [] if isinstance(x, dict))
+            job = ((m.get("details") or {}).get("async") or {}).get("jobId")
+            if m.get("toolName") == "bash" and job:
+                launches[job] = at
+            if m.get("toolName") == "read":
+                if not m.get("isError"):
+                    reads.append((i, ts, m.get("toolCallId"), (call.get("arguments") or {}).get("path"), text))
+            elif m.get("toolName") in BEHAVIOR_TOOLS:
+                behavior.append((i, ts, "%s result" % m["toolName"], text, at))
+    return {"path": os.path.realpath(path), "id": heads[0].get("id"), "cwd": heads[0]["cwd"], "started": heads[0].get("timestamp", "?"),
+            "brief": brief, "reads": reads, "behavior": behavior, "mutation": mutation}
+
+READ_HEADER = re.compile(r"\[(?:Skill file: (?P<file>.+)|.+#(?P<tag>[0-9A-Za-z]{4}))\]")
+SELECTOR = re.compile(r"(?P<path>.*?)(?::-?\d[\d,+-]*)*")
+
+def shown_lines(arg, text, cwd, target, lines):
+    # What one successful read result displayed of the selected file:
+    # (matching line numbers, mismatching line numbers, tag), or None when
+    # it is not a receipt for that exact file. Only the observed OMP shapes
+    # count: a `[path#TAG]` header over numbered "N:text" lines (elided and
+    # truncated lines are not shown), or a skill:// `[Skill file: path]`
+    # header over the whole unnumbered body.
+    head, _, body = text.partition("\n")
+    h = READ_HEADER.fullmatch(head)
+    if not h or not isinstance(arg, str):
+        return None
+    if arg.startswith("skill://"):
+        path = h.group("file")
+    else:
+        path = os.path.expanduser(SELECTOR.fullmatch(arg).group("path"))
+        path = path if os.path.isabs(path) else os.path.join(cwd, path)
+    if not path or os.path.realpath(path) != target:
+        return None
+    if h.group("file"):
+        same = body.rstrip("\n") == "\n".join(lines).rstrip("\n")
+        return (set(range(1, len(lines) + 1)), set(), "-") if same else (set(), {0}, "-")
+    ok, bad = set(), set()
+    for l in body.split("\n"):
+        n = re.match(r"(\d+):(.*)$", l)
+        if n:
+            k = int(n.group(1))
+            (ok if 1 <= k <= len(lines) and lines[k - 1] == n.group(2) else bad).add(k)
+    return ok, bad, h.group("tag")
+
+def read_status(rec, src):
+    # READ from the record: complete (every line of the selected file's
+    # current bytes shown before the first file-mutating call), late (only
+    # after it), partial (some lines, or shown lines that differ from the
+    # file), none, or unreadable (the listed path is no readable file, so no
+    # receipt can be compared and only UNPROVEN is honest).
+    target = os.path.realpath(src)
+    try:
+        data = open(target, "rb").read()
+    except OSError:
+        return {"status": "unreadable", "done": None, "target": target, "sha": "unreadable", "covered": 0, "total": 0, "bad": [], "receipts": []}
+    lines = data.decode("utf-8", "replace").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    full = set(range(1, len(lines) + 1))
+    covered, bad, receipts, done = set(), set(), [], None
+    for i, ts, cid, arg, text in rec["reads"]:
+        got = shown_lines(arg, text, rec["cwd"], target, lines)
+        if got is None:
+            continue
+        ok, b, tag = got
+        covered |= ok
+        bad |= b
+        receipts.append("%s %s read %s #%s (%d matching line(s))" % (ts, cid, arg, tag, len(ok)))
+        if done is None and not bad and covered >= full:
+            done = (i, ts)
+    cut = rec["mutation"][0] if rec["mutation"] else None
+    if not receipts:
+        status = "none"
+    elif bad or done is None:
+        status = "partial"
+    elif cut is not None and done[0] > cut:
+        status = "late"
+    else:
+        status = "complete"
+    return {"status": status, "done": done if status == "complete" else None, "target": target,
+            "sha": hashlib.sha256(data).hexdigest(), "covered": len(covered & full), "total": len(full),
+            "bad": sorted(bad), "receipts": receipts}
+
+def excerpts(name, field, value):
+    # [] for UNPROVEN, the one or two cited excerpts, or None after a FAIL.
+    if value == "UNPROVEN":
+        return []
+    cited, ambiguous = citations(value)
+    if ambiguous:
+        result(False, "%s: ambiguous backtick quoting in %s %r - quote each excerpt as `excerpt`, separated by words or a space" % (name, field, value))
+        return None
+    if not 1 <= len(cited) <= 2:
+        result(False, "%s: %s cites one or two `excerpts` or says UNPROVEN (got %d)" % (name, field, len(cited)))
+        return None
+    return cited
+
+OUTPUTS = ("bash result", "eval result", "background bash result")
+
+def locate(name, field, rec, c, after, outputs=False):
+    # The worker-behavior event holding excerpt c (preferring one whose
+    # order follows index `after`) as (order, timestamp, where, context), or
+    # None after a FAIL. With `outputs`, only executed output counts: bash,
+    # eval, and background-bash results. Edit/write results echo text the
+    # worker wrote and are never an observed outcome.
+    hits = [h for h in rec["behavior"] if c in h[3] and (not outputs or h[2] in OUTPUTS)]
+    if not hits:
+        result(False, "%s: %s `%s` occurs in %s of %s (brief text, assistant prose, read output, edit/write echoes and other tools are not %s)" % (
+            name, field, c, "a bash, eval, or background-bash result" if outputs else "a tool call or tool result", rec["path"],
+            "executed output" if outputs else "behavior"))
+        return None
+    i, ts, where, text, order = next((h for h in hits if after is not None and h[4] is not None and h[4] > after), hits[0])
+    at = text.find(c)
+    return order, ts, where, " ".join(text[max(0, at - 80):at + len(c) + 80].split())
+
+lines = open(trace_path, encoding="utf-8").read().splitlines()
 routing = [l for l in lines if l.startswith("Routing:")]
 skills_lines = [l for l in lines if l.startswith("Skills:")]
 if len(routing) != 1 or len(skills_lines) != 1:
@@ -160,12 +388,112 @@ else:
            "role %s is senior-fullstack or a specialist role file, valid for category %s" % (role, category))
 
 body = skills_lines[0][len("Skills:"):].strip()
-traced = set() if body == "none" else {skill_id(e.split(" - ")[0]) for e in body.split(";") if e.strip()}
+# A reason follows a spaced ASCII hyphen, en dash, or em dash (a real
+# Captain printed the em dash); a dash without surrounding spaces belongs
+# to the skill id and is left alone.
+traced = set() if body == "none" else {skill_id(re.split(" [-\u2013\u2014] ", e, maxsplit=1)[0]) for e in body.split(";") if e.strip()}
 selected = set() if skills_arg == "none" else {skill_id(s) for s in skills_arg.split(",") if s.strip()}
 result(traced == selected, "Skills names exactly the selected skills %s (trace says %s)" % (sorted(selected) or "none", sorted(traced) or "none"))
 
+# Library: lines (primary-policy.md section 5 "Capability library"), one per
+# required capability, verified against the brief itself: its "Required
+# capabilities:" block and every selection block whose Requirement carries
+# the agent-library adapter's "(agent-library <id>; <kind>; trust <t>" mark.
+lib_lines = [l for l in lines if l.startswith("Library:")]
+# A pick under `Selected library artifact:` is its own Skill evidence entry,
+# keyed by artifact id, read from the exact path the brief selected (section
+# 0); a trusted pick under the shared header is an ordinary Skills entry.
+lib_sources, lib_shas = {}, {}
+if brief_path is None and lib_lines:
+    result(False, "Library: lines can only be verified against the brief (pass --brief <brief-file>)")
+elif brief_path is not None:
+    brief = open(brief_path).read().splitlines()
+    required = []
+    for i, l in enumerate(brief):
+        if l.strip() != "Required capabilities:":
+            continue
+        for entry in brief[i + 1:]:
+            if not entry[:1].isspace() or not entry.strip():
+                break
+            cap, sep, why = entry.strip().partition(" - ")
+            result(bool(sep and why.strip()), "Required capabilities entry %r has a '<capability> - <reason>' justification" % entry.strip())
+            required.append(cap)
+    picks, lib_methods, lib_paths = {}, 0, []
+    mark = re.compile(r"Read and apply for (.+?) \(agent-library ([^;\s]+); ([^;\s]+); trust ([a-z]+)")
+    for i, l in enumerate(brief):
+        if l.strip() not in ("Selected library artifact:", "Selected shared worker skill:"):
+            continue
+        req = next((k for k in range(i + 1, min(i + 4, len(brief))) if brief[k].strip() == "Requirement:"), None)
+        m = mark.search(brief[req + 1]) if req is not None and req + 1 < len(brief) else None
+        if m:
+            lib_methods += 1
+            # Every Library pick, trusted ones under the shared header included;
+            # an ordinary (non-Library) shared skill is not this check's concern.
+            lib_paths.append(brief[i + 1].strip())
+            if l.strip() == "Selected library artifact:":
+                lib_sources[m.group(2)] = brief[i + 1].strip()
+                sha = re.search(r"; sha256 ([0-9a-f]{64})", brief[req + 1])
+                if sha:
+                    lib_shas[m.group(2)] = sha.group(1)
+            for cap in m.group(1).split(" + "):
+                picks.setdefault(cap.strip(), set()).add("%s (%s, %s)" % m.group(2, 3, 4))
+    claimed, seen = {}, []
+    for l in lib_lines:
+        parts = [p.strip() for p in l[len("Library:"):].split("|")]
+        sel = re.fullmatch(r"(\S+) -> (\S+) \((\S+), (\S+)\)", parts[0])
+        none = re.fullmatch(r"(\S+) -> none", parts[0])
+        shaped = (sel and len(parts) == 3 and parts[1].startswith("runtime ")) or (none and len(parts) == 2)
+        if not shaped or not parts[-1].startswith("why:") or not parts[-1][len("why:"):].strip():
+            result(False, "Library line has '<capability> -> <artifact-id> (<kind>, <trust>) | runtime <harness> | why: ...' or '<capability> -> none | why: ...' shape (got %r)" % l)
+            continue
+        cap = (sel or none).group(1)
+        seen.append(cap)
+        claimed.setdefault(cap, set())
+        if sel:
+            claimed[cap].add("%s (%s, %s)" % sel.group(2, 3, 4))
+            runtime = parts[1][len("runtime "):].strip()
+            result(runtime == harness, "Library: %s runtime is the actual spawn harness %s (trace says %s)" % (cap, harness, runtime))
+    result(len(seen) == len(set(seen)), "Library: one line per capability (got %s)" % (seen or "none"))
+    result(set(seen) == set(required),
+           "Library: lines cover exactly the brief's required capabilities %s (trace says %s)" % (sorted(set(required)) or "none", sorted(set(seen)) or "none"))
+    for cap in sorted(set(claimed) | set(picks)):
+        want, got = picks.get(cap, set()), claimed.get(cap, set())
+        result(want == got, "Library: %s reports the brief's selection %s (trace says %s)" % (cap, sorted(want) or "none", sorted(got) or "none"))
+    # The adapter's report below its delimiter is the Captain's alone
+    # (section 5 "Handover"); a brief carrying it tells the worker to browse.
+    leaked = [l for l in brief if l.strip() == "--- for FirstMate, not the worker brief ---"
+              or l.startswith("Library lookup trace (") or l.startswith("No automatic library pick for ")]
+    result(not leaked, "the brief carries none of the adapter's FirstMate-only report (found %r)" % (leaked[:1] or "none"))
+    # Section 5's budget: two methods and one reference. Checked only for a
+    # brief with Library content, and only over the optional picks - shared
+    # skills and Library picks. Required project skills are mandatory: they
+    # only shrink the Library's slots when the Captain plans the lookup and
+    # are never what fails a brief. Library picks have a known kind
+    # (selections are methods, knowledge entries are references); a shared
+    # skill may be either, so only an overrun no method/reference split
+    # explains fails.
+    shared = [i for i, l in enumerate(brief) if l.strip() in ("Selected shared worker skill:", "Selected library artifact:")]
+    others = len(shared) - lib_methods
+    lib_refs = 0
+    for i, l in enumerate(brief):
+        if l.startswith("Optional library knowledge"):
+            for entry in brief[i + 1:]:
+                if not entry[:1].isspace() or not entry.strip():
+                    break
+                lib_refs += 1
+                lib_paths.append(entry.split(" -- ")[0].strip())
+    if required or lib_methods or lib_refs:
+        result(lib_methods <= 2 and lib_refs <= 1 and others <= (2 - lib_methods) + (1 - lib_refs),
+               "the brief stays within section 5's budget of two methods and one reference (%d library method(s), %d library reference(s), %d other shared skill(s))" % (lib_methods, lib_refs, others))
+    # A Claude worker reads only its task-channel grants, which include its own
+    # data/<id> (section 5 "Claude workers"): library artifacts reach it only as
+    # copies materialized under the brief's own directory.
+    if harness == "claude":
+        home = os.path.realpath(os.path.dirname(os.path.abspath(brief_path)))
+        outside = [p for p in lib_paths if not (os.path.realpath(p).startswith(home + os.sep) and "/agent-library/" in p)]
+        result(not outside, "claude: every library artifact path is materialized under the brief's own data dir %s/.../agent-library/ (outside: %s)" % (home, outside or "none"))
+
 if transcript_path is not None:
-    transcript = open(transcript_path).read()
     starts = [i for i, l in enumerate(lines) if l.startswith("Skill evidence:")]
     if len(starts) != 1:
         result(False, "exactly one Skill evidence: block follows the worker's completion (got %d)" % len(starts))
@@ -186,32 +514,131 @@ if transcript_path is not None:
         result(False, "Skill evidence: says none selected but lists %d skill line(s)" % len(entries))
     names = [name for name, _ in entries]
     result(len(names) == len(set(names)), "Skill evidence has one line per skill (got %s)" % names)
-    result(set(names) == selected,
-           "Skill evidence covers exactly the selected skills %s (got %s)" % (sorted(selected) or "none", sorted(set(names)) or "none"))
+    covered = selected | set(lib_sources)
+    result(set(names) == covered,
+           "Skill evidence covers exactly the selected skills and the brief's Library picks %s (got %s)" % (sorted(covered) or "none", sorted(set(names)) or "none"))
+
+    # Only an OMP worker's retained record is read; any other harness's
+    # record (Pi shares the session header) supports only UNPROVEN.
+    rec = load_record(transcript_path) if harness == "omp" else None
+    if rec is None:
+        inspect("%s is not a retained OMP session record of an omp worker (harness %s): no read receipt, behavior, or result is observable in it; only UNPROVEN fields can pass" % (transcript_path, harness))
+    else:
+        # Identity for matching the assigned worker: header cwd = its worktree,
+        # start after its spawn, first user message = its delivered brief.
+        inspect("worker record %s (session %s, started %s, cwd %s, first user message: %r); first edit/write/ast_edit call: %s" % (
+            rec["path"], rec["id"], rec["started"], rec["cwd"], rec["brief"], "%s %s" % rec["mutation"][1:] if rec["mutation"] else "none"))
+    review_rec = load_record(review_path) if review_path else None
+    sources = {} if skills_arg == "none" else {skill_id(s): s for s in skills_arg.split(",") if s.strip()}
+    sources.update(lib_sources)
+    EVIDENCE = re.compile(r"read (\S+) \| applied (.+?) \| result (.+?) \| review (.+?) \| usage (\S+)")
     for name, text in entries:
-        if text == NO_EVIDENCE:
-            result(True, "%s: honestly reported without application evidence" % name)
+        m = EVIDENCE.fullmatch(text)
+        if not m:
+            result(False, "%s: evidence line is 'read <complete|late|partial|none|UNPROVEN> | applied <`excerpt`|UNPROVEN> | result <`excerpt`|UNPROVEN> | review <`excerpt`|UNPROVEN> | usage <verified|UNPROVEN>' (got %r)" % (name, text))
             continue
-        cited, ambiguous = citations(text)
-        if ambiguous:
-            result(False, "%s: ambiguous backtick quoting in %r - quote each excerpt as `excerpt`, separated by words or a space" % (name, text))
-        result(1 <= len(cited) <= 2, "%s: cites one or two observations (got %d)" % (name, len(cited)))
-        for c in cited:
-            at = transcript.find(c)
-            if at < 0:
-                result(False, "%s: cited `%s` occurs in the worker transcript" % (name, c))
+        if name not in sources:
+            continue  # an unselected skill already failed the coverage check
+        claim, applied, outcome, review, usage = m.groups()
+
+        # READ: only the record's own successful read results count.
+        rs = read_status(rec, skill_source(sources[name], rec["cwd"])) if rec else None
+        if rs and name in lib_shas and rs["status"] != "unreadable" and rs["sha"] != lib_shas[name]:
+            rs.update(status="mismatch", done=None)  # the path no longer holds the brief's selected artifact
+        if claim not in READ_STATES + ("UNPROVEN",):
+            result(False, "%s: read is one of %s or UNPROVEN (got %r)" % (name, "/".join(READ_STATES), claim))
+        elif rs is None:
+            result(claim == "UNPROVEN", "%s: read %s needs a retained OMP session record; without one only UNPROVEN is honest" % (name, claim))
+        else:
+            detail = "this file only: %d/%d lines of %s (sha256 %s)%s; receipts: %s" % (
+                rs["covered"], rs["total"], rs["target"], rs["sha"][:16],
+                ", shown lines differing from the file: %s" % rs["bad"] if rs["bad"] else "",
+                "; ".join(rs["receipts"]) or "none")
+            if claim == "UNPROVEN":
+                inspect("%s: read UNPROVEN as reported; the record shows %s: %s" % (name, rs["status"], detail))
+            else:
+                result(claim == rs["status"], "%s: read %s matches the record (%s): %s" % (name, claim, rs["status"], detail))
+        done = rs["done"][0] if rs and rs["done"] else None
+        # The edit/write boundary does not see bash/eval writes or the jobs
+        # they launch; disclose every such call before the completing read.
+        early = sum(1 for h in rec["behavior"] if done is not None and h[0] < done and h[2] in ("bash call", "eval call")) if rec else 0
+        if early:
+            inspect("%s: %d bash/eval call(s) precede the completing read; writes they made and jobs they launched are not assessed - pre-work order is proven only against edit/write/ast_edit calls" % (name, early))
+
+        # APPLIED and RESULT: located worker behavior, never a semantic PASS.
+        # Behavior before a complete pre-work read stays visible with its
+        # attribution UNPROVEN.
+        after_read, located = {}, {}
+        for field, value in (("applied", applied), ("result", outcome)):
+            cited = excerpts(name, field, value)
+            after_read[field], located[field] = False, 0
+            if not cited:
                 continue
-            # Lexical match only: a quote or a denial matches too, so show
-            # the surrounding transcript text for the Captain to read.
-            context = " ".join(transcript[max(0, at - 80):at + len(c) + 80].split())
-            result(True, "%s: cited `%s` occurs in the worker transcript (lexical match only - inspect context: ...%s...)" % (name, c, context))
+            if rec is None:
+                result(False, "%s: %s excerpts need a retained OMP session record" % (name, field))
+                continue
+            for c in cited:
+                got = locate(name, field, rec, c, done, outputs=field == "result")
+                if got is None:
+                    continue
+                order, ts, where, context = got
+                attributed = done is not None and order is not None and order > done
+                after_read[field] |= attributed
+                located[field] += 1
+                inspect("%s: %s `%s` located in %s at %s, %s - location only, semantic application UNPROVEN by this checker: ...%s..." % (
+                    name, field, c, where, ts,
+                    "after the complete pre-work read" if attributed else "launch order unassessed (job launch not in the record)" if order is None
+                    else "attribution UNPROVEN (read %s)" % ("complete, but this precedes it" if done is not None else rs["status"] if rs else "UNPROVEN"),
+                    context))
+
+        # REVIEW: a different session record is necessary, never sufficient:
+        # reviewer independence and the verdict are not assessed here.
+        cited = excerpts(name, "review", review)
+        reviewed = 0
+        if cited:
+            if review_rec is None:
+                result(False, "%s: review needs the reviewer's own retained OMP session record as the review-session argument" % name)
+            elif rec is not None and (review_rec["id"] == rec["id"] or review_rec["path"] == rec["path"]):
+                result(False, "%s: the review record is the worker's own session, not an independent review" % name)
+            else:
+                for c in cited:
+                    got = locate(name, "review", review_rec, c, None)
+                    if got:
+                        reviewed += 1
+                        inspect("%s: review `%s` located in a different session record %s (session %s), %s at %s - reviewer independence and verdict are not assessed by this checker: ...%s..." % (
+                            name, c, review_rec["path"], review_rec["id"], got[2], got[1], got[3]))
+
+        # USAGE: necessary links only - a complete pre-work READ, then applied
+        # behavior and executed output after it. Located links never make
+        # usage verified: semantic application stays UNPROVEN by this checker,
+        # and `usage verified` stands only on an independent task-relevant
+        # assessment. Review is reported separately.
+        missing = [why for ok, why in (
+            (done is not None, "a complete pre-work read (record: %s)" % (rs["status"] if rs else "unsupported")),
+            (after_read["applied"], "applied behavior located after that read"),
+            (after_read["result"], "executed output located after that read")) if not ok]
+        if usage not in ("verified", "UNPROVEN"):
+            result(False, "%s: usage is verified or UNPROVEN (got %r)" % (name, usage))
+        elif usage == "verified" and missing:
+            result(False, "%s: usage verified lacks %s" % (name, "; ".join(missing)))
+        elif usage == "verified":
+            inspect("%s: usage verified is a declaration: its necessary links are located, but semantic application is UNPROVEN by this checker and stands only on an independent task-relevant assessment" % name)
+        # What the records support, whatever the line claimed.
+        def shown(field):
+            if not located[field]:
+                return "UNPROVEN"
+            return "located" if after_read[field] else "located, attribution UNPROVEN"
+        print("SUMMARY - %s: SELECTED yes | READ %s | APPLIED %s | RESULT %s | REVIEW %s | USAGE %s" % (
+            name, "%s (this file only)" % rs["status"] if rs else "UNPROVEN (unsupported record)", shown("applied"), shown("result"),
+            "located in a different session record" if reviewed else "UNPROVEN",
+            "UNPROVEN" if missing else "links located, semantics UNPROVEN by checker"))
 
 sys.exit(1 if failed else 0)
 PY
 }
 if [ "${1:-}" = check ]; then
   shift
-  [ "$#" -ge 5 ] || { printf 'usage: %s check <trace-file> <harness> <model> <effort> <skills|none> [<worker-transcript>]\n' "$0" >&2; exit 2; }
+  [ "$#" -ge 5 ] || { printf 'usage: %s check <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]] [--brief <brief-file>]\n' "$0" >&2; exit 2; }
   trace_check "$@"
   exit $?
 fi
@@ -271,14 +698,6 @@ SONNET=anthropic/claude-sonnet-5-5
 SOL=openai-codex/gpt-6.1-sol
 TDD=test-driven-development
 VBC=verification-before-completion
-
-# A worker's real transcript excerpt: the evidence lines below may only
-# cite what appears here verbatim.
-TRANSCRIPT=$(t transcript.txt '$ bash tests/routing-trace.sh
-FAIL - substantive IMPLEMENT trace matches its spawn axes (expected pass, exit 2)
-ROUTING TRACE TESTS FAIL
-$ bash tests/routing-taxonomy.sh
-ROUTING TAXONOMY TESTS PASS')
 
 # --- 1. Routing summary reflects the actual spawn axes ----------------------
 IMPL=$(t impl.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: multi-file behavior change
@@ -370,136 +789,842 @@ expect 'a project-local skill path and a core skill are reported as selected' pa
 GLOBAL_SWAP=$(t swap.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: cross-component diff
 Skills: architecture-review - global default; ponytail-review - complexity check")
 expect 'substituting the global skill for the selected project-local one is rejected' fail "$GLOBAL_SWAP" omp "$OPUS" high '.agents/skills/architecture-review/SKILL.md,ponytail-review'
+# The reason separator in "Skills: <skill> - <reason>" may be a spaced
+# ASCII hyphen or en dash (the em dash a real Captain printed is covered
+# just below). Hyphens inside a skill id are never separators, and the
+# separator must not change which routes, roles or skills are accepted.
+for SEP in ' - ' ' – '; do
+  SEP_TRACE=$(t "sep-$RANDOM.txt" "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: multi-file behavior change
+Skills: $TDD${SEP}behavior change needs failing-first tests; $VBC${SEP}completion claim needs fresh evidence")
+  expect "the '${SEP# }' reason separator is accepted for two hyphenated skill ids" pass "$SEP_TRACE" omp "$OPUS" high "$TDD,$VBC"
+  expect "with '${SEP# }' a missing selected skill is still rejected" fail "$SEP_TRACE" omp "$OPUS" high "$TDD,$VBC,ponytail-review"
+  expect "with '${SEP# }' an unselected skill is still rejected" fail "$SEP_TRACE" omp "$OPUS" high "$TDD"
+  expect "with '${SEP# }' the wrong route is still rejected" fail "$SEP_TRACE" omp "$SONNET" high "$TDD,$VBC"
+done
+expect 'a single em-dash entry with a project-local path is accepted' pass \
+  "$(t sep-project.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: cross-component diff
+Skills: .agents/skills/architecture-review/SKILL.md — project-local version wins")" omp "$OPUS" high '.agents/skills/architecture-review/SKILL.md'
+expect 'an unspaced dash stays part of the skill id (only spaced dashes separate the reason)' pass \
+  "$(t sep-unspaced.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
+Skills: odd–id — reason")" omp "$OPUS" high 'odd–id'
+# The real Captain printed `Skills:` reasons after an em dash (2026-10-05,
+# REVIEW #3 trace); the selected name must still parse, and the same shape
+# must still reject an unselected skill.
+EM_DASH=$(t em-dash.txt "Routing: REVIEW #3 | role code-reviewer | omp | $OPUS | xhigh | why: supervision identity risk
+Skills: $VBC — ground the review in executed evidence")
+expect 'an em-dash Skills reason, as the real Captain printed it, names the selected skill' pass "$EM_DASH" omp "$OPUS" xhigh "$VBC"
+expect 'an em-dash Skills reason still rejects a different selection' fail "$EM_DASH" omp "$OPUS" xhigh "$TDD"
 
-# --- 3. Post-work Skill evidence derives from the worker transcript ---------
-EVIDENCE_OK=$(t ev-ok.txt "$(cat "$IMPL")
-Skill evidence:
-- $TDD: ran \`bash tests/routing-trace.sh\` before implementing and saw \`ROUTING TRACE TESTS FAIL\`
-- $VBC: selected, but no strong application evidence observed")
-expect 'evidence citing verbatim transcript excerpts is accepted' pass "$EVIDENCE_OK" omp "$OPUS" high "$TDD,$VBC" "$TRANSCRIPT"
-EVIDENCE_FALSE=$(t ev-false.txt "$(cat "$IMPL")
-Skill evidence:
-- $TDD: watched \`npm test\` fail first
-- $VBC: selected, but no strong application evidence observed")
-expect 'evidence citing something the worker never did is rejected' fail "$EVIDENCE_FALSE" omp "$OPUS" high "$TDD,$VBC" "$TRANSCRIPT"
-EVIDENCE_BARE=$(t ev-bare.txt "$(cat "$IMPL")
-Skill evidence:
-- $TDD: applied test-driven development throughout
-- $VBC: selected, but no strong application evidence observed")
-expect 'a bare "applied" claim with no cited observation is rejected' fail "$EVIDENCE_BARE" omp "$OPUS" high "$TDD,$VBC" "$TRANSCRIPT"
-EVIDENCE_UNSELECTED=$(t ev-unsel.txt "$(cat "$IMPL")
-Skill evidence:
-- $TDD: saw \`ROUTING TRACE TESTS FAIL\`
-- $VBC: selected, but no strong application evidence observed
-- systematic-debugging: saw \`ROUTING TAXONOMY TESTS PASS\`")
-expect 'evidence for a skill the brief never selected is rejected' fail "$EVIDENCE_UNSELECTED" omp "$OPUS" high "$TDD,$VBC" "$TRANSCRIPT"
-EVIDENCE_GAP=$(t ev-gap.txt "$(cat "$IMPL")
-Skill evidence:
-- $TDD: saw \`ROUTING TRACE TESTS FAIL\`")
-expect 'a selected skill with no evidence line at all is rejected' fail "$EVIDENCE_GAP" omp "$OPUS" high "$TDD,$VBC" "$TRANSCRIPT"
-EVIDENCE_LONG=$(t ev-long.txt "$(cat "$IMPL")
-Skill evidence:
-- $TDD: ran \`bash tests/routing-trace.sh\`; saw \`ROUTING TRACE TESTS FAIL\`; then \`ROUTING TAXONOMY TESTS PASS\`
-- $VBC: selected, but no strong application evidence observed")
-expect 'more than two observations for one skill is rejected' fail "$EVIDENCE_LONG" omp "$OPUS" high "$TDD,$VBC" "$TRANSCRIPT"
-expect 'a transcript supplied without any Skill evidence block is rejected' fail "$IMPL" omp "$OPUS" high "$TDD,$VBC" "$TRANSCRIPT"
-EVIDENCE_DUP=$(t ev-dup.txt "$(cat "$IMPL")
-Skill evidence:
-- $TDD: watched \`never-ran-test\` fail
-- $TDD: selected, but no strong application evidence observed
-- $VBC: selected, but no strong application evidence observed")
-expect 'two evidence lines for one skill are rejected (a later line must not mask an earlier false one)' fail \
-  "$EVIDENCE_DUP" omp "$OPUS" high "$TDD,$VBC" "$TRANSCRIPT"
-# A citation only proves the text occurs somewhere in the transcript; it
-# cannot tell a run from a quote or a denial. check therefore prints the
-# transcript line holding each citation, so the Captain reads its context.
-NEGATED=$(t negated.txt 'Worker report: I did not run any tests. The brief suggested: "run bash tests/red.sh and expect FAIL expected".')
-EVIDENCE_NEGATED=$(t ev-negated.txt "$(cat "$IMPL")
-Skill evidence:
-- $TDD: ran \`bash tests/red.sh\` before implementation; saw \`FAIL expected\`
-- $VBC: selected, but no strong application evidence observed")
-expect_shows 'a citation found only inside a denial surfaces that transcript line for human inspection' \
-  'I did not run any tests' "$EVIDENCE_NEGATED" omp "$OPUS" high "$TDD,$VBC" "$NEGATED"
+# --- 3. Post-work Skill evidence: SELECTED / READ / APPLIED / VERIFIED ------
+# Evidence is checked against the worker's retained OMP session record
+# (JSONL). omp-record appends records in that exact retained shape - an
+# assistant toolCall, its toolResult (read results carry the `[path#TAG]`
+# header and numbered lines; a truncated read ends with the real
+# "[Showing lines a-b of N. Use :b+1 to continue]" footer), a bash
+# background-job async-result, user brief text, assistant prose - so each
+# fixture is a record a real worker could leave, never prose pretending
+# to be a receipt.
+cat > "$TMP/omp-record.py" <<'PY'
+import hashlib, json, os, sys
+path, kind, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+n = sum(1 for _ in open(path)) if os.path.exists(path) else 0
+def ts(k):
+    return "2026-10-05T07:%02d:%02d.000Z" % divmod(n + k, 60)
+def emit(*recs):
+    with open(path, "a") as f:
+        for r in recs:
+            f.write(json.dumps(r) + "\n")
+def message(k, role, **fields):
+    return {"type": "message", "id": "m%d" % (n + k), "timestamp": ts(k), "message": dict(role=role, timestamp=ts(k), **fields)}
+def tool(name, arguments, text, error=False, details=None):
+    cid = "toolu_%d" % n
+    emit(message(0, "assistant", content=[{"type": "toolCall", "id": cid, "name": name, "arguments": dict(arguments, i="intent text")}]),
+         message(1, "toolResult", toolCallId=cid, toolName=name, content=[{"type": "text", "text": text}], details=details or {}, isError=error))
+def read_text(arg, shown, first=None, last=None):
+    lines = open(shown).read().split("\n")[:-1]
+    first, last = first or 1, last or len(lines)
+    body = ["%d:%s" % (k, lines[k - 1]) for k in range(first, last + 1)]
+    if last < len(lines):
+        body += ["", "[Showing lines %d-%d of %d. Use :%d to continue]" % (first, last, len(lines), last + 1)]
+    head = "[%s#%s]" % (arg.split(":")[0].replace(os.path.expanduser("~"), "~"), hashlib.sha256(open(shown, "rb").read()).hexdigest()[:4].upper())
+    return "\n".join([head] + body), len(lines)
+if kind == "session":
+    emit({"type": "session", "version": 3, "id": hashlib.sha256(path.encode()).hexdigest()[:32], "timestamp": ts(0), "cwd": args[0]})
+elif kind == "user":
+    emit(message(0, "user", content=[{"type": "text", "text": args[0]}]))
+elif kind == "say":
+    emit(message(0, "assistant", content=[{"type": "text", "text": args[0]}]))
+elif kind == "read":  # <path argument> <file shown> [<first> <last>]
+    text, total = read_text(*args[:2], *(int(a) for a in args[2:4]))
+    tool("read", {"path": args[0]}, text, details={"totalLines": total})
+elif kind == "parallel":  # <read path argument> <file shown> <bash command> <bash output> - one message issues both calls
+    text, total = read_text(args[0], args[1])
+    emit(message(0, "assistant", content=[{"type": "toolCall", "id": "toolu_r%d" % n, "name": "read", "arguments": {"path": args[0], "i": "intent text"}},
+                                          {"type": "toolCall", "id": "toolu_b%d" % n, "name": "bash", "arguments": {"command": args[2], "i": "intent text"}}]),
+         message(1, "toolResult", toolCallId="toolu_r%d" % n, toolName="read", content=[{"type": "text", "text": text}], details={"totalLines": total}, isError=False),
+         message(2, "toolResult", toolCallId="toolu_b%d" % n, toolName="bash", content=[{"type": "text", "text": args[3]}], details={}, isError=False))
+elif kind == "read-error":
+    tool("read", {"path": args[0]}, "Path '%s' not found" % args[0], error=True)
+elif kind == "tool":  # <name> <command or input> <output>
+    tool(args[0], {"command" if args[0] == "bash" else "input": args[1]}, args[2])
+elif kind == "bg":  # <command> - a bash call backgrounded as job bg_1 (real launch shape)
+    tool("bash", {"command": args[0], "async": True},
+         "Backgrounded as job bg_1 (killed once it has run 300s in total; `timeout: 0` disables the deadline)",
+         details={"async": {"state": "running", "jobId": "bg_1", "type": "bash"}, "timeoutSeconds": 300})
+elif kind == "job":  # a background bash job's delivered output
+    emit({"type": "custom_message", "customType": "async-result", "id": "c%d" % n, "timestamp": ts(0), "display": True, "attribution": "agent",
+          "content": "<system-notice>\nBackground job bg_1 has completed.\n%s\n</system-notice>" % args[0],
+          "details": {"meta": {"source": {"type": "report", "value": "background job delivery"}}, "jobs": [{"jobId": "bg_1", "type": "bash", "label": "job"}]}})
+PY
+rec() { python3 "$TMP/omp-record.py" "$@"; }
 
-# Forms a real Captain actually printed (live run on 134d70f plus the
-# section-0 relocation, 2026-09-25): an inline "none selected" when the
-# brief selected no skills, and a backticked skill name. Both are truthful
-# and must pass; the same shapes must still reject false or unselected
-# claims.
-LUNA=openai-codex/gpt-6-luna
-LIVE_NONE=$(t live-none.txt "Routing: EXPLORE #1 | role senior-fullstack | omp | $LUNA | low | why: measured viable capacity; Claude capacity unknown
+# Selected shared skills resolve by name under the shared root
+# ~/.agents/skills (primary-policy.md section 2); HOME points at a fixture.
+EVHOME="$TMP/evhome"
+SK="$EVHOME/.agents/skills"
+mkdir -p "$SK/$TDD" "$SK/$VBC" "$TMP/wt/.agents/skills/local-check" "$TMP/elsewhere/$TDD"
+printf -- '---\nname: %s\ndescription: fixture\n---\n# TDD\nWrite the failing test first.\nWatch it fail.\nWrite minimal code.\nWatch it pass.\nRefactor.\nRepeat.\nDone.\n' "$TDD" > "$SK/$TDD/SKILL.md"
+printf -- '---\nname: %s\ndescription: fixture\n---\nEvidence before claims.\n' "$VBC" > "$SK/$VBC/SKILL.md"
+printf -- '---\nname: local-check\ndescription: fixture project skill\n---\nRun ./check.sh before done.\n' > "$TMP/wt/.agents/skills/local-check/SKILL.md"
+cp "$SK/$TDD/SKILL.md" "$TMP/elsewhere/$TDD/SKILL.md"
+ev() { HOME="$EVHOME" "$@"; }
+# ev_block <file> <tdd line> [<vbc line>] - the IMPL trace plus its Skill evidence
+ev_block() {
+  t "$1" "$(cat "$IMPL")
+Skill evidence:
+- $TDD: $2
+- $VBC: ${3:-read UNPROVEN | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN}"
+}
+BRIEF_TEXT="Selected shared worker skill: $TDD. Requirement: read and apply; run \`bash tests/red.sh\` and expect \`FAIL expected\`."
+
+# W_GOOD: brief, complete pre-work read of the selected TDD skill, RED run,
+# the fix, GREEN run, then the worker's own claim.
+W_GOOD="$TMP/w-good.jsonl"
+rec "$W_GOOD" session "$TMP/wt"
+rec "$W_GOOD" user "$BRIEF_TEXT"
+rec "$W_GOOD" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md"
+rec "$W_GOOD" tool bash 'bash tests/red.sh' 'not ok - rejects empty email
+FAIL expected'
+rec "$W_GOOD" tool edit 'src/form.py: reject empty email' 'Updated src/form.py'
+rec "$W_GOOD" tool bash 'bash tests/red.sh' 'ok - rejects empty email
+PASS all'
+rec "$W_GOOD" say "I applied $TDD throughout and saw PASS all."
+VERIFIED_LINE='read complete | applied ran `bash tests/red.sh` and saw `FAIL expected` | result `PASS all` | review UNPROVEN | usage verified'
+ev expect 'a complete pre-work read, behavior after it, and executed output locate every link a usage-verified declaration needs' pass \
+  "$(ev_block ev-good.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
+
+# READ: missing receipt. The skill is named only in the brief and the
+# worker's claim; real behavior stays reportable, attribution UNPROVEN.
+W_UNREAD="$TMP/w-unread.jsonl"
+rec "$W_UNREAD" session "$TMP/wt"
+rec "$W_UNREAD" user "$BRIEF_TEXT"
+rec "$W_UNREAD" tool bash 'bash tests/red.sh' 'not ok - rejects empty email
+FAIL expected'
+rec "$W_UNREAD" tool edit 'src/form.py: reject empty email' 'Updated src/form.py'
+rec "$W_UNREAD" tool bash 'bash tests/red.sh' 'ok - rejects empty email
+PASS all'
+rec "$W_UNREAD" say "I read $TDD/SKILL.md and applied it."
+ev expect 'no read receipt: claiming the selected skill was read is rejected' fail \
+  "$(ev_block ev-unread-claim.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_UNREAD"
+ev expect 'no read receipt: claiming verified usage is rejected even when the behavior and result are real' fail \
+  "$(ev_block ev-unread-usage.txt 'read none | applied ran `bash tests/red.sh` and saw `FAIL expected` | result `PASS all` | review UNPROVEN | usage verified')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_UNREAD"
+ev expect_shows 'no read receipt: real behavior is still shown, with its attribution UNPROVEN' 'attribution UNPROVEN' \
+  "$(ev_block ev-unread-honest.txt 'read none | applied ran `bash tests/red.sh` and saw `FAIL expected` | result `PASS all` | review UNPROVEN | usage UNPROVEN')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_UNREAD"
+
+# READ: partial receipt (a truncated read never continued).
+W_PARTIAL="$TMP/w-partial.jsonl"
+rec "$W_PARTIAL" session "$TMP/wt"
+rec "$W_PARTIAL" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md" 1 8
+rec "$W_PARTIAL" tool bash 'bash tests/red.sh' 'FAIL expected'
+rec "$W_PARTIAL" tool edit 'src/form.py: fix' 'Updated src/form.py'
+rec "$W_PARTIAL" tool bash 'bash tests/red.sh' 'PASS all'
+ev expect 'a truncated read is not reported as a complete read' fail \
+  "$(ev_block ev-partial.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_PARTIAL"
+ev expect 'a truncated read honestly reported as partial is accepted without verified usage' pass \
+  "$(ev_block ev-partial-honest.txt 'read partial | applied ran `bash tests/red.sh` and saw `FAIL expected` | result `PASS all` | review UNPROVEN | usage UNPROVEN')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_PARTIAL"
+
+# READ: explicitly read ranges aggregate into one complete receipt.
+W_RANGES="$TMP/w-ranges.jsonl"
+rec "$W_RANGES" session "$TMP/wt"
+rec "$W_RANGES" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md" 1 8
+rec "$W_RANGES" read "$SK/$TDD/SKILL.md:9-12" "$SK/$TDD/SKILL.md" 9 12
+rec "$W_RANGES" tool bash 'bash tests/red.sh' 'FAIL expected'
+rec "$W_RANGES" tool edit 'src/form.py: fix' 'Updated src/form.py'
+rec "$W_RANGES" tool bash 'bash tests/red.sh' 'PASS all'
+ev expect 'two pre-work reads that together cover the whole skill are a complete read' pass \
+  "$(ev_block ev-ranges.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_RANGES"
+
+# READ ORDER: the continuation arrives only after the first file edit.
+W_LATE="$TMP/w-late.jsonl"
+rec "$W_LATE" session "$TMP/wt"
+rec "$W_LATE" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md" 1 8
+rec "$W_LATE" tool bash 'bash tests/red.sh' 'FAIL expected'
+rec "$W_LATE" tool edit 'src/form.py: fix' 'Updated src/form.py'
+rec "$W_LATE" read "$SK/$TDD/SKILL.md:9-12" "$SK/$TDD/SKILL.md" 9 12
+rec "$W_LATE" tool bash 'bash tests/red.sh' 'PASS all'
+ev expect 'coverage completed only after substantive work started is not a complete pre-work read' fail \
+  "$(ev_block ev-late.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_LATE"
+ev expect 'a late read cannot back verified usage' fail \
+  "$(ev_block ev-late-usage.txt 'read late | applied `bash tests/red.sh` | result `PASS all` | review UNPROVEN | usage verified')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_LATE"
+ev expect 'a late read honestly reported as late is accepted' pass \
+  "$(ev_block ev-late-honest.txt 'read late | applied `bash tests/red.sh` | result `PASS all` | review UNPROVEN | usage UNPROVEN')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_LATE"
+
+# SOURCE IDENTITY: a same-named SKILL.md elsewhere, a failed read, and a
+# selected file whose bytes differ from what was shown are not receipts.
+W_ELSEWHERE="$TMP/w-elsewhere.jsonl"
+rec "$W_ELSEWHERE" session "$TMP/wt"
+rec "$W_ELSEWHERE" read "$TMP/elsewhere/$TDD/SKILL.md" "$TMP/elsewhere/$TDD/SKILL.md"
+rec "$W_ELSEWHERE" read-error "$SK/$TDD/SKILL.md"
+rec "$W_ELSEWHERE" tool bash 'bash tests/red.sh' 'FAIL expected'
+rec "$W_ELSEWHERE" tool edit 'src/form.py: fix' 'Updated src/form.py'
+rec "$W_ELSEWHERE" tool bash 'bash tests/red.sh' 'PASS all'
+ev expect 'reading a same-named SKILL.md at another path, or a failed read, is no receipt for the selected one' fail \
+  "$(ev_block ev-elsewhere.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_ELSEWHERE"
+# Same path, bytes changed after the read: the receipt no longer shows the
+# selected file's content, so the identical record stops being complete.
+H2="$TMP/evhome2"
+mkdir -p "$H2/.agents/skills/$TDD" && cp "$SK/$TDD/SKILL.md" "$H2/.agents/skills/$TDD/SKILL.md"
+W_CHANGED="$TMP/w-changed.jsonl"
+rec "$W_CHANGED" session "$TMP/wt"
+rec "$W_CHANGED" read "$H2/.agents/skills/$TDD/SKILL.md" "$H2/.agents/skills/$TDD/SKILL.md"
+rec "$W_CHANGED" tool bash 'bash tests/red.sh' 'FAIL expected'
+rec "$W_CHANGED" tool edit 'src/form.py: fix' 'Updated src/form.py'
+rec "$W_CHANGED" tool bash 'bash tests/red.sh' 'PASS all'
+CHANGED_ARGS=("$(ev_block ev-changed.txt "$VERIFIED_LINE")" omp "$OPUS" high "$H2/.agents/skills/$TDD/SKILL.md,$VBC" "$W_CHANGED")
+ev expect 'content identity control: the receipt matches the unchanged selected file' pass "${CHANGED_ARGS[@]}"
+sed -i.bak 's/Watch it fail\./Skip the failing run./' "$H2/.agents/skills/$TDD/SKILL.md"
+ev expect 'a receipt whose shown lines differ from the selected file bytes is not a complete read' fail "${CHANGED_ARGS[@]}"
+
+# A project-local selection resolves against the worker's own worktree (the
+# session cwd); the same body read from elsewhere never stands in for it.
+LOCAL=.agents/skills/local-check/SKILL.md
+W_LOCAL="$TMP/w-local.jsonl"
+rec "$W_LOCAL" session "$TMP/wt"
+rec "$W_LOCAL" read "$LOCAL" "$TMP/wt/$LOCAL"
+rec "$W_LOCAL" tool bash './check.sh' 'CHECK OK'
+LOCAL_BLOCK=$(t ev-local.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: cross-component diff
+Skills: $LOCAL - project check
+Skill evidence:
+- $LOCAL: read complete | applied ran \`./check.sh\` | result \`CHECK OK\` | review UNPROVEN | usage verified")
+ev expect 'a worktree-relative project-local skill read in the worker worktree is a complete read' pass \
+  "$LOCAL_BLOCK" omp "$OPUS" high "$LOCAL" "$W_LOCAL"
+W_LOCAL_ELSE="$TMP/w-local-else.jsonl"
+rec "$W_LOCAL_ELSE" session "$TMP/elsewhere"
+mkdir -p "$TMP/elsewhere/.agents/skills/local-check" && cp "$TMP/wt/$LOCAL" "$TMP/elsewhere/$LOCAL"
+rec "$W_LOCAL_ELSE" read "$TMP/wt/$LOCAL" "$TMP/wt/$LOCAL"
+rec "$W_LOCAL_ELSE" tool bash './check.sh' 'CHECK OK'
+ev expect 'reading the primary/other checkout copy is no receipt for the worker worktree skill' fail \
+  "$LOCAL_BLOCK" omp "$OPUS" high "$LOCAL" "$W_LOCAL_ELSE"
+
+# APPLIED / RESULT sources: mention, self-report, quoted brief or plan text
+# is not behavior; only the worker's own tool calls and their output are.
+W_QUOTED="$TMP/w-quoted.jsonl"
+rec "$W_QUOTED" session "$TMP/wt"
+rec "$W_QUOTED" user "$BRIEF_TEXT Then expect \`PASS all\`."
+rec "$W_QUOTED" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md"
+printf 'Plan: run bash tests/red.sh, see FAIL expected, then PASS all.\n' > "$TMP/plan.md"
+rec "$W_QUOTED" read "$TMP/plan.md" "$TMP/plan.md"
+rec "$W_QUOTED" tool edit 'src/form.py: fix' 'Updated src/form.py'
+rec "$W_QUOTED" say 'I ran `bash tests/red.sh`, saw FAIL expected, then PASS all.'
+ev expect 'applied evidence found only in the brief, a read plan, or the worker prose is rejected' fail \
+  "$(ev_block ev-quoted-applied.txt 'read complete | applied ran `bash tests/red.sh` and saw `FAIL expected` | result UNPROVEN | review UNPROVEN | usage UNPROVEN')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_QUOTED"
+ev expect 'a result found only in the brief, a read plan, or the worker prose is rejected' fail \
+  "$(ev_block ev-quoted-result.txt 'read complete | applied `src/form.py: fix` | result `PASS all` | review UNPROVEN | usage UNPROVEN')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_QUOTED"
+
+# APPLIED ORDER: behavior before the receipt is shown but is not attributable.
+W_BEFORE="$TMP/w-before.jsonl"
+rec "$W_BEFORE" session "$TMP/wt"
+rec "$W_BEFORE" tool bash 'bash tests/red.sh' 'FAIL expected'
+rec "$W_BEFORE" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md"
+rec "$W_BEFORE" tool edit 'src/form.py: fix' 'Updated src/form.py'
+rec "$W_BEFORE" bg 'bash tests/all.sh'
+rec "$W_BEFORE" job 'ok - rejects empty email
+PASS all'
+ev expect 'verified usage whose only applied evidence predates the read receipt is rejected' fail \
+  "$(ev_block ev-before.txt 'read complete | applied ran `bash tests/red.sh` and saw `FAIL expected` | result `PASS all` | review UNPROVEN | usage verified')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_BEFORE"
+ev expect 'post-receipt behavior and a job launched after the read locate every link a usage-verified declaration needs' pass \
+  "$(ev_block ev-before-ok.txt 'read complete | applied `src/form.py: fix` | result `PASS all` | review UNPROVEN | usage verified')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_BEFORE"
+# A background job runs from its launch, not its delivery: launched before
+# the read and delivered after it, its output cannot follow the read.
+W_EARLYJOB="$TMP/w-earlyjob.jsonl"
+rec "$W_EARLYJOB" session "$TMP/wt"
+rec "$W_EARLYJOB" bg 'bash tests/red.sh'
+rec "$W_EARLYJOB" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md"
+rec "$W_EARLYJOB" tool edit 'src/form.py: fix' 'Updated src/form.py'
+rec "$W_EARLYJOB" job 'ok - rejects empty email
+PASS all'
+ev expect 'a background result launched before the read, delivered after it, cannot back verified usage' fail \
+  "$(ev_block ev-earlyjob.txt 'read complete | applied `src/form.py: fix` | result `PASS all` | review UNPROVEN | usage verified')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_EARLYJOB"
+# The edit/write boundary does not see bash writes: a complete read that
+# finishes after bash calls says how many preceded it.
+W_BASHFIRST="$TMP/w-bashfirst.jsonl"
+rec "$W_BASHFIRST" session "$TMP/wt"
+rec "$W_BASHFIRST" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md" 1 4
+rec "$W_BASHFIRST" tool bash "cat > src/form.py <<'EOF'" '(no output)'
+rec "$W_BASHFIRST" tool bash "sed -i '' s/bool/len/ src/form.py" '(no output)'
+rec "$W_BASHFIRST" read "$SK/$TDD/SKILL.md:5-12" "$SK/$TDD/SKILL.md" 5 12
+ev expect_shows 'bash calls before the completing read are disclosed, not hidden behind "complete"' '2 bash/eval call(s) precede the completing read' \
+  "$(ev_block ev-bashfirst.txt 'read complete | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_BASHFIRST"
+
+# USAGE: located links are never the checker's verdict. A complete read
+# followed only by an echoed plan locates both excerpts; semantics stay
+# unproven by the checker (independent review, 2026-10-05, S1).
+expect_usage() { # <label> <skill> <want SUMMARY USAGE field> <trace-check args...> - and no PASS on usage
+  local label=$1 skill=$2 want=$3 out got
+  shift 3
+  out=$(trace_check "$@" 2>&1)
+  got=$(printf '%s\n' "$out" | sed -n "s/^SUMMARY - $skill: .* | USAGE //p")
+  if [ "$got" != "$want" ]; then
+    fail "$label (USAGE '$got', want '$want')"
+  elif printf '%s\n' "$out" | grep -q "^PASS - $skill: usage"; then
+    fail "$label (a PASS line asserts usage)"
+  else
+    pass "$label"
+  fi
+}
+W_PLAN="$TMP/w-plan.jsonl"
+rec "$W_PLAN" session "$TMP/wt"
+rec "$W_PLAN" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md"
+rec "$W_PLAN" tool bash 'cat plan.md' 'Plan: run bash tests/red.sh, watch it fail, fix, then expect PASS all.'
+ev expect_usage 'an echoed plan with every link located is never reported as verified usage' "$TDD" 'links located, semantics UNPROVEN by checker' \
+  "$(ev_block ev-plan.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_PLAN"
+
+# A synchronous result runs from its call: a command issued in the same
+# message as the read was chosen before the skill was shown, even when its
+# output is recorded after the read result (real shape, re-review V2-I1).
+W_PARALLEL="$TMP/w-parallel.jsonl"
+rec "$W_PARALLEL" session "$TMP/wt"
+rec "$W_PARALLEL" parallel "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md" 'bash tests/all.sh' 'ok - all
+PASS all'
+rec "$W_PARALLEL" tool edit 'src/form.py: fix' 'Updated src/form.py'
+ev expect 'output of a command issued alongside the read is not ordered after the read' fail \
+  "$(ev_block ev-parallel.txt 'read complete | applied `src/form.py: fix` | result `PASS all` | review UNPROVEN | usage verified')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_PARALLEL"
+
+# VERIFIED: an observed result and an independent review stay separate.
+ev expect 'verified usage without an observed result is rejected' fail \
+  "$(ev_block ev-noresult.txt 'read complete | applied `bash tests/red.sh` | result UNPROVEN | review UNPROVEN | usage verified')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
+# A result is output the worker observed, not text it wrote: the expected
+# line inside the test it edited is no outcome (real readiness record:
+# the GREEN test name first appears in the edit that added the test).
+W_WROTE="$TMP/w-wrote.jsonl"
+rec "$W_WROTE" session "$TMP/wt"
+rec "$W_WROTE" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md"
+rec "$W_WROTE" tool edit "tests/red.sh: echo 'PASS all'" "[tests/red.sh#ABCD]
+4:echo 'PASS all'"
+rec "$W_WROTE" tool bash 'bash tests/red.sh' 'FAIL expected'
+ev expect 'a result found only in text the worker wrote, never in observed output, is rejected' fail \
+  "$(ev_block ev-wrote.txt 'read complete | applied `bash tests/red.sh` | result `PASS all` | review UNPROVEN | usage verified')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_WROTE"
+ev expect 'a cited result the worker never observed is rejected' fail \
+  "$(ev_block ev-falseresult.txt 'read complete | applied `bash tests/red.sh` | result `ALL 40 TESTS PASS` | review UNPROVEN | usage UNPROVEN')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
+REVIEW_LINE='read complete | applied `bash tests/red.sh` | result `PASS all` | review `0 BLOCKER` | usage verified'
+ev expect 'a review claim with no reviewer record is rejected' fail \
+  "$(ev_block ev-review-none.txt "$REVIEW_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
+# The worker writing its own verdict is still not independent review.
+W_SELF="$TMP/w-self.jsonl"
+cp "$W_GOOD" "$W_SELF"
+rec "$W_SELF" tool write 'report.md: Verdict: 0 BLOCKER' 'Wrote report.md'
+ev expect "the worker's own record is not an independent review, even holding the verdict" fail \
+  "$(ev_block ev-review-self.txt "$REVIEW_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_SELF" "$W_SELF"
+R_REVIEW="$TMP/r-review.jsonl"
+rec "$R_REVIEW" session "$TMP/review-wt"
+rec "$R_REVIEW" say '0 BLOCKER'
+ev expect "a review verdict found only in the reviewer's prose is rejected" fail \
+  "$(ev_block ev-review-prose.txt "$REVIEW_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD" "$R_REVIEW"
+rec "$R_REVIEW" tool write 'report.md: Verdict: 0 BLOCKER, 1 IMPORTANT' 'Wrote report.md'
+ev expect "a review excerpt located in a different session record is accepted (independence not assessed)" pass \
+  "$(ev_block ev-review-ok.txt "$REVIEW_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD" "$R_REVIEW"
+
+# Unsupported records: arbitrary text, even text shaped like a receipt,
+# cannot prove a read; only explicit UNPROVEN fields pass against it.
+FAKE_RECEIPT=$(t fake-receipt.txt "[~/.agents/skills/$TDD/SKILL.md#ABCD]
+$(awk '{ printf "%d:%s\n", NR, $0 }' "$SK/$TDD/SKILL.md")
+$ bash tests/red.sh
+FAIL expected
+PASS all")
+ev expect 'prose shaped like a read receipt is not an OMP record and proves no read' fail \
+  "$(ev_block ev-fake.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$FAKE_RECEIPT"
+ALL_UNPROVEN='read UNPROVEN | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN'
+ev expect 'explicit UNPROVEN fields are accepted against an unsupported record' pass \
+  "$(ev_block ev-unsupported.txt "$ALL_UNPROVEN")" omp "$OPUS" high "$TDD,$VBC" "$FAKE_RECEIPT"
+# Only an OMP harness record is read: a Pi worker's record, even in the
+# same session shape, supports only UNPROVEN (real Pi records share the
+# header; their read output is not the observed receipt shape).
+PI_BLOCK="Routing: TENTH-MAN #1 | role tenth-man | pi | $SOL | xhigh | why: challenge Claude-authored completion claim
+Skills: $VBC - fresh evidence
+Skill evidence:"
+ev expect 'a non-OMP harness record cannot support a read-none claim' fail \
+  "$(t pi-none.txt "$PI_BLOCK
+- $VBC: read none | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN")" pi "$SOL" xhigh "$VBC" "$W_GOOD"
+ev expect 'a non-OMP harness record accepts explicit UNPROVEN fields' pass \
+  "$(t pi-unproven.txt "$PI_BLOCK
+- $VBC: $ALL_UNPROVEN")" pi "$SOL" xhigh "$VBC" "$W_GOOD"
+
+# A companion the selected skill makes mandatory (TDD -> writing-good-tests.md
+# when tests change) is its own exact-path entry; the SKILL.md receipt never
+# covers it.
+COMP="$SK/$TDD/writing-good-tests.md"
+printf '# Writing Good Tests\nName the break.\nExercise the real thing.\n' > "$COMP"
+comp_block() { # <file> <companion evidence fields>
+  t "$1" "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: multi-file behavior change
+Skills: $TDD - behavior change; $COMP - required companion
+Skill evidence:
+- $TDD: $ALL_UNPROVEN
+- $COMP: $2"
+}
+ev expect 'a required companion never read is not covered by the SKILL.md read' fail \
+  "$(comp_block comp-unread.txt 'read complete | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN')" \
+  omp "$OPUS" high "$TDD,$COMP" "$W_GOOD"
+W_COMP="$TMP/w-comp.jsonl"
+cp "$W_GOOD" "$W_COMP"
+rec "$W_COMP" read "$COMP" "$COMP"
+ev expect 'a required companion read after the first edit is reported late for its own entry' pass \
+  "$(comp_block comp-read.txt 'read late | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN')" \
+  omp "$OPUS" high "$TDD,$COMP" "$W_COMP"
+# Companion path forms (re-review V2-I2): a `~/` path names the same shared
+# file the worker read; a path that resolves to no readable file is
+# unreadable, never an honest "read none".
+W_COMPFIRST="$TMP/w-compfirst.jsonl"
+rec "$W_COMPFIRST" session "$TMP/wt"
+rec "$W_COMPFIRST" read "$COMP" "$COMP"
+form_block() { # <file> <companion form> <read claim>
+  t "$1" "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: multi-file behavior change
+Skills: $2 - required companion
+Skill evidence:
+- $2: read $3 | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN"
+}
+# shellcheck disable=SC2088  # the literal ~/ form is the input under test
+TILDE="~/.agents/skills/$TDD/writing-good-tests.md"
+ev expect 'a ~/ companion path names the shared file the worker read in full' pass \
+  "$(form_block form-tilde.txt "$TILDE" complete)" omp "$OPUS" high "$TILDE" "$W_COMPFIRST"
+ev expect 'a companion path resolving to no readable file cannot support a read-none claim' fail \
+  "$(form_block form-relative.txt "$TDD/writing-good-tests.md" none)" omp "$OPUS" high "$TDD/writing-good-tests.md" "$W_COMPFIRST"
+# OMP-shaped lines sliced out of a record, without its session header
+# (worker identity and worktree), are not a retained record either.
+grep -v '"type": "session"' "$W_GOOD" > "$TMP/w-headless.jsonl"
+ev expect_rejects 'record lines without their session header prove no read' 'needs a retained OMP session record' \
+  "$(ev_block ev-headless.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$TMP/w-headless.jsonl"
+
+# Block structure: one line per selected skill, nothing for unselected ones.
+ev expect 'evidence for a skill the brief never selected is rejected' fail \
+  "$(t ev-unsel.txt "$(cat "$(ev_block ev-unsel-base.txt "$ALL_UNPROVEN")")
+- systematic-debugging: $ALL_UNPROVEN")" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
+ev expect 'a selected skill with no evidence line at all is rejected' fail \
+  "$(t ev-gap.txt "$(cat "$IMPL")
+Skill evidence:
+- $TDD: $ALL_UNPROVEN")" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
+ev expect 'two evidence lines for one skill are rejected (a later line must not mask an earlier false one)' fail \
+  "$(t ev-dup.txt "$(cat "$(ev_block ev-dup-base.txt "$VERIFIED_LINE")")
+- $TDD: $ALL_UNPROVEN")" omp "$OPUS" high "$TDD,$VBC" "$W_UNREAD"
+ev expect 'a transcript supplied without any Skill evidence block is rejected' fail "$IMPL" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
+ev expect 'an evidence line without separate read/applied/result/review/usage fields is rejected' fail \
+  "$(ev_block ev-bare.txt 'applied test-driven development throughout')" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
+ev expect 'more than two applied excerpts for one skill are rejected' fail \
+  "$(ev_block ev-long.txt 'read complete | applied `bash tests/red.sh`, `FAIL expected` and `PASS all` | result `PASS all` | review UNPROVEN | usage UNPROVEN')" \
+  omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
+LIVE_NONE=$(t live-none.txt "Routing: EXPLORE #1 | role senior-fullstack | omp | openai-codex/gpt-6-luna | low | why: measured viable capacity
 Skills: none
 Skill evidence: none selected.")
-expect 'live form: "Skill evidence: none selected." after "Skills: none" is accepted' pass \
-  "$LIVE_NONE" omp "$LUNA" low none "$TRANSCRIPT"
+expect '"Skill evidence: none selected." after "Skills: none" is accepted' pass \
+  "$LIVE_NONE" omp openai-codex/gpt-6-luna low none "$W_GOOD"
 expect 'inline "none selected" while a skill was selected is rejected' fail \
-  "$(t live-none-sel.txt "$(sed 's/^Skills: none$/Skills: verification-before-completion - fresh output/' "$LIVE_NONE")")" \
-  omp "$LUNA" low "$VBC" "$TRANSCRIPT"
-expect 'an inline Skill evidence remark other than "none selected" is rejected' fail \
-  "$(t live-none-other.txt "$(sed 's/none selected\./all skills applied./' "$LIVE_NONE")")" omp "$LUNA" low none "$TRANSCRIPT"
-LIVE_TRANSCRIPT=$(t live-transcript.txt '$ ./tests/routing-trace.sh check captured-trace.txt omp openai-codex/gpt-6-luna low verification-before-completion worker-transcript.txt
-FAIL - Skill evidence covers exactly the selected skills
-Exit code: `1`')
-LIVE_VBC=$(t live-vbc.txt "Routing: EXPLORE #1 | role senior-fullstack | omp | $LUNA | low | why: bounded in-repository diagnostic
-Skills: $VBC - require fresh command output before the pass/fail claim
-Skill evidence:
-- \`$VBC\`: the report records the decisive command, complete output, and \`Exit code: \`1\`\`.")
-expect 'live form: a backticked skill name with a grounded citation is accepted' pass \
-  "$LIVE_VBC" omp "$LUNA" low "$HOME/.agents/skills/$VBC/SKILL.md" "$LIVE_TRANSCRIPT"
-expect 'a backticked skill name still needs its citation in the transcript' fail \
-  "$LIVE_VBC" omp "$LUNA" low "$VBC" "$TRANSCRIPT"
-expect_rejects 'the nested live citation `Exit code: `1`` is rejected against a transcript showing exit 0' \
-  "FAIL - $VBC: cited \`Exit code: \`1\`\` occurs" \
-  "$LIVE_VBC" omp "$LUNA" low "$VBC" "$(t live-transcript-exit0.txt "$(sed 's/Exit code: `1`/Exit code: `0`/' "$LIVE_TRANSCRIPT")")"
-expect_shows 'the nested live citation is matched as the whole excerpt, not its prefix' 'cited `Exit code: `1``' \
-  "$LIVE_VBC" omp "$LUNA" low "$VBC" "$LIVE_TRANSCRIPT"
-# Nested quoting followed by punctuation (independent review): the inner
-# closing tick must not end the excerpt early, or `Exit code: `1`, final`
-# would be cut to a prefix that also matches `Exit code: `10``.
-NESTED_COMMA=$(t nested-comma.txt "Routing: EXPLORE #1 | role senior-fullstack | omp | $LUNA | low | why: bounded
-Skills: $VBC - fresh verification
-Skill evidence:
-- \`$VBC\`: saw \`Exit code: \`1\`, final\`")
-expect_rejects 'a nested citation followed by a comma is rejected against a transcript with a different exit code' \
-  "FAIL - $VBC: cited \`Exit code: \`1\`, final\` occurs" \
-  "$NESTED_COMMA" omp "$LUNA" low "$VBC" "$(t exit10.txt 'Exit code: `10`')"
-expect 'a nested citation followed by a comma passes when the whole excerpt is in the transcript' pass \
-  "$NESTED_COMMA" omp "$LUNA" low "$VBC" "$(t exit1-final.txt 'Exit code: `1`, final')"
-TWO_NESTED=$(t two-nested.txt "Routing: EXPLORE #1 | role senior-fullstack | omp | $LUNA | low | why: bounded
-Skills: $VBC - fresh verification
-Skill evidence:
-- \`$VBC\`: ran \`ran \`npm test\`, then resumed\` and saw \`passed\`")
-expect 'two observations, the first nested, are both cited whole and accepted' pass \
-  "$TWO_NESTED" omp "$LUNA" low "$VBC" "$(t resumed.txt 'The worker ran `npm test`, then resumed; passed')"
-# Supported quoting (policy section 0): excerpts separated by words or a
-# space. Punctuation-only adjacency such as `done`-`passed` is rejected as
-# ambiguous (never truncated or accepted on a guess); spaced forms pass.
-two_obs() { # <file> <evidence suffix>
-  t "$1" "Routing: EXPLORE #1 | role senior-fullstack | omp | $LUNA | low | why: bounded
-Skills: $VBC - fresh verification
-Skill evidence:
-- \`$VBC\`: $2"
-}
-DONE_PASSED=$(t done-passed.txt 'worker done; tests passed')
-expect_rejects 'two excerpts joined only by punctuation are rejected as ambiguous quoting' 'ambiguous backtick quoting' \
-  "$(two_obs dash.txt 'saw `done`-`passed`')" omp "$LUNA" low "$VBC" "$DONE_PASSED"
-expect 'two excerpts separated by words are accepted' pass \
-  "$(two_obs words.txt 'saw `done` and `passed`')" omp "$LUNA" low "$VBC" "$DONE_PASSED"
-expect 'two excerpts separated by a comma and space are accepted' pass \
-  "$(two_obs comma.txt 'saw `done`, `passed`')" omp "$LUNA" low "$VBC" "$DONE_PASSED"
-expect_rejects 'unbalanced backtick quoting is rejected as ambiguous, never guessed' 'ambiguous backtick quoting' \
-  "$(t ambiguous.txt "Routing: EXPLORE #1 | role senior-fullstack | omp | $LUNA | low | why: bounded
-Skills: $VBC - fresh verification
-Skill evidence:
-- \`$VBC\`: saw \`\`\`Exit code: 1\`")" omp "$LUNA" low "$VBC" "$(t exit1.txt 'Exit code: 1')"
-expect 'a backticked claim for an unselected skill is rejected' fail \
-  "$(t live-unsel.txt "$(cat "$LIVE_VBC")
-- \`systematic-debugging\`: saw \`FAIL - Skill evidence covers exactly the selected skills\`")" omp "$LUNA" low "$VBC" "$LIVE_TRANSCRIPT"
-expect 'a backticked duplicate of a skill line is rejected' fail \
-  "$(t live-dup.txt "$(cat "$LIVE_VBC")
-- $VBC: selected, but no strong application evidence observed")" omp "$LUNA" low "$VBC" "$LIVE_TRANSCRIPT"
+  "$(t live-none-sel.txt "$(sed "s/^Skills: none\$/Skills: $VBC - fresh output/" "$LIVE_NONE")")" \
+  omp openai-codex/gpt-6-luna low "$VBC" "$W_GOOD"
 
-# --- 4. Real dispatch/brief/spawn seam --------------------------------------
+# Excerpt quoting: a nested excerpt is located whole, never as a prefix
+# that a different exit code would also match; ambiguous quoting fails.
+W_EXIT="$TMP/w-exit.jsonl"
+rec "$W_EXIT" session "$TMP/wt"
+rec "$W_EXIT" read "$SK/$VBC/SKILL.md" "$SK/$VBC/SKILL.md"
+rec "$W_EXIT" tool bash 'bash tests/all.sh' 'Exit code: `10`'
+VBC_ONLY="Routing: EXPLORE #1 | role senior-fullstack | omp | openai-codex/gpt-6-luna | low | why: bounded
+Skills: $VBC - fresh verification
+Skill evidence:"
+ev expect 'a nested excerpt followed by a comma is not matched by its prefix in a different exit code' fail \
+  "$(t nested.txt "$VBC_ONLY
+- \`$VBC\`: read complete | applied ran \`bash tests/all.sh\` | result saw \`Exit code: \`1\`, final\` | review UNPROVEN | usage UNPROVEN")" \
+  omp openai-codex/gpt-6-luna low "$VBC" "$W_EXIT"
+ev expect 'unbalanced backtick quoting is rejected as ambiguous, never guessed' fail \
+  "$(t ambiguous.txt "$VBC_ONLY
+- \`$VBC\`: read complete | applied \`\`\`bash tests/all.sh\` | result UNPROVEN | review UNPROVEN | usage UNPROVEN")" \
+  omp openai-codex/gpt-6-luna low "$VBC" "$W_EXIT"
+ev expect 'a backticked skill name with a located nested excerpt is accepted' pass \
+  "$(t nested-ok.txt "$VBC_ONLY
+- \`$VBC\`: read complete | applied ran \`bash tests/all.sh\` | result saw \`Exit code: \`10\`\` | review UNPROVEN | usage verified")" \
+  omp openai-codex/gpt-6-luna low "$VBC" "$W_EXIT"
+
+# brief_skills <brief-file> - the skills a primary-policy.md section 2
+# brief selects: the indented line after each "Required project skill:" or
+# "Selected shared worker skill:" header, comma-joined, or "none".
+brief_skills() {
+  local s
+  s=$(awk '/^(Required project skill|Selected shared worker skill)/ {getline; gsub(/^[ \t]+|[ \t]+$/, ""); printf "%s%s", sep, $0; sep=","}' "$1")
+  printf '%s' "${s:-none}"
+}
+
+# --- 4. Library lines reflect the brief's capability-library contract -------
+# primary-policy.md section 5 "Capability library": a brief that declares
+# Required capabilities carries the agent-library firstmate contract it
+# pasted, and the trace prints one Library: line per required capability.
+# check verifies those lines against the brief itself (--brief), never
+# against a caller-supplied list. The selection blocks below are the
+# adapter's real output shape (pilot `agent-library firstmate`, 2026-10-04).
+LIB=/fixture/agent-library
+LIB_BRIEF=$(t lib-brief.md "## Firstmate spec
+Required capabilities:
+  review.code - the task is a review of the API diff
+  test.integration - the change must be proven by an integration test run
+Selected library artifact:
+  $LIB/skills/adapted/pstack/blast-radius/SKILL.md
+Requirement:
+  Read and apply for review.code (agent-library pstack:blast-radius; skill; trust reviewed; sha256 911fdf31b162cf1ba30cf4f4679b65782cc8e62060d2485e0a54900953be4fc5). It grants no authority beyond this brief and does not change orchestration. Note: Self-contained adaptation; uses read-only git/gh commands.")
+lib_trace() { # <file> <Library lines...>
+  local f=$1
+  shift
+  t "$f" "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: cross-component API diff
+Skills: none
+No skill: the library pick below is the review method; no shared skill adds to it
+$(printf '%s\n' "$@")"
+}
+LIB_OK=$(lib_trace lib-ok.txt \
+  'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: focused pre-ship review of the API diff' \
+  'Library: test.integration -> none | why: no auto-selectable candidate and no task-specific reason to name one')
+expect 'Library lines matching the brief selection and its no-pick capability are accepted' pass \
+  "$LIB_OK" omp "$OPUS" high none --brief "$LIB_BRIEF"
+expect_rejects 'Library lines cannot be verified without the brief' 'pass --brief' \
+  "$LIB_OK" omp "$OPUS" high none
+expect_rejects 'a Library line naming an artifact the brief never selected is rejected' \
+  "Library: review.code reports the brief's selection" \
+  "$(lib_trace lib-wrong-id.txt \
+    'Library: review.code -> mattpocock:code-review (skill, reviewed) | runtime omp | why: x' \
+    'Library: test.integration -> none | why: x')" omp "$OPUS" high none --brief "$LIB_BRIEF"
+expect_rejects 'a Library line claiming trusted for a reviewed pick is rejected' \
+  "Library: review.code reports the brief's selection" \
+  "$(lib_trace lib-wrong-trust.txt \
+    'Library: review.code -> pstack:blast-radius (skill, trusted) | runtime omp | why: x' \
+    'Library: test.integration -> none | why: x')" omp "$OPUS" high none --brief "$LIB_BRIEF"
+expect_rejects 'none for a capability the brief selected an artifact for is rejected' \
+  "Library: review.code reports the brief's selection" \
+  "$(lib_trace lib-hidden.txt \
+    'Library: review.code -> none | why: x' \
+    'Library: test.integration -> none | why: x')" omp "$OPUS" high none --brief "$LIB_BRIEF"
+expect_rejects 'a selection claimed for a capability the brief has no pick for is rejected' \
+  "Library: test.integration reports the brief's selection" \
+  "$(lib_trace lib-invented.txt \
+    'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x' \
+    'Library: test.integration -> pstack:create-verification-skill (skill, reviewed) | runtime omp | why: x')" \
+  omp "$OPUS" high none --brief "$LIB_BRIEF"
+expect_rejects 'omitting a required capability from the Library lines is rejected' \
+  "Library: lines cover exactly the brief's required capabilities" \
+  "$(lib_trace lib-missing.txt \
+    'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x')" \
+  omp "$OPUS" high none --brief "$LIB_BRIEF"
+expect_rejects 'a Library line for a capability the brief never required is rejected' \
+  "Library: lines cover exactly the brief's required capabilities" \
+  "$(lib_trace lib-extra.txt \
+    'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x' \
+    'Library: test.integration -> none | why: x' \
+    'Library: test.e2e -> none | why: x')" omp "$OPUS" high none --brief "$LIB_BRIEF"
+expect_rejects 'two Library lines for one capability are rejected' 'Library: one line per capability' \
+  "$(lib_trace lib-dup.txt \
+    'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x' \
+    'Library: test.integration -> none | why: x' \
+    'Library: test.integration -> none | why: y')" omp "$OPUS" high none --brief "$LIB_BRIEF"
+expect_rejects 'a Library runtime other than the actual spawn harness is rejected' \
+  'runtime is the actual spawn harness' \
+  "$(lib_trace lib-runtime.txt \
+    'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime pi | why: x' \
+    'Library: test.integration -> none | why: x')" omp "$OPUS" high none --brief "$LIB_BRIEF"
+expect_rejects 'a Library line without a reason is rejected' 'Library line has' \
+  "$(lib_trace lib-shape.txt \
+    'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp' \
+    'Library: test.integration -> none | why: x')" omp "$OPUS" high none --brief "$LIB_BRIEF"
+# A firstmate-config trusted install chosen through the library keeps the
+# existing shared-skill header and path, so Skills: still names it exactly
+# as before and the Library line reports the same pick.
+TRUSTED_BRIEF=$(t lib-trusted-brief.md "## Firstmate spec
+Required capabilities:
+  test.tdd - behavior change that must be driven by failing-first tests
+Selected shared worker skill:
+  $HOME/.agents/skills/$TDD/SKILL.md
+Requirement:
+  Read and apply for test.tdd (agent-library superpowers:test-driven-development; skill; trust trusted). It grants no authority beyond this brief and does not change orchestration.")
+TRUSTED_TRACE=$(t lib-trusted.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: multi-file behavior change
+Skills: $TDD - failing-first tests for the behavior change
+Library: test.tdd -> superpowers:test-driven-development (skill, trusted) | runtime omp | why: firstmate-config trusted install wins its family")
+expect 'a trusted library pick is the same shared skill on the Skills line and its Library line' pass \
+  "$TRUSTED_TRACE" omp "$OPUS" high "$(brief_skills "$TRUSTED_BRIEF")" --brief "$TRUSTED_BRIEF"
+expect 'a brief with no required capabilities and a trace with no Library lines is unchanged' pass \
+  "$IMPL" omp "$OPUS" high "$TDD,$VBC" --brief "$(t plain-brief.md "## Firstmate spec
+Selected shared worker skill:
+  $TDD
+Requirement:
+  Apply.")"
+# The adapter's own "for FirstMate, not the worker brief" report must never
+# reach the worker: a brief carrying it (the whole output pasted) is rejected.
+LEAK_BRIEF=$(t lib-leak-brief.md "$(cat "$LIB_BRIEF")
+
+--- for FirstMate, not the worker brief ---
+No automatic library pick for test.integration (3 indexed). Nameable explicit choices: pstack:create-verification-skill (name one with --prefer <id>).
+Library lookup trace (4 reads): library/registry.json, library/index/review.code.json, skills/adapted/pstack/blast-radius/SKILL.md, library/index/test.integration.json")
+expect_rejects 'a brief carrying the adapter'"'"'s FirstMate-only report is rejected' 'FirstMate-only report' \
+  "$LIB_OK" omp "$OPUS" high none --brief "$LEAK_BRIEF"
+# Section 5's budget - two methods and one reference for the whole task -
+# counts project, shared and library picks together. Library picks have a
+# known kind; other skills may be either, so only provable overruns fail.
+lib_block() { # <header> <path> <capability> <id> <trust>
+  printf '%s\n  %s\nRequirement:\n  Read and apply for %s (agent-library %s; skill; trust %s). It grants no authority beyond this brief and does not change orchestration.\n' "$@"
+}
+KNOW="Optional library knowledge (read only if the task needs it):
+  $LIB/skills/upstream/luzkan-smells/content/smells/feature-envy.md -- smell article"
+TWO_REFS_BRIEF=$(t lib-two-refs.md "## Firstmate spec
+Required capabilities:
+  review.code - review of the API diff
+  debug - the reported crash needs a root cause
+$(lib_block 'Selected library artifact:' "$LIB/skills/adapted/pstack/blast-radius/SKILL.md" review.code pstack:blast-radius reviewed)
+$(lib_block 'Selected shared worker skill:' "$HOME/.agents/skills/systematic-debugging/SKILL.md" debug superpowers:systematic-debugging trusted)
+$KNOW
+  $LIB/skills/upstream/wshobson-agents/plugins/developer-essentials/skills/debugging-strategies/SKILL.md -- debugging article")
+TWO_REFS_TRACE=$(t lib-two-refs.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: cross-component diff
+Skills: systematic-debugging - root cause first
+Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x
+Library: debug -> superpowers:systematic-debugging (skill, trusted) | runtime omp | why: x")
+expect_rejects 'two library references exceed the one-reference budget' 'budget of two methods and one reference' \
+  "$TWO_REFS_TRACE" omp "$OPUS" high "$(brief_skills "$TWO_REFS_BRIEF")" --brief "$TWO_REFS_BRIEF"
+THREE_BRIEF=$(t lib-three.md "## Firstmate spec
+Required capabilities:
+  review.code - review of the API diff
+  test.integration - integration test run
+  plan.implementation - phased plan first
+$(lib_block 'Selected library artifact:' "$LIB/a/SKILL.md" review.code pstack:blast-radius reviewed)
+$(lib_block 'Selected library artifact:' "$LIB/b/SKILL.md" test.integration pstack:create-verification-skill reviewed)
+$(lib_block 'Selected library artifact:' "$LIB/c/SKILL.md" plan.implementation addy:spec-driven-development reviewed)")
+THREE_TRACE=$(t lib-three.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: x
+Skills: none
+Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x
+Library: test.integration -> pstack:create-verification-skill (skill, reviewed) | runtime omp | why: x
+Library: plan.implementation -> addy:spec-driven-development (skill, reviewed) | runtime omp | why: x")
+expect_rejects 'three library methods exceed the two-method budget' 'budget of two methods and one reference' \
+  "$THREE_TRACE" omp "$OPUS" high none --brief "$THREE_BRIEF"
+FULL_BRIEF=$(t lib-full.md "## Firstmate spec
+Required capabilities:
+  review.code - review of the API diff
+  test.integration - integration test run
+Selected shared worker skill:
+  $VBC
+Requirement:
+  Apply before declaring the task complete.
+$(lib_block 'Selected library artifact:' "$LIB/a/SKILL.md" review.code pstack:blast-radius reviewed)
+$KNOW")
+FULL_TRACE=$(t lib-full.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: x
+Skills: $VBC - fresh evidence before done
+Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x
+Library: test.integration -> none | why: budget: one method slot left after $VBC")
+expect 'one shared skill, one library method and one library reference fill the budget exactly' pass \
+  "$FULL_TRACE" omp "$OPUS" high "$VBC" --brief "$FULL_BRIEF"
+OVER_BRIEF=$(t lib-over.md "$(cat "$FULL_BRIEF")
+Selected shared worker skill:
+  $TDD
+Requirement:
+  Apply.")
+expect_rejects 'a second shared skill on top of a library method and reference overruns the budget' 'budget of two methods and one reference' \
+  "$(t lib-over.txt "$(sed "s/^Skills: .*/Skills: $VBC - x; $TDD - y/" "$FULL_TRACE")")" omp "$OPUS" high "$VBC,$TDD" --brief "$OVER_BRIEF"
+# A Claude worker under auto reads only its task-channel grants, which
+# include its own data/<id> (section 5 "Claude workers"): every library
+# artifact a Claude brief carries must be a materialized copy under the
+# brief's own data directory, never the shared Library path.
+mkdir -p "$TMP/data/claude-task"
+CLAUDE_DIR=$(cd "$TMP/data/claude-task" && pwd -P)
+claude_brief() { # <file> <body path>
+  printf '## Firstmate spec\nRequired capabilities:\n  review.code - review of the API diff\n%s\n' \
+    "$(lib_block 'Selected library artifact:' "$2" review.code addy:code-review-and-quality reviewed)" > "$1"
+  printf '%s' "$1"
+}
+CLAUDE_TRACE=$(t claude.txt "Routing: REVIEW #1 | role senior-fullstack | claude | claude-sonnet-5-5 | high | why: captain override - Claude worker
+Skills: none
+Library: review.code -> addy:code-review-and-quality (skill, reviewed) | runtime claude | why: materialized for claude")
+expect 'a Claude brief whose library artifact is materialized under its own data dir is accepted' pass \
+  "$CLAUDE_TRACE" claude claude-sonnet-5-5 high none --brief "$(claude_brief "$CLAUDE_DIR/brief.md" "$CLAUDE_DIR/agent-library/skills/upstream/addyosmani-agent-skills/skills/code-review-and-quality/SKILL.md")"
+expect_rejects 'a Claude brief pointing at the shared Library path is rejected' 'materialized under the brief' \
+  "$CLAUDE_TRACE" claude claude-sonnet-5-5 high none --brief "$(claude_brief "$CLAUDE_DIR/brief-native.md" "$LIB/skills/upstream/addyosmani-agent-skills/skills/code-review-and-quality/SKILL.md")"
+expect 'the same shared Library path stays valid for an omp worker' pass \
+  "$(t omp-native.txt "$(sed 's/| claude | claude-sonnet-5-5 | high | why: captain override - Claude worker/| omp | anthropic\/claude-sonnet-5-5 | high | why: x/; s/runtime claude/runtime omp/' "$CLAUDE_TRACE")")" \
+  omp "$SONNET" high none --brief "$TMP/data/claude-task/brief-native.md"
+# A trusted Library pick is never copied: at its native path a Claude worker
+# under auto cannot read it, so it must not pass as delivered either.
+TRUSTED_CLAUDE_BRIEF="$CLAUDE_DIR/brief-trusted.md"
+printf '## Firstmate spec\nRequired capabilities:\n  test.tdd - failing-first fix\n%s\n' \
+  "$(lib_block 'Selected shared worker skill:' "$HOME/.agents/skills/$TDD/SKILL.md" test.tdd superpowers:test-driven-development trusted)" > "$TRUSTED_CLAUDE_BRIEF"
+TRUSTED_CLAUDE_TRACE=$(t trusted-claude.txt "Routing: IMPLEMENT #2 | role senior-fullstack | claude | claude-sonnet-5-5 | high | why: captain override - Claude worker
+Skills: $TDD - failing-first fix
+Library: test.tdd -> superpowers:test-driven-development (skill, trusted) | runtime claude | why: trusted default")
+expect_rejects 'a Claude brief carrying a trusted Library pick at its native path is rejected' 'materialized under the brief' \
+  "$TRUSTED_CLAUDE_TRACE" claude claude-sonnet-5-5 high "$(brief_skills "$TRUSTED_CLAUDE_BRIEF")" --brief "$TRUSTED_CLAUDE_BRIEF"
+expect 'the same trusted native pick stays valid for an omp worker' pass \
+  "$(t trusted-omp.txt "$(sed 's/| claude | claude-sonnet-5-5 | high | why: captain override - Claude worker/| omp | anthropic\/claude-opus-5-5 | high | why: x/; s/runtime claude/runtime omp/' "$TRUSTED_CLAUDE_TRACE")")" \
+  omp "$OPUS" high "$(brief_skills "$TRUSTED_CLAUDE_BRIEF")" --brief "$TRUSTED_CLAUDE_BRIEF"
+# A Library pick that stands in for a role's unavailable shared default is
+# reported only on its Library: line (section 0). The first trace is the
+# exact block a live Captain printed for the final natural review (v6,
+# role code-reviewer, the role's shared code-review-and-quality default not
+# installed): it names the Library method as a selected skill, and its
+# semicolon makes a second "skill" of the reason. Both are rejected; the
+# corrected block is accepted. A genuine shared skill's reason may carry
+# commas, never a semicolon.
+ROLE_DEFAULT_BRIEF=$(t role-default-brief.md "## Firstmate spec
+Role: code-reviewer.
+Required capabilities:
+  review.code - correctness and maintainability review of the CSV diff
+$(lib_block 'Selected library artifact:' "$LIB/skills/upstream/addyosmani-agent-skills/skills/code-review-and-quality/SKILL.md" review.code addy:code-review-and-quality reviewed)")
+ROLE_DEFAULT_ROUTE="Routing: REVIEW #1 | role code-reviewer | omp | $SONNET | high | why: small, self-contained CSV change."
+ROLE_DEFAULT_LIB='Library: review.code -> addy:code-review-and-quality (skill, reviewed) | runtime omp | why: correctness and maintainability method fits this diff better than the default pre-ship checklist.'
+expect_rejects 'the live trace listing the Library stand-in for a role default under Skills is rejected' 'Skills names exactly the selected skills' \
+  "$(t role-default-live.txt "$ROLE_DEFAULT_ROUTE
+Skills: code-review-and-quality — reviewed Library equivalent; the shared install is absent.
+$ROLE_DEFAULT_LIB")" omp "$SONNET" high none --brief "$ROLE_DEFAULT_BRIEF"
+expect 'the same pick reported only on its Library line, with Skills: none and its reason, is accepted' pass \
+  "$(t role-default-fixed.txt "$ROLE_DEFAULT_ROUTE
+Skills: none
+No skill: the shared role default is unavailable, the reviewed Library method below supplies the review
+$ROLE_DEFAULT_LIB")" omp "$SONNET" high none --brief "$ROLE_DEFAULT_BRIEF"
+expect_rejects 'a semicolon inside a genuine shared skill reason invents a second skill and is rejected' 'Skills names exactly the selected skills' \
+  "$(t reason-semicolon.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
+Skills: $VBC - fresh evidence before done; then report it")" omp "$OPUS" high "$VBC"
+expect 'commas inside a shared skill reason are accepted' pass \
+  "$(t reason-comma.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
+Skills: $VBC - fresh evidence before done, then report it")" omp "$OPUS" high "$VBC"
+# Project-required skills are mandatory and outrank the budget: a brief
+# without Library content is never budget-checked, and project skills are
+# never what makes a Library brief fail.
+proj_block() { printf 'Required project skill:\n  .agents/skills/%s/SKILL.md\nRequirement:\n  Read and apply.\n' "$1"; }
+FOUR_PROJECT_BRIEF=$(t four-project.md "## Firstmate spec
+$(proj_block a)
+$(proj_block b)
+$(proj_block c)
+$(proj_block d)")
+FOUR_PROJECT_TRACE=$(t four-project.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
+Skills: .agents/skills/a/SKILL.md - a; .agents/skills/b/SKILL.md - b; .agents/skills/c/SKILL.md - c; .agents/skills/d/SKILL.md - d")
+expect 'a brief with four required project skills and no Library content passes as before' pass \
+  "$FOUR_PROJECT_TRACE" omp "$OPUS" high "$(brief_skills "$FOUR_PROJECT_BRIEF")" --brief "$FOUR_PROJECT_BRIEF"
+PROJECT_LIB_BRIEF=$(t project-lib.md "$(cat "$FOUR_PROJECT_BRIEF")
+Required capabilities:
+  review.code - review of the API diff
+$(lib_block 'Selected library artifact:' "$LIB/a/SKILL.md" review.code pstack:blast-radius reviewed)")
+expect 'mandatory project skills never make a Library brief fail the budget' pass \
+  "$(t project-lib.txt "$(cat "$FOUR_PROJECT_TRACE")
+Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x")" \
+  omp "$OPUS" high "$(brief_skills "$PROJECT_LIB_BRIEF")" --brief "$PROJECT_LIB_BRIEF"
+REF_ONLY_BRIEF=$(t ref-only.md "## Firstmate spec
+Required capabilities:
+  review.code - review of the API diff
+$(lib_block 'Selected library artifact:' "$LIB/a/SKILL.md" review.code pstack:blast-radius reviewed)
+$KNOW
+  $LIB/skills/upstream/luzkan-smells/content/smells/shotgun-surgery.md -- second smell article")
+expect_rejects 'one Library method with two Library references overruns the one-reference budget' 'budget of two methods and one reference' \
+  "$(t ref-only.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: x
+Skills: none
+Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x")" omp "$OPUS" high none --brief "$REF_ONLY_BRIEF"
+FOUR_SHARED_BRIEF=$(t four-shared.md "## Firstmate spec
+$(for s in a b c d; do printf 'Selected shared worker skill:\n  %s\nRequirement:\n  Apply.\n' "$s"; done)")
+expect 'a brief with four shared skills and no Library content is not budget-checked by the Library check (unchanged)' pass \
+  "$(t four-shared.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
+Skills: a - a; b - b; c - c; d - d")" omp "$OPUS" high a,b,c,d --brief "$FOUR_SHARED_BRIEF"
+# Skill evidence for a Library pick (primary-policy.md section 0): a pick
+# under `Selected library artifact:` gets its own evidence line, keyed by its
+# artifact id, and its READ is the record's receipt for the exact path the
+# brief selected - never the role's same-named shared skill, the brief text
+# naming that path, or the worker saying it read it. A trusted pick the brief
+# carries under the shared header stays an ordinary Skills entry.
+LIBEV="$TMP/libev/skills/upstream/addyosmani-agent-skills/skills/code-review-and-quality/SKILL.md"
+mkdir -p "$(dirname "$LIBEV")" "$SK/code-review-and-quality"
+printf -- '---\nname: code-review-and-quality\ndescription: fixture Library body\n---\n# Review\nRead the tests first.\nThen the implementation.\nClassify every finding.\n' > "$LIBEV"
+cp "$LIBEV" "$SK/code-review-and-quality/SKILL.md"  # the role's same-named shared default, byte-identical
+LIBEV_ID=addy:code-review-and-quality
+# The brief records the selected artifact's sha256, as the real adapter does.
+LIBEV_SHA=$(shasum -a 256 "$LIBEV" | cut -d' ' -f1)
+LIBEV_BRIEF=$(t libev-brief.md "## Firstmate spec
+Required capabilities:
+  review.code - correctness review of the CSV diff
+Selected library artifact:
+  $LIBEV
+Requirement:
+  Read and apply for review.code (agent-library $LIBEV_ID; skill; trust reviewed; sha256 $LIBEV_SHA). It grants no authority beyond this brief and does not change orchestration.")
+libev_trace() { # <file> <Skill evidence lines...>
+  local f=$1
+  shift
+  t "$f" "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: CSV diff
+Skills: none
+No skill: the reviewed Library method below supplies the review
+Library: review.code -> $LIBEV_ID (skill, reviewed) | runtime omp | why: correctness method fits this diff
+$(printf '%s\n' "$@")"
+}
+LIBEV_LINE="- $LIBEV_ID: read complete | applied ran \`git diff main...HEAD\` | result \`Ran 2 tests\` | review UNPROVEN | usage verified"
+lib_record() { # <record> <path the worker reads, or - for none>
+  rec "$1" session "$TMP/wt"
+  rec "$1" user "$(cat "$LIBEV_BRIEF")"
+  [ "$2" = - ] || rec "$1" read "$2" "$2"
+  rec "$1" tool bash 'git diff main...HEAD' 'diff --git a/export.py b/export.py'
+  rec "$1" tool bash 'python3 -m unittest discover -s tests/integration' 'Ran 2 tests in 0.03s
+OK'
+  rec "$1" tool write 'report.md: 1 IMPORTANT' 'Wrote report.md'
+}
+lib_record "$TMP/w-lib.jsonl" "$LIBEV"
+ev expect "a Library pick's evidence line, read from the exact selected artifact path, locates every link" pass \
+  "$(libev_trace libev-ok.txt 'Skill evidence:' "$LIBEV_LINE")" omp "$OPUS" high none "$TMP/w-lib.jsonl" --brief "$LIBEV_BRIEF"
+ev expect 'a Library pick with no evidence line is rejected' fail \
+  "$(libev_trace libev-gap.txt 'Skill evidence: none selected.')" omp "$OPUS" high none "$TMP/w-lib.jsonl" --brief "$LIBEV_BRIEF"
+lib_record "$TMP/w-lib-samename.jsonl" "$SK/code-review-and-quality/SKILL.md"
+ev expect "reading the role's same-named shared skill is no receipt for the selected Library artifact" fail \
+  "$(libev_trace libev-samename.txt 'Skill evidence:' "$LIBEV_LINE")" omp "$OPUS" high none "$TMP/w-lib-samename.jsonl" --brief "$LIBEV_BRIEF"
+lib_record "$TMP/w-lib-claim.jsonl" -
+rec "$TMP/w-lib-claim.jsonl" say "I read $LIBEV_ID at $LIBEV in full and applied it."
+ev expect 'the selected artifact named only in the brief and the worker claim is no read receipt' fail \
+  "$(libev_trace libev-claim.txt 'Skill evidence:' "$LIBEV_LINE")" omp "$OPUS" high none "$TMP/w-lib-claim.jsonl" --brief "$LIBEV_BRIEF"
+TRUSTEV_BRIEF=$(t trustev-brief.md "## Firstmate spec
+Required capabilities:
+  test.tdd - failing-first fix
+$(lib_block 'Selected shared worker skill:' "$SK/$TDD/SKILL.md" test.tdd superpowers:test-driven-development trusted)")
+ev expect 'a trusted pick under the shared header is evidenced by its Skills entry alone' pass \
+  "$(t trustev.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
+Skills: $TDD - trusted default
+Library: test.tdd -> superpowers:test-driven-development (skill, trusted) | runtime omp | why: trusted default
+Skill evidence:
+- $TDD: $VERIFIED_LINE")" omp "$OPUS" high "$(brief_skills "$TRUSTEV_BRIEF")" "$W_GOOD" --brief "$TRUSTEV_BRIEF"
+# The selected artifact is the one whose sha256 the brief records: bytes at
+# the selected path that differ from it (the shared checkout updated, or a
+# materialized copy replaced, after selection) are another artifact, so a
+# full read of them is no complete read and credits no pre-work read. A
+# selected path that is no readable file stays unreadable.
+LIBEV_OTHER="$TMP/libev-other/skills/upstream/addyosmani-agent-skills/skills/code-review-and-quality/SKILL.md"
+mkdir -p "$(dirname "$LIBEV_OTHER")"
+printf -- '---\nname: code-review-and-quality\ndescription: fixture Library body, later version\n---\n# Review\nSkip the tests.\nSkim the implementation.\nApprove.\n' > "$LIBEV_OTHER"
+OTHER_BRIEF=$(t libev-other-brief.md "$(sed "s#$LIBEV#$LIBEV_OTHER#" "$LIBEV_BRIEF")")
+lib_record "$TMP/w-lib-other.jsonl" "$LIBEV_OTHER"
+ev expect "a full read of bytes that differ from the brief's recorded sha256 is not a complete read of the selected artifact" fail \
+  "$(libev_trace libev-other.txt 'Skill evidence:' "$LIBEV_LINE")" omp "$OPUS" high none "$TMP/w-lib-other.jsonl" --brief "$OTHER_BRIEF"
+ev expect 'bytes that differ from the recorded sha256 credit no pre-work read, so they cannot back verified usage' fail \
+  "$(libev_trace libev-other-usage.txt 'Skill evidence:' "- $LIBEV_ID: read UNPROVEN | applied ran \`git diff main...HEAD\` | result \`Ran 2 tests\` | review UNPROVEN | usage verified")" \
+  omp "$OPUS" high none "$TMP/w-lib-other.jsonl" --brief "$OTHER_BRIEF"
+GONE_BRIEF=$(t libev-gone-brief.md "$(sed "s#$LIBEV#$TMP/libev-gone/SKILL.md#" "$LIBEV_BRIEF")")
+ev expect_shows 'a selected path that is no readable file stays unreadable, never a sha mismatch' 'the record shows unreadable' \
+  "$(libev_trace libev-gone.txt 'Skill evidence:' "- $LIBEV_ID: read UNPROVEN | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN")" \
+  omp "$OPUS" high none "$TMP/w-lib.jsonl" --brief "$GONE_BRIEF"
+
+# --- 5. Real dispatch/brief/spawn seam --------------------------------------
 # The real, unmodified official bin/fm-spawn.sh launches one task on an
 # isolated tmux server (never the shared session) into a real treehouse
 # worktree of a disposable project - the same seam tests/multi-project-
@@ -514,15 +1639,6 @@ expect 'a backticked duplicate of a skill line is rejected' fail \
 # received and did.
 FIRSTMATE_ROOT_REAL="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | tail -1; }
-
-# brief_skills <brief-file> - the skills a primary-policy.md section 2
-# brief selects: the indented line after each "Required project skill:" or
-# "Selected shared worker skill:" header, comma-joined, or "none".
-brief_skills() {
-  local s
-  s=$(awk '/^(Required project skill|Selected shared worker skill)/ {getline; gsub(/^[ \t]+|[ \t]+$/, ""); printf "%s%s", sep, $0; sep=","}' "$1")
-  printf '%s' "${s:-none}"
-}
 
 if ! command -v tmux >/dev/null 2>&1 || ! command -v treehouse >/dev/null 2>&1 || [ ! -x "$FIRSTMATE_ROOT_REAL/bin/fm-spawn.sh" ]; then
   printf 'SKIP - real spawn seam: needs tmux, treehouse, and %s/bin/fm-spawn.sh (never reported as PASS)\n' "$FIRSTMATE_ROOT_REAL"
@@ -551,13 +1667,21 @@ if [ "${1:-}" = models ]; then
   exit 0
 fi
 printf '%s\n' "$@" > worker-argv.txt
+# A launched worker leaves its session record in the retained OMP shape:
+# with the canary skill in its brief, it reads that skill in its own
+# worktree and runs the skill's ./check.sh.
+rm -f worker-session.tmp
+omp-record worker-session.tmp session "$PWD"
 case "$*" in
-  *.agents/skills/trace-canary/SKILL.md*) { printf '$ ./check.sh\n'; ./check.sh; } > worker-transcript.tmp ;;
-  *) : > worker-transcript.tmp ;;
+  *.agents/skills/trace-canary/SKILL.md*)
+    omp-record worker-session.tmp read .agents/skills/trace-canary/SKILL.md .agents/skills/trace-canary/SKILL.md
+    omp-record worker-session.tmp tool bash ./check.sh "$(./check.sh)" ;;
 esac
-mv worker-transcript.tmp worker-transcript.txt
+mv worker-session.tmp worker-session.jsonl
 SH
   chmod +x "$TMP/bin/omp"
+  printf '#!/bin/sh\nexec python3 %s "$@"\n' "$TMP/omp-record.py" > "$TMP/bin/omp-record"
+  chmod +x "$TMP/bin/omp-record"
 
   BRIEF="$seam_home/data/$SEAM_ID/brief.md"
   cat > "$BRIEF" <<'EOF'
@@ -593,7 +1717,7 @@ Skills: .agents/skills/trace-canary/SKILL.md - project check before done; verifi
     meta=$(cat "$seam_home/state/$SEAM_ID.meta" 2>/dev/null)
     wt=$(field "$meta" worktree)
     waited=0
-    while [ ! -f "$wt/worker-transcript.txt" ] && [ "$waited" -lt 100 ]; do sleep 0.1; waited=$((waited + 1)); done
+    while [ ! -f "$wt/worker-session.jsonl" ] && [ "$waited" -lt 100 ]; do sleep 0.1; waited=$((waited + 1)); done
     argv=$(cat "$wt/worker-argv.txt" 2>/dev/null)
     launched_model=$(printf '%s\n' "$argv" | sed -n '/^--model$/{n;p;}')
     launched_effort=$(printf '%s\n' "$argv" | sed -n '/^--thinking$/{n;p;}')
@@ -609,16 +1733,16 @@ Skills: .agents/skills/trace-canary/SKILL.md - project check before done; verifi
 
     SEAM_EVIDENCE=$(t seam-ev.txt "$(cat "$CAPTAIN_TRACE")
 Skill evidence:
-- .agents/skills/trace-canary/SKILL.md: worker ran \`\$ ./check.sh\` and saw \`CHECK OK\`
-- verification-before-completion: selected, but no strong application evidence observed")
-    expect 'seam: post-work evidence cites what the launched worker actually did' pass \
-      "$SEAM_EVIDENCE" omp "$launched_model" "$launched_effort" "$selected" "$wt/worker-transcript.txt"
+- .agents/skills/trace-canary/SKILL.md: read complete | applied worker ran \`./check.sh\` | result saw \`CHECK OK\` | review UNPROVEN | usage verified
+- verification-before-completion: read none | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN")
+    expect 'seam: post-work evidence matches the launched worker record (receipt, behavior, result)' pass \
+      "$SEAM_EVIDENCE" omp "$launched_model" "$launched_effort" "$selected" "$wt/worker-session.jsonl"
     SEAM_FALSE=$(t seam-false.txt "$(cat "$CAPTAIN_TRACE")
 Skill evidence:
-- .agents/skills/trace-canary/SKILL.md: worker ran \`\$ ./check.sh\` and saw \`CHECK OK\`
-- verification-before-completion: worker re-ran \`bash tests/all.sh\` before claiming done")
-    expect 'seam: evidence claiming a verification run the worker never made is rejected' fail \
-      "$SEAM_FALSE" omp "$launched_model" "$launched_effort" "$selected" "$wt/worker-transcript.txt"
+- .agents/skills/trace-canary/SKILL.md: read complete | applied worker ran \`./check.sh\` | result saw \`CHECK OK\` | review UNPROVEN | usage verified
+- verification-before-completion: read complete | applied worker re-ran \`bash tests/all.sh\` | result UNPROVEN | review UNPROVEN | usage UNPROVEN")
+    expect 'seam: evidence claiming a read and a verification run the worker never made is rejected' fail \
+      "$SEAM_FALSE" omp "$launched_model" "$launched_effort" "$selected" "$wt/worker-session.jsonl"
   fi
 fi
 

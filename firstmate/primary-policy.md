@@ -28,32 +28,94 @@ re-reviewer, tenth-man):
   captain choice outside the rule says `captain override` in `why`.
 - `Skills` names exactly the project-local and shared worker skills
   selected in that brief (section 2 steps 3-4): project-local ones by
-  their worktree-relative path, shared ones by name. Nothing else - no
-  installed-but-unselected skill, no official FirstMate internal skill.
-  `Skills: none` remains verbatim when no skill is selected. Add a
-  `No skill: <task-specific reason>` line immediately after it. Before
-  choosing none, inspect applicable project-local and shared worker skills
-  under section 5; explain why neither applies, never use a generic
-  "none needed", and select a fitting skill instead of rationalizing an
-  omission.
+  their worktree-relative path, shared ones by name, and a companion file
+  the selected skill makes mandatory for this task by its absolute or `~/`
+  path as its own entry. Nothing else - no installed-but-unselected skill,
+  no official FirstMate internal skill.
+  Entries are separated by `;`, so a reason never contains one; use commas
+  or words inside a reason. `Skills: none` remains verbatim when no skill
+  is selected. Add a `No skill: <task-specific reason>` line immediately
+  after it. Before choosing none, inspect applicable project-local and
+  shared worker skills under section 5; explain why neither applies, never
+  use a generic "none needed", and select a fitting skill instead of
+  rationalizing an omission.
+- When the brief declares required capabilities, the block ends with the
+  `Library:` status lines section 5 "Capability library" defines, one per
+  required capability. A Library pick appears only on its `Library:` line -
+  even when it stands in for an unavailable shared default of the role and
+  carries the same name - unless it is a firstmate-config trusted install:
+  that one the brief carries under the ordinary shared-skill header, so
+  `Skills` lists it too. With no project-local or shared skill selected,
+  print `Skills: none` and its `No skill:` reason, for example:
+
+      Skills: none
+      No skill: the shared role default is unavailable, the reviewed Library method below supplies the review
+      Library: review.code -> addy:code-review-and-quality (skill, reviewed) | runtime omp | why: correctness and maintainability method fits this diff
 
 After a worker finishes:
 
     Skill evidence:
-    - <skill>: <observation citing `verbatim excerpt`>
-    - <skill>: selected, but no strong application evidence observed
+    - <skill>: read <complete|late|partial|none|UNPROVEN> | applied <`excerpt`|UNPROVEN> | result <`excerpt`|UNPROVEN> | review <`excerpt`|UNPROVEN> | usage <verified|UNPROVEN>
 
 - Print `Skill evidence:` after every worker, including one whose brief
-  selected no skills: after `Skills: none` write `Skill evidence: none
-  selected` and nothing under it. Never invent a line to fill it.
-- One line per selected skill, none for an unselected skill, at most two
-  observations each.
-- Each observation quotes a short verbatim excerpt from the worker's own
-  pane, transcript, report, or diff - a command it ran, output it saw, a
-  test it added. A skill's existence, its selection, or the worker saying
-  it applied the skill is not evidence; use the second form instead. Read
-  the excerpt in context first: text the worker only quoted, planned, or
-  denied doing is not evidence either.
+  selected no skills: after `Skills: none` with no Library pick write
+  `Skill evidence: none selected` and nothing under it. Never invent a
+  line to fill it.
+- One line per entry in `Skills:` and one per pick the brief carries under
+  `Selected library artifact:`, keyed by its artifact id
+  (`- <artifact-id>: read ...`); none for an unselected skill, at most two
+  excerpts per field. `Skills:` and `Library:` are SELECTED; READ, APPLIED, and
+  VERIFIED are separate fields, each taken from the assigned worker's own
+  retained OMP session record (`~/.omp/agent/sessions/<worktree>/<session>.jsonl`
+  whose header `cwd` is the worktree in `state/<id>.meta`, that starts
+  after the spawn, and whose first user message is the delivered brief),
+  never from the brief, the skill's name, a quoted plan, or the worker
+  saying it read or applied the skill. A non-omp worker's record (Pi) is
+  not supported: every field is `UNPROVEN`. `UNPROVEN` is always honest; a
+  missing, partial, or late read never becomes verified usage, and never
+  erases behavior the record shows.
+- `read complete`: the record's own successful `read` results show every
+  line of the exact listed file - a shared skill at
+  `~/.agents/skills/<name>/SKILL.md`, a project-local one at its path in
+  the worker's own worktree, a companion at its exact path, a Library pick
+  at the exact path its brief selected (a Claude worker's materialized
+  copy; never the same-named shared skill) - with its
+  current bytes, before the worker's first `edit`/`write`/`ast_edit`
+  call; explicitly read ranges add up. Writes made through bash or eval,
+  and jobs launched before the read, are not seen by that boundary;
+  `check` counts the bash/eval calls that came first. `late`: coverage
+  completed only after that call. `partial`: truncated, elided, or never
+  continued output, or shown lines that differ from the file. `none`: no
+  receipt. A listed path that is no readable file is `unreadable`: nothing
+  can be compared, so only `read UNPROVEN` passes. A Library pick's path
+  must also hold the artifact its brief selected: when its bytes differ
+  from the sha256 the brief's Requirement records, READ is `mismatch` -
+  another artifact, so no pre-work read is credited and only
+  `read UNPROVEN` passes. A Requirement that records no sha256 binds READ
+  to that path's current bytes only, and which version was selected stays
+  UNPROVEN (every real adapter selection records one). A same-named file
+  elsewhere, an errored read, `cat` output, or a harness skill-loaded
+  notice is not a receipt. READ covers the listed file only: a `SKILL.md`
+  receipt never covers its companion.
+- `applied`: what the worker did - its own tool calls or their output (a
+  command, an edit, a test run). Behavior without a complete pre-work
+  read, or before it, is still reported; its attribution to the skill
+  stays UNPROVEN. `result`: executed output - a bash, eval, or background
+  bash result. Every result is ordered by its call (a background job by
+  its launch), never by when its output arrived, so a command issued
+  alongside the read never counts as after it. Text the worker wrote (an
+  edit/write echo, a test it added, its report prose) is never a result.
+  `review`: an excerpt from another
+  session's record; a different session is necessary, but it proves
+  neither the reviewer's independence nor the verdict.
+- `usage verified` is a declaration, never a checker verdict. It needs
+  `read complete`, an applied excerpt and a result excerpt located after
+  that read, and an independent task-relevant assessment - FirstMate's or
+  a reviewer's - that this behavior and output are the method's
+  application. An echoed plan, negative-control or RED output,
+  self-printed text, or an unrelated success never establishes it.
+  Without such an assessment, write `usage UNPROVEN`; that is the normal
+  report, not a request for approval.
 - Quote each excerpt in single backticks and separate two excerpts with
   words or a space (`done` and `passed`, not `done`-`passed`). An excerpt
   that itself contains backticks is quoted whole: `Exit code: `1``.
@@ -64,13 +126,19 @@ Independent review stays separate from any automated pipeline:
     no-mistakes: <result>
 
 `tests/routing-trace.sh check` checks one captured block against the real
-spawn axes, the matched rule's route, the brief's selected skills, and the
-worker transcript; its offline suite also drives the real `fm-spawn.sh`
-seam with a fixture worker. A citation PASS is a lexical match only, so
-`check` prints each citation's transcript context for that reading. It
-does not prove the category or rule was chosen correctly or that a skill
-was applied. It is
-a diagnostic, never a gate.
+spawn axes, the matched rule's route, the brief's selected skills, the
+worker's session record (plus, for a `review` claim, another session's
+record), and - given `--brief <brief>` - the `Library:` lines against that
+brief; its offline suite also drives the real `fm-spawn.sh` seam with a
+fixture worker. It proves read coverage of each listed file and where each
+excerpt occurs, and fails a READ, excerpt, or `usage verified` claim whose
+necessary links the records lack. It never proves semantic application:
+located links print as INSPECT with tool, time, and context, and its
+SUMMARY reports at most `links located, semantics UNPROVEN by checker`. It
+cannot prove understanding, the reason the worker acted, reviewer
+independence, that the record is the assigned worker's, the record's
+authenticity, or that the category or rule was chosen correctly. It is a
+diagnostic, never a gate.
 
 ## 1. Authority
 
@@ -147,6 +215,22 @@ exist from a recursive `**/SKILL.md` search alone: symlinked skill directories
 may be omitted by glob traversal. Select only skills relevant to the task
 under section 5.
 
+Capabilities are assessed at intake, for every task, before deciding whether
+to delegate it or to handle it directly as FirstMate already may (for
+example running a project's existing tests): decide whether a specialized
+method would materially improve this task - a review (`review.code`),
+integration testing (`test.integration`), a test-first fix (`test.tdd`).
+Never skip this assessment, and never assign capabilities mechanically. When
+one is warranted, page on to section 5 "Capability library" (past the first
+read window of this file) and run its category-first lookup for exactly
+those capabilities before deciding how the task runs. The result never
+forces delegation: a suitable pick goes into the worker contract when the
+task is delegated, or is read and applied by FirstMate itself, under the
+same boundaries, when it handles the task directly; no suitable candidate
+is recorded as `-> none` with its reason, and the task proceeds exactly as
+it otherwise would. When no capability is warranted, write no
+`Required capabilities:` block.
+
 For every delegated task, resolved against the worker's own isolated task
 worktree - its instructions and skills, never the primary checkout the task
 started from - make the following an explicit, compact part of that task's
@@ -180,12 +264,25 @@ started from - make the following an explicit, compact part of that task's
        Requirement:
          Apply before declaring the task complete.
 
+   When the task declares required capabilities, step 4 also carries the
+   `Required capabilities:` block and the agent-library selections exactly
+   as section 5 "Capability library" hands them over: absolute artifact
+   paths with the same read-and-apply requirement, never their bodies.
+
+   A companion file the selected skill makes mandatory for this task (for
+   example `~/.agents/skills/test-driven-development/writing-good-tests.md`
+   when tests change) is named the same way, by its absolute or `~/` path,
+   as its own entry;
 5. a pre-work requirement: before substantive work, confirm `pwd -P`
    equals `git rev-parse --show-toplevel` (standing at the worker's own
    isolated worktree root, not a parent or the primary checkout), then
    read every path named above relative to that root and report a missing,
    unreadable, or conflicting path instead of silently falling back to a
-   different scope or a global default;
+   different scope or a global default. Each selected skill, companion, and
+   selected Library artifact is read with the harness's own file read tool
+   before the first edit and before any work done through the shell,
+   continuing any truncated or elided output until every line has been
+   shown, so the session record holds the receipt section 0 checks;
 6. guidance for target discovery and subtree changes: revisit steps 1-4
    for each newly selected scope and read the newly applicable instructions
    and project-local skills before substantive work there. This applies to
@@ -197,7 +294,8 @@ This is an advisory handoff contract, not a pre-tool barrier or a completion
 gate. Name paths and the resolution, never paste file or skill bodies into
 the brief, and never enumerate every installed global skill. Worker reports
 can describe discovery, but cannot independently prove read order or skill
-application; the harness's generic native loader alone cannot either.
+application; the harness's generic native loader alone cannot either. The
+worker's retained session record is what section 0 reports from.
 
 Official FirstMate internal skills (`$FIRSTMATE_ROOT/.agents/skills/*`) are
 never a selected shared worker skill and never belong in step 4: they are
@@ -391,9 +489,11 @@ A role describes how to work. It never outranks the project.
 
 Global skills live in the normal Agent Skills location and load on demand.
 Select them; do not dump them. Per task, at most two workflow or methodology
-skills and at most one reference skill, fewer by preference, and none at all
-when the task does not need one. A project-local skill always wins over a
-global skill covering the same ground.
+skills and at most one reference skill - Library picks below included -
+fewer by preference, and none at all when the task does not need one. A
+project-local skill always wins over a global skill or Library artifact
+covering the same ground, and a project-required skill is mandatory: it is
+always kept, even when it leaves no room for optional picks.
 
 A role file's frontmatter `autoloadSkills` lists the shared worker skills
 that role works with. When that role is used they are the default selection
@@ -407,6 +507,182 @@ is not, and a role file whose frontmatter OMP would reject.
 Official FirstMate internal skills (the official checkout's own
 `.agents/skills`) are never a global skill choice for a delegated task -
 they are Captain/FirstMate-only, per section 2.
+
+Selecting a skill is not reading or applying it: section 0 reports
+SELECTED, READ, APPLIED, and VERIFIED separately for every selected skill,
+including a role default. A mandatory companion named under section 2 step
+4 is the task's one reference skill, not an extra method. When it does not
+fit this budget it is not listed in `Skills:`; instead an
+`Unmet companion: <path> - <reason>` line follows the `Skills:` line, and
+the selected skill's `Skill evidence` line keeps `usage UNPROVEN`, because
+its `read complete` covers the named `SKILL.md` only, never the full method.
+
+### Capability library (optional)
+
+The Agent Library (`agent-library` from agent-skill-vault) is an optional,
+cold capability provider: reviewed external skills, agents, workflows, and
+knowledge, indexed per capability and gated by its own policy. It is never
+an orchestrator. Decomposition, category and rule, role, harness, model,
+effort, dispatch, review, and completion stay exactly where sections 1-7
+put them, and nothing here changes routing, defaults, installed skills, or
+the official checkout.
+
+**Required capabilities are not the dispatch category.** The category
+(section 3) chooses role, harness, model, and effort; a required capability
+only names which Library shelf to read. Declare one only when a specialized
+method materially improves the task - a review needs `review.code`, an
+integration-testing task `test.integration`, a test-first fix `test.tdd` -
+never mechanically for every task, and several only when each is
+justified. Record them, each with its reason, in the brief's
+`## Firstmate spec`:
+
+    Required capabilities:
+      review.code - the task is a review of the API diff
+      test.integration - the change must be proven by an integration test run
+
+**Availability.** The Library is available only when `AGENT_LIBRARY_ROOT`
+names an agent-library checkout containing `library/bin/agent-library.ts`
+and `bun` is installed. It is an explicit machine-local dependency the
+operator exports in the environment `fm` is launched from (`install.sh`
+owns `~/.config/firstmate-config/env`, so not there); this repository never
+installs, pins, or defaults it. Otherwise the task proceeds exactly as it
+would without it.
+
+**Budget first, before any body is loaded.** Section 5's limit - two
+methods and one reference - applies to the optional picks, shared skills
+and Library artifacts together; project-required skills are always kept
+and only shrink the slots left for Library picks, never the reverse. The
+adapter applies `--per-capability` (keep it at its default of 1) and
+`--knowledge` per requested capability. So: count the methods and
+references the brief already carries (project-required, then shared); read
+each required capability's shelf with `agent-library category <capability>`
+(metadata only, no body); skip a capability whose pick would duplicate an
+already selected skill or that a project-local skill covers; and request
+only as many method-yielding capabilities as method slots remain, most
+important first. Pass
+`--knowledge 1` only when the reference slot is free and the lookup holds a
+single capability - run that capability as its own lookup. Report every
+required capability left out as `Library: <capability> -> none | why:
+budget` (or the covering skill). Never trim or edit the adapter's output to
+fit; look up fewer capabilities instead.
+
+**Lookup** - category-first, once the route and the budget are set:
+
+    bun "$AGENT_LIBRARY_ROOT/library/bin/agent-library.ts" firstmate \
+      --capability <capability> [--capability <capability> ...] \
+      --runtime <routed harness> --knowledge 0|1 [--prefer <artifact-id>]
+
+It reads the root registry, each requested capability's index, firstmate-
+config's `skills/promoted.lock` when one exists, and only the bodies it
+selects - never another capability's index, the whole catalog, or an
+unselected body. `agent-library category <capability>` is the same
+one-shelf metadata view and shows every candidate's kind, trust, and why
+it is or is not selectable. During task selection never run the Library's
+whole-catalog, discovery, launch, or promotion commands (`find`, `show`,
+`compare`, `sync`, `update`, `import`, `use`, `run`, `recipe`, `promote`).
+
+**Choosing.** Take the adapter's metadata ranking by default.
+
+- A firstmate-config trusted install wins its family and arrives under the
+  ordinary `Selected shared worker skill:` header and installed path, so it
+  is the same shared skill as before. Name an external equivalent with
+  `--prefer` only on task-specific evidence that it fits materially
+  better, and put that evidence in the status line's `why`.
+- `--prefer` also selects an `explicit` candidate the task genuinely needs.
+  It never unlocks an unreviewed, manual-only, router, disabled, blocked,
+  or foreign-macro row: the adapter then picks the next eligible row or
+  nothing, so compare the result with what was named and report the
+  refusal. A selected body that fails its recorded sha256 fails the whole
+  lookup instead. Either denial is final - never retry with `--manual`,
+  `--allow-unreviewed`, `recipe`, or `use`, and never paste a refused or
+  failed path by hand.
+- Kinds are not interchangeable. A `skill` is a focused method for the
+  routed worker; prefer it over a broad workflow whenever it suffices. An
+  `agent` is a task-local specialist role and method for that same worker:
+  its `tools:`/`model:` frontmatter is not enforced and never changes
+  harness, model, effort, or role, and any helper it suggests stays within
+  section 6. A local `workflow` is methodology inside this one task.
+  `knowledge` is an optional reference: request it only when a reference is
+  relevant; the adapter lists it only for a capability where it also
+  selected a method.
+- Pass the routed harness - or, for a task FirstMate handles itself, its
+  own harness - as `--runtime` so artifacts marked incompatible
+  with it are never chosen. Never re-route a task to fit an artifact; a
+  different harness for a genuine compatibility requirement is an explicit
+  captain override (section 3).
+
+**Handover.** Copy the adapter output above its
+`--- for FirstMate, not the worker brief ---` line verbatim into
+`## Firstmate spec` below `Required capabilities:`; what follows that line
+(no-pick reasons, nameable choices, the read trace) is for the Captain
+only. The worker receives selected paths, never bodies, and is never told
+to browse or query the Library. For an `agent` or `workflow` pick, add one
+sentence saying it is a task-local role or method under this brief with
+unenforced frontmatter.
+
+**Claude workers.** A Claude worker reads only its worktree and the
+task-channel directories `fm-spawn.sh` grants it, one of which is the
+task's own `data/<task-id>`; under `config/claude-permission-mode auto` any
+other path - a Library body, or a shared skill under `~/.agents/skills` -
+parks the unattended worker on a permission question. So for a
+Claude-harness worker, once the budget and every choice are settled, make
+the final lookup with `--materialize <physical data dir>`, where the
+directory is `$(cd "$FM_HOME/data/<task-id>" && pwd -P)`. The adapter
+writes sha256-verified copies of exactly the printed Library artifacts and
+their supporting files under `data/<task-id>/agent-library/`, mirrored so
+relative references resolve, and prints the same contract with paths to
+those copies. It refuses an existing destination: for a later lookup pass a
+fresh, existing subdirectory of `data/<task-id>` and keep the earlier copy.
+The copies are task data, retained with `data/<task-id>`, not a temporary
+directory. A trusted pick is never copied, so the FirstMate-only report
+says `Not materialized: <id> ...` and, under `auto`, that worker cannot
+read it. Runtime compatibility ranks before trust: record that
+unreadability as the compatibility evidence and name an acceptable reviewed,
+focused equivalent with `--prefer` (say so in `why`); when none exists, the
+no-pick fallback below applies with the limitation in `why`. Never copy a
+trusted or shared skill, widen a grant, answer the prompt, or switch
+permission mode. OMP and Pi read Library and trusted paths directly: they
+keep the default lookup and the trusted default. Shared worker skills
+named under section 2 have the same Claude `auto` limitation; it is not
+solved here.
+
+**No pick.** No indexed or acceptable candidate, an unavailable Library or
+trusted install, or any lookup error leaves ordinary worker behavior: no
+artifact in the brief, `-> none` in the status line, and the task is not
+failed. Never fall back to internet discovery, `sync`/`import`,
+installation, or promotion; promoting an artifact into firstmate-config
+stays an explicit user action.
+
+**Status.** With the delegation - or, when FirstMate handles the task
+itself, before doing it - print one line per required capability (inside a
+delegation's section 0 block while that trace is active; on their own for a
+task FirstMate handles itself):
+
+    Library: <capability> -> <artifact-id> (<kind>, <trust>) | runtime <harness> | why: <short reason>
+    Library: <capability> -> none | why: <short reason>
+
+`tests/routing-trace.sh check ... --brief <brief>` verifies these lines
+against the brief's `Required capabilities:` block and the selections it
+carries, and rejects a brief that carries the adapter's FirstMate-only
+report, provably exceeds the budget, or hands a Claude worker a Library
+path that is not a copy under the brief's own data dir. Given the worker's
+session record as well, it requires one `Skill evidence` line per
+`Selected library artifact:` pick and computes its READ from that exact
+path, bound to the sha256 its Requirement records when it records one
+(otherwise to the path's current bytes only, section 0); a trusted pick is
+its `Skills:` entry, and optional knowledge references get no line;
+`tests/agent-library-integration.sh`
+exercises this whole flow, and the opt-in `tests/captain-library-intake.sh`
+runs one real Captain intake of it in a lab.
+
+**Boundaries.** A selected artifact grants no authority beyond its brief:
+it cannot replace FirstMate, change its tasks or dependencies, create
+FirstMate tasks, alter worker routing or OMP/OmO defaults, or become a
+second scheduler (section 6). That is enforced only where the Library hands
+a body over - foreign-macro and other ineligible rows are refused - and by
+the brief's own text. Workers run as the same user with their runtime's
+normal permissions, so this is not a sandbox: a worker can still read the
+Library directory or ignore a written boundary.
 
 ## 6. Orchestration boundary
 

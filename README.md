@@ -112,13 +112,28 @@ The complete conditions live in the tracked routing file and
 [`firstmate/primary-policy.md`](firstmate/primary-policy.md).
 
 During the debugging period the Captain prints a short `Routing:` /
-`Skills:` block before each delegation and a `Skill evidence:` block after
-each worker finishes (primary-policy.md section 0).
+`Skills:` block (plus a `Library:` line per required capability) before
+each delegation and a `Skill evidence:` block after each worker finishes
+(primary-policy.md section 0). Skill evidence keeps
+SELECTED, READ, APPLIED, and VERIFIED separate. READ comes from the omp
+worker's own `read` receipts in its retained OMP session record: the whole
+listed file (a mandatory companion is its own entry) before its first
+edit/write call. Bash/eval writes are not seen by that boundary and are
+only counted. APPLIED is an excerpt of the worker's own tool calls or
+output; a result is executed bash/eval output, ordered by its call (a
+background job by its launch), never text the worker wrote; a review
+excerpt comes from another session's record, which is not
+proof of independence. `usage verified` is a declaration that also needs an
+independent task-relevant assessment; otherwise it is `UNPROVEN`. A Pi
+record supports only `UNPROVEN`, and a missing, partial, or late read never
+becomes verified usage.
 `tests/routing-trace.sh check` compares a captured block with the real
 spawn axes, the matched rule's route (`#n`), the brief's selected skills,
-and the worker transcript. Evidence citations are lexical matches only, so
-it prints their transcript context for the Captain to read; it cannot prove
-the category/rule choice or that a skill was applied.
+and those records, and with `--brief` the Library lines against that
+brief. It fails claims whose necessary links are missing and
+reports located links only, with their context. Semantic application stays
+unproven by the checker, and it cannot prove the category/rule choice
+either.
 
 ## Context and skills
 
@@ -144,6 +159,31 @@ standalone [`agent-skill-vault`](https://github.com/inkayat/agent-skill-vault)
 repository is a separate, manually curated skill collection; promoting one
 of its skills into this repository's shared set is a deliberate, explicit
 decision.
+
+Its optional Agent Library is a capability provider in the normal selection
+flow, never an orchestrator. At intake, before deciding whether to delegate
+a task or run it directly, the Captain assesses whether a specialized method
+would materially improve it; if so it records the task's required
+capabilities (for example `review.code`, `test.integration`) - separate from
+the dispatch category - and, when `AGENT_LIBRARY_ROOT` names a Library
+checkout in the environment `fm` starts from, runs its `agent-library
+firstmate` lookup for exactly those shelves. A selected artifact goes into
+the worker contract (or is applied by the Captain when it runs the task
+itself), firstmate-config trusted skills win their families by default, a
+`Library:` line per capability reports the pick or `none`, and no candidate,
+no Library, or a lookup error leaves ordinary behavior - delegated or direct,
+as the task would have run anyway. A Claude
+worker, which under the `auto` permission mode reads only its own task
+grants, gets verified copies materialized in its task's `data/<task-id>`
+instead of shared Library paths. Each selected artifact also gets its own
+`Skill evidence` line, keyed by its artifact id, whose READ is the worker's
+receipt for that exact path - never a same-named shared skill - and counts
+only while that path holds the bytes whose sha256 the brief records (a brief
+recording none binds READ to the path's current bytes only, and the selected
+version stays unproven). Nothing is
+discovered, installed, or promoted automatically. See
+`firstmate/primary-policy.md` section 5 "Capability library" and
+`tests/agent-library-integration.sh`.
 
 Official FirstMate internal skills remain separate and are not installed as
 shared worker skills. Context and skill selection are policy and handoff

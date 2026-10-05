@@ -96,12 +96,26 @@
 <p>Skills are installed as symlinks. The pinned repositories are cloned once into a machine-local cache, and the addyosmani skills' relative links to shared references are satisfied by an extra <code>~/.agents/references</code> link.</p>
 
 <h2 id="selection">How skills are selected</h2>
-<p>Skills load on demand and are selected, not dumped. Per task the Captain picks at most two workflow or methodology skills and at most one reference skill, fewer by preference, and none when the task does not need one.</p>
+<p>Skills load on demand and are selected, not dumped. Per task the Captain picks at most two workflow or methodology skills and at most one reference skill - capability-library picks included - fewer by preference, and none when the task does not need one.</p>
 <ul>
 <li>Before choosing, the Captain lists <code>~/.agents/skills</code> and reads the relevant <code>SKILL.md</code> files directly. A recursive <code>**/SKILL.md</code> search is not enough, because symlinked skill directories can be skipped by glob traversal.</li>
 <li>Choosing no skill requires a task-specific reason, not a generic "none needed".</li>
 <li>A project-local skill always wins over a shared one on the same ground.</li>
 </ul>
+
+<h2 id="library">Optional capability library</h2>
+<p>The <a href="https://github.com/inkayat/agent-skill-vault"><code>agent-skill-vault</code></a> Agent Library is an optional, policy-gated shelf of reviewed external skills, agents, workflows, and knowledge, indexed per capability. At intake, for every task and before deciding whether to delegate it or run it directly, the Captain assesses whether a specialized method would materially improve the task; only then does it record the task's <em>required capabilities</em> - separate from the dispatch category, which still chooses role, harness, model, and effort - and ask the Library for those shelves only. The result never forces delegation: with no suitable candidate the Captain records <code>-&gt; none</code> with its reason and runs the task as it otherwise would.</p>
+<pre data-label="Captain, after routing"><code>bun "$AGENT_LIBRARY_ROOT/library/bin/agent-library.ts" firstmate \
+  --capability review.code --capability test.integration \
+  --runtime omp --knowledge 0</code></pre>
+<ul>
+<li>The lookup reads the root registry, each requested capability's index, and only the bodies it selects - never another shelf or the whole catalog. A firstmate-config trusted skill wins its family and arrives under the ordinary shared-skill header; an external equivalent is named with <code>--prefer</code> only on task-specific evidence.</li>
+<li>The skill budget is settled first, from the metadata-only shelf views (<code>agent-library category &lt;capability&gt;</code>): Library methods and references count with the shared skills, project-required skills are always kept and only leave fewer slots for Library picks, and a capability that does not fit is reported as <code>-&gt; none | why: budget</code> instead of trimming the adapter's output.</li>
+<li>The worker part of the output (selected paths, never bodies) goes into the brief below a <code>Required capabilities:</code> block; the worker is never told to browse the Library. The worker reads each selected artifact in full with its own read tool before its first edit, and the trace's <code>Skill evidence</code> block carries one line per selected artifact, keyed by its artifact id, whose read is checked against that exact path - never a same-named shared skill - and only while that path holds the bytes whose sha256 the brief records (a brief recording none binds the read to the path's current bytes only, and the selected version stays unproven). Kinds stay distinct: a skill augments the routed worker, an agent is a task-local role whose tool and model frontmatter is not enforced, knowledge is an optional reference.</li>
+<li>No candidate, an unavailable Library (<code>AGENT_LIBRARY_ROOT</code> unset in the environment <code>fm</code> starts from), or a lookup error leaves the task on ordinary worker behavior. Nothing is discovered, installed, or promoted automatically, and foreign orchestration workflows are refused.</li>
+<li>A Claude worker under the <code>auto</code> permission mode cannot read paths outside its worktree and its task-channel grants, so for a Claude-harness worker the final lookup adds <code>--materialize</code> with the task's own <code>data/&lt;task-id&gt;</code> directory: verified copies of exactly the selected artifacts and their supporting files are written there (retained with the task's data, never overwritten) and the contract points at them. Trusted installs are never copied; when one would be unreadable, a reviewed focused equivalent is named on that compatibility evidence, or no pick is recorded. Shared skills under <code>~/.agents/skills</code> keep the same Claude <code>auto</code> limitation.</li>
+</ul>
+<p>The full procedure is <code>firstmate/primary-policy.md</code> section 5 "Capability library", with the per-delegation assessment trigger in section 2; <code>tests/agent-library-integration.sh</code> exercises it end to end, and the opt-in <code>FM_LIVE_LIBRARY_INTAKE=1 tests/captain-library-intake.sh</code> runs one real Captain intake of it in a lab home. A selected artifact's boundaries are enforced only where the Library hands a body over and by the brief's text - workers run as the same user, so this is not a sandbox.</p>
 
 <h2 id="handoff">What a worker is told</h2>
 <p>"The harness discovers project instructions natively" is not enough: Pi and OMP differ in their search roots, override support, and skill precedence. So each delegated task carries an explicit, compact handoff, resolved against the worker's <em>own</em> isolated worktree:</p>
@@ -110,7 +124,7 @@
 <li>The applicable instruction paths, relative to the worktree root, and which one wins at each scope.</li>
 <li>Each required project-local skill as a bare, worktree-relative path with a read-and-apply requirement.</li>
 <li>Each selected shared skill by name, with a read-and-apply requirement - never a pasted body.</li>
-<li>A pre-work check that <code>pwd -P</code> equals <code>git rev-parse --show-toplevel</code>, then reading every named path and reporting any that is missing or conflicting.</li>
+<li>A pre-work check that <code>pwd -P</code> equals <code>git rev-parse --show-toplevel</code>, then reading every named path and reporting any that is missing or conflicting. Each selected skill, and any companion file it makes mandatory for the task (named by its absolute or <code>~/</code> path as its own entry), is read in full with the harness's own read tool before the first edit and before any shell work, continuing truncated output, so the session record holds the receipt.</li>
 <li>A reminder to repeat steps 1-4 when the work moves into a new subtree.</li>
 </ol>
 <div class="callout warn"><span class="t">Guidance, not a gate</span>
@@ -120,10 +134,12 @@
 <p>During the current debugging period the Captain prints a short block in chat before each delegation, and one after each worker finishes:</p>
 <pre class="out" data-label="shape"><code>Routing: &lt;CATEGORY&gt; [#n] | role &lt;role&gt; | &lt;harness&gt; | &lt;provider/model&gt; | &lt;effort&gt; | why: &lt;reason&gt;
 Skills: &lt;skill&gt; - &lt;reason&gt;; &lt;skill&gt; - &lt;reason&gt;
+Library: &lt;capability&gt; -&gt; &lt;artifact-id&gt; (&lt;kind&gt;, &lt;trust&gt;) | runtime &lt;harness&gt; | why: &lt;reason&gt;
 
 Skill evidence:
-- &lt;skill&gt;: &lt;observation citing `verbatim excerpt`&gt;</code></pre>
-<p>It discloses decisions already made; it is not reasoning, and it is never written to a file or into the brief. <code>tests/routing-trace.sh check</code> compares a captured block with the real spawn and transcript, but a citation match is lexical only: it cannot prove the category was right or that a skill was applied.</p>
+- &lt;skill&gt;: read &lt;complete|late|partial|none|UNPROVEN&gt; | applied &lt;`excerpt`|UNPROVEN&gt; | result &lt;`excerpt`|UNPROVEN&gt; | review &lt;`excerpt`|UNPROVEN&gt; | usage &lt;verified|UNPROVEN&gt;</code></pre>
+<p>It discloses decisions already made; it is not reasoning, and it is never written to a file or into the brief. <code>Library:</code> lines appear only when the brief declares required capabilities, one per capability (<code>-&gt; none</code> when nothing was selected). Skill evidence keeps selection, reading, application, and verification apart. A read counts only when the omp worker's own retained session record shows its <code>read</code> results covering the whole listed file before its first edit/write call. Writes through bash or eval are not seen by that boundary; they are only counted. A <code>SKILL.md</code> read never covers its companion file. Applied evidence is an excerpt of the worker's own tool calls or output. A result is executed bash/eval output, ordered by its call (a background job by its launch), never text the worker wrote. A review excerpt comes from another session's record, which does not prove independence. <code>usage verified</code> is a declaration that also needs an independent, task-relevant assessment; without one it is <code>UNPROVEN</code>. A Pi record supports only <code>UNPROVEN</code>. A missing, partial, or late read is reported as such and never becomes verified usage.</p>
+<p><code>tests/routing-trace.sh check</code> compares a captured block with the real spawn and those records, and with <code>--brief</code> its Library lines with the brief. It fails claims whose necessary links are missing and reports located links only, with their context. Semantic application stays unproven by the checker, and the check cannot prove the category was right.</p>
 
 <h2 id="manage">Add or change a shared skill</h2>
 <h3>A skill owned by this repository</h3>
