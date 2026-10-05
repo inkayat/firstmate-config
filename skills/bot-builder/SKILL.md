@@ -51,6 +51,7 @@ your own path guesses; a refusal with `unknown-role` means stop and ask):
 
 | Routine | Role | Typical route |
 | --- | --- | --- |
+| codebase or PR fact scan - no review, no changes | `scout` | `EXPLORE #1` (`EXPLORE #2` only for genuinely tangled reading) |
 | small refactor proposals | `refactorist` | `EXPLORE #2` |
 | static security review | `security-engineer` | `REVIEW #2` |
 | code review of recent changes | `code-reviewer` | `REVIEW #2` |
@@ -83,6 +84,11 @@ The project's registered posture caps the level (`local-only` allows at most
 `local-commit`; `push` needs a project without `+yolo`). The level is an upper
 bound, never an authorization: commits and pushes still need Firstmate's
 normal per-action captain approval.
+
+`scout` is report-only: create it at `local-proposal` with `--notify report`.
+`fm bot create` refuses it at any higher level (`role-report-only`). If the
+captain wants a scout to commit or push, say that is a different routine with
+a different role; never swap roles yourself to get the level.
 
 ## 3. Create
 

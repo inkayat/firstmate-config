@@ -60,6 +60,7 @@
 </tbody>
 </table>
 <p><code>create</code> refuses any gate failure. The due evaluation re-checks every gate each time: an elevated bot whose gate fails that day - expired, missing, or insufficient authorization, a lost Captain rule, a tightened posture - runs at <code>local-proposal</code> and the plan says why.</p>
+<p>The <code>scout</code> role is report-only: it collects facts about a codebase or a handed PR and never reviews or changes anything. <code>create</code> refuses a scout above <code>local-proposal</code> (<code>role-report-only</code>), and a scout spec that claims a higher level later is <code>bot invalid:</code> - filed and held for the Captain with no plan, never run as a ship. The role file is instructions, not a sandbox: this gates what is filed and dispatched, not what a running worker's shell can do.</p>
 
 <h2 id="fm-bot">fm bot commands</h2>
 <pre data-label="usage"><code>fm bot create NAME --role R --project P --route "CATEGORY #N"

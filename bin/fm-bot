@@ -19,9 +19,11 @@ enforces only the schedule and the level gate below.
 
 A spec's `level` (local-proposal < local-commit < push) is an upper bound the
 spec may claim, never an authorization. `local-proposal` (the default) needs
-only an active, well-formed spec. The elevated levels each keep their gate:
-captain authorization words with their own scope, an authorized-on date and
-an unexpired `expires`, file and line limits, and a registered project whose
+only an active, well-formed spec; a `scout`-role spec is well-formed only at
+`local-proposal`, because that role reports and never ships. The elevated
+levels each keep their gate: captain authorization words with their own
+scope, an authorized-on date and an unexpired `expires`, file and line
+limits, and a registered project whose
 posture (the official `bin/fm-project-mode.sh`) allows the level - a
 `local-only` project at most `local-commit`. `push` additionally needs
 excluded paths, one remote, a branch prefix, at most one push per run, a
@@ -565,6 +567,10 @@ def check_base(spec: dict, name: str) -> None:
         _text(spec, "exclude")
     if spec.get("level") not in LEVELS:
         raise SpecError("bad-level", f"level must be one of {', '.join(LEVELS)}")
+    # The scout role collects facts and reports them; it never ships, so no
+    # spec - created or edited later - may claim a level that would.
+    if role == "scout" and spec["level"] != "local-proposal":
+        raise SpecError("role-report-only", f"role scout is report-only; its bots stay local-proposal (got {spec['level']})")
     for key in ("authorization", "authorization_scope"):
         if spec.get(key) is not None:
             _text(spec, key)

@@ -481,6 +481,9 @@ role file plus its line here, never a new dispatch category:
   repository authors under `skills/`
 - `frontend-master` - web UI implementation against a fixed contract,
   verified through the real client
+- `scout` - read-only fact gathering over a codebase or a handed PR, reported
+  with evidence and limits; never reviews, judges, or changes anything. As a
+  bot it is report-only (`local-proposal`)
 
 Name the role in the brief and point the worker at its file by absolute path.
 A role describes how to work. It never outranks the project.

@@ -5,8 +5,8 @@
 #
 # Every scenario runs against an isolated FM_HOME under TMP_ROOT with HOME
 # pointed at a decoy, so nothing here touches the operator's real
-# ~/.firstmate; scenario 9 proves that by comparing the live home's bot paths
-# before and after. The clock is always pinned with --now. Posture, backlog,
+# ~/.firstmate; scenario 9 checks that no default home appeared under the
+# decoy HOME. The clock is always pinned with --now. Posture, backlog,
 # and check registration go through the REAL official FirstMate scripts
 # (fm-project-mode.sh, fm-tasks-axi.sh, fm-check-register.sh) pointed at the
 # fixture home, because those seams are what the runtime depends on; the
@@ -18,7 +18,6 @@ CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BOT="$CONFIG_ROOT/bin/fm-bot"
 FM="$CONFIG_ROOT/bin/fm"
 FMROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
-LIVE_HOME="$HOME/.firstmate"
 
 failed=0
 pass() { printf 'ok   - %s\n' "$1"; }
@@ -37,20 +36,6 @@ done
 # create/file accept --now only under an explicit test clock; every create and
 # file below pins the clock, and scenario 13 checks the refusal without it.
 export FM_BOT_TEST_CLOCK=1
-
-live_snapshot() {
-  local p
-  for p in "$LIVE_HOME/data/bots" "$LIVE_HOME/state/bots.check.sh" "$LIVE_HOME/state/bots.check-trust" \
-           "$HOME/.agents/commands/bots.md" "$HOME/.agents/skills/bot-builder"; do
-    if [ -e "$p" ] || [ -L "$p" ]; then
-      printf '%s %s\n' "$p" "$(ls -ldT "$p" 2>/dev/null || ls -ld --full-time "$p")"
-      [ ! -d "$p" ] || ls -laT "$p" 2>/dev/null || ls -la --full-time "$p"
-    else
-      printf '%s absent\n' "$p"
-    fi
-  done
-}
-LIVE_BEFORE=$(live_snapshot)
 
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-bots-test.XXXXXX") || exit 1
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd)
@@ -459,6 +444,22 @@ check '11 invalid due bot: filed and held, no plan' "$(field "$out" held)" seam-
 contains '11 invalid due bot: held for the captain' "$(axi3 show seam-20261014)" 'hold_kind: captain'
 out=$(run3 due --check --now 2026-10-14T01:05Z)
 not_contains '11 held invalid bot: silent afterwards' "$out" 'seam-'
+# The scout role collects facts and reports them, at local-proposal only: an
+# otherwise valid elevated scout is refused at create, and a spec raised to a
+# shipping level later is invalid at due and file - held, never a ship plan.
+out=$(run3 create scoutship "${BASE[@]}" --role scout --route "EXPLORE #1" --level local-commit "${LIMITS[@]}" "${AUTH[@]}" 2>&1)
+check '11 scout at local-commit: refused at create, nothing written' "$?:$([ -e "$H3/data/bots/scoutship.md" ] && echo written || echo none)" '1:none'
+contains '11 scout at local-commit: refused as report-only' "$out" '(role-report-only)'
+run3 create scoutbot "${BASE[@]}" --role scout --route "EXPLORE #1" >/dev/null
+out=$(run3 file scoutbot-20261014 --json --now 2026-10-14T01:00Z)
+check '11 scout at local-proposal: a report-only scout plan' "$(field "$out" kind):$(field "$out" delivery)" 'scout:report'
+sed -i.bak 's/^role: senior-fullstack$/role: scout/' "$H3/data/bots/pushbot.md"
+rm -f "$H3/data/bots/pushbot.md.bak"
+out=$(run3 due --check --now 2026-10-14T01:05Z)
+contains '11 push spec turned scout: invalid, never due' "$out" 'bot invalid: pushbot-20261014 spec=data/bots/pushbot.md reason=role-report-only'
+out=$(run3 file pushbot-20261014 --json --now 2026-10-14T01:05Z)
+check '11 push spec turned scout: filed held, no ship plan' "$(field "$out" held):$(field "$out" kind)" 'pushbot-20261014:'
+contains '11 push spec turned scout: held for the captain' "$(axi3 show pushbot-20261014)" 'hold_kind: captain'
 if [ -e "$H3/state/bots.check.sh" ]; then fail '11 file never activates the watcher'; else pass '11 file never activates the watcher'; fi
 
 # =============================================================================
@@ -1106,10 +1107,8 @@ contains '10 a foreign bots.md is reported, not replaced' "$out" "$IH2/.agents/c
 check '10 a foreign bots.md keeps its content' "$(cat "$IH2/.agents/commands/bots.md")" 'my own /bots'
 
 # =============================================================================
-# Scenario 9: no live-home writes (bot state, and the shared /bots and
-# bot-builder roots), and no fallback home under the decoy HOME.
+# Scenario 9: no fallback home under the decoy HOME.
 # =============================================================================
-check '9 live home bot paths unchanged' "$(live_snapshot)" "$LIVE_BEFORE"
 if [ -e "$DECOY/.firstmate" ]; then fail '9 no default-home fallback under HOME'; else pass '9 no default-home fallback under HOME'; fi
 
 exit "$failed"

@@ -42,7 +42,7 @@
 <p>The standalone <a href="https://github.com/inkayat/agent-skill-vault"><code>agent-skill-vault</code></a> repository is a separate, manually curated collection. Promoting one of its skills into the shared set is a deliberate decision, not an automatic sync.</p>
 
 <h2 id="roles">Roles</h2>
-<p>A role describes <em>how to work</em> and never outranks the project. There are eight, at <code>roles/&lt;name&gt;/ROLE.md</code>. Each file opens with OMP task-agent frontmatter - <code>name: fm-&lt;name&gt;</code>, a <code>description</code>, and optional <code>autoloadSkills</code>, <code>tools</code>, and <code>model</code> - so the same file is the role a brief points at and an OMP agent. <code>install.sh</code> links each one into <code>~/.omp/agent/agents/fm-&lt;name&gt;.md</code>, so every OMP session can spawn <code>fm-&lt;name&gt;</code>; an entry there that it did not create is left alone.</p>
+<p>A role describes <em>how to work</em> and never outranks the project. There are nine, at <code>roles/&lt;name&gt;/ROLE.md</code>. Each file opens with OMP task-agent frontmatter - <code>name: fm-&lt;name&gt;</code>, a <code>description</code>, and optional <code>autoloadSkills</code>, <code>tools</code>, and <code>model</code> - so the same file is the role a brief points at and an OMP agent. <code>install.sh</code> links each one into <code>~/.omp/agent/agents/fm-&lt;name&gt;.md</code>, so every OMP session can spawn <code>fm-&lt;name&gt;</code>; an entry there that it did not create is left alone.</p>
 <h3>Core roles</h3>
 <table>
 <thead><tr><th>Role</th><th>Used for</th><th>Character</th></tr></thead>
@@ -62,6 +62,7 @@
 <tr><td><code>refactorist</code></td><td class="wrap">One small, behavior-preserving improvement per task, proven by tests before and after.</td><td class="wrap"><code>code-simplification</code>, <code>verification-before-completion</code></td></tr>
 <tr><td><code>django-pro</code></td><td class="wrap">Django and Django REST Framework backend work against a fixed API contract.</td><td class="wrap"><code>django-backend</code>, <code>verification-before-completion</code></td></tr>
 <tr><td><code>frontend-master</code></td><td class="wrap">Web UI against a fixed API contract, verified through the real client.</td><td class="wrap"><code>frontend-ui-engineering</code>, <code>browser-testing-with-devtools</code></td></tr>
+<tr><td><code>scout</code></td><td class="wrap">Read-only fact gathering over a codebase or a handed PR, reported with evidence and limits; never reviews, judges, or changes anything. As a bot, report-only (<a href="bots.html#levels">local-proposal</a>).</td><td class="wrap">none</td></tr>
 </tbody>
 </table>
 <p>The dispatch category picks harness, model, and effort. It never picks a role, and a strong model never implies a special role. Outside ARCHITECTURE and TENTH-MAN a task may use a specialist role when its work shape matches; the category and rule are chosen first and never change because of it.</p>
