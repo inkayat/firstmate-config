@@ -44,6 +44,9 @@ stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv" || {
   printf 'doctor.sh: cannot load the tracked stack manifest: %s\n' "$SM_LOAD_ERROR" >&2
   exit 1
 }
+# fm-doctor also reads the runner's Library variables (library.runtime); no
+# fixture below may inherit them.
+unset AGENT_LIBRARY_ROOT XDG_DATA_HOME
 
 failed=0
 pass() { printf 'ok   - %s\n' "$1"; }
@@ -357,7 +360,10 @@ run_doctor() { # [extra args to fm-doctor]
 # =============================================================================
 out=$(run_doctor); code=$?
 check 'healthy: exit code is 0' 0 "$code"
-contains 'healthy: overall status is UNKNOWN (only commit_compat is unproven offline)' "$out" 'DOCTOR UNKNOWN exit=0'
+# The tracked manifest pins an Agent Library that no fixture HOME has installed
+# (install.sh step 10 owns that; tests/stack-manifest.sh section E covers it).
+contains 'healthy: overall status is WARNING (commit_compat unproven offline; pinned Library not installed in the fixture HOME)' "$out" 'DOCTOR WARNING exit=0'
+contains 'healthy: the uninstalled pinned Library is a WARNING, not a break' "$out" 'WARNING       library.install'
 contains 'healthy: launcher resolves ours first' "$out" "PASS          launcher.resolution"
 contains 'healthy: captain selects the preferred candidate' "$out" 'selected preferred candidate openai-codex/gpt-6.1-sol'
 contains 'healthy: herdr server reported running' "$out" 'PASS          runtime.herdr_server'
@@ -575,7 +581,7 @@ esac
 for key in schema_version status exit_code timestamp system firstmate launcher captain runtime harnesses routing roles skills projects checks; do
   contains "JSON: top-level key '$key' present" "$json" "\"$key\":"
 done
-contains 'JSON: top-level status is UNKNOWN for the healthy fixture (commit_compat is the one honest gap)' "$json" '"schema_version":1,"status":"UNKNOWN",'
+contains 'JSON: top-level status is WARNING for the healthy fixture (the uninstalled pinned Library)' "$json" '"schema_version":1,"status":"WARNING",'
 contains 'JSON: exit_code is 0 for the healthy fixture' "$json" '"exit_code":0'
 contains 'JSON: a check row carries id/status/summary' "$json" '"id":"launcher.resolution","status":"PASS"'
 contains 'JSON: system carries fm_home' "$json" "\"fm_home\":\"$FAKE_FM_HOME\""

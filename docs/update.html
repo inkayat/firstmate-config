@@ -20,7 +20,7 @@
 <li><strong>Check both checkouts first.</strong> Local state is inspected before any network call. Then the official default branch is resolved and both remotes are fetched - only remote-tracking refs move. Each checkout must equal, or be a plain fast-forward behind, its upstream.</li>
 <li><strong>Fast-forward the official FirstMate checkout</strong> (<code>FIRSTMATE_ROOT</code>) with <code>git merge --ff-only</code>.</li>
 <li><strong>Fast-forward the firstmate-config checkout</strong> to its upstream.</li>
-<li><strong>Reconcile.</strong> Run that checkout's own <code>./install.sh</code>, then <code>./install.sh --verify</code>. The run only counts as complete if verify reports <code>0 drift item(s), 0 failure(s)</code>.</li>
+<li><strong>Reconcile.</strong> Run that checkout's own <code>./install.sh</code>, then <code>./install.sh --verify</code>. The run only counts as complete if verify reports <code>0 drift item(s), 0 failure(s)</code>. This is also where the pinned Agent Library is installed or moved to a new pin (install step 10, <a href="install.html#library">Installation</a>); when it is already the pinned, verified version nothing is rewritten.</li>
 </ol>
 <p>On success the last lines name what happened:</p>
 <pre class="out" data-label="output, trimmed"><code>Checking default branch of official FirstMate (https://github.com/kunchenguid/firstmate.git)...
@@ -42,7 +42,7 @@ Secondmates and projects were not updated.</code></pre>
 <h2 id="never-does">What it never does</h2>
 <ul>
 <li>Force, stash, reset, merge, rebase, discard, or push anything.</li>
-<li>Delete a branch or file. The only pruning is <code>git fetch --prune</code> of stale remote-tracking refs in the firstmate-config checkout.</li>
+<li>Delete a branch or file. The only pruning is <code>git fetch --prune</code> of stale remote-tracking refs in the firstmate-config checkout. The Agent Library step removes only its own unfinished staging directory and temporary pointer; every installed Library version is kept.</li>
 <li>Update secondmates or projects.</li>
 <li>Restart or notify a running Captain.</li>
 </ul>
@@ -77,6 +77,20 @@ fm-update: PARTIAL UPDATE: official FirstMate was fast-forwarded (a1b2c3d -> e4f
 </ol>
 <p>To inspect installed state without pulling, run <code>./install.sh --verify</code> (read-only) or <code>fm doctor</code> from the primary checkout.</p>
 
+<h2 id="library">Agent Library failures</h2>
+<p>The Library step never leaves a partial Library active: the pointer only moves, by one rename, to a version that already rebuilt its pinned tree. What each failure leaves behind:</p>
+<table>
+<thead><tr><th>Failure</th><th>State afterwards</th><th>What to do</th></tr></thead>
+<tbody>
+<tr><td class="wrap">Fetch or auth failure (<code>cannot fetch the pinned Agent Library</code>)</td><td class="wrap">The installed version, if any, stays active and unchanged; <code>install.sh</code> and so <code>fm update</code> exit nonzero.</td><td class="wrap">Give this machine Git read access to the private source (credential helper or SSH key), then re-run <code>fm update</code>.</td></tr>
+<tr><td class="wrap">Tree mismatch (<code>has tree ... but the manifest pins</code>, <code>rebuilds tree ... not the pinned</code>)</td><td class="wrap">Nothing staged or switched; the staging directory is removed.</td><td class="wrap">The source or the manifest is wrong; fix the pin by a reviewed change.</td></tr>
+<tr><td class="wrap">Another installer holds the lock</td><td class="wrap">Nothing changed by this run; a concurrent <code>--verify</code> reports <code>update in progress</code> as drift, never success.</td><td class="wrap">Wait for the other run, then re-run.</td></tr>
+<tr><td class="wrap">Stopped after the switch, before the receipt was finalized</td><td class="wrap">The new, verified version is already active and the previous one retained; <code>--verify</code> reports <code>receipt finalize pending</code>.</td><td class="wrap">Re-run <code>fm update</code>; it completes the recorded switch.</td></tr>
+<tr><td class="wrap">Unknown or changed state, invalid receipt, corrupt installed version</td><td class="wrap">Refused and left exactly as found; <code>fm doctor</code> reports <code>library.install</code> <span class="badge fail">FAIL</span>.</td><td class="wrap">Inspect the named entries; remove only those, then re-run. Nothing is adopted or repaired automatically.</td></tr>
+</tbody>
+</table>
+<p>After <code>./install.sh --library-rollback</code>, the next <code>fm update</code> returns to the manifest pin by reusing its retained version. A run killed outright (for example <code>kill -9</code>) cannot clean up: it may leave its own <code>.staging-*</code> directory under <code>.agent-library/</code> or a <code>.agent-library-pointer.tmp-*</code> symlink next to the pointer. Neither is ever active, and both can be removed by hand. If that happens during the very first install, before anything was recorded, the next run refuses <code>.agent-library/</code> as unknown state; remove that directory and run again.</p>
+
 <h2 id="baseline">Ahead of the validated baseline</h2>
 <p>This configuration records the official FirstMate commit it was validated against in <code>firstmate/stack-manifest.tsv</code>. Once the official checkout moves past it,
 <code>fm doctor</code> and <code>install.sh</code> report it as ahead (<span class="badge warning">WARNING</span>, not drift) until the manifest is moved by a reviewed change.
@@ -93,11 +107,13 @@ fm doctor</code></pre>
 <tr><td class="wrap"><code>runtime.herdr_server</code> FAIL</td><td class="wrap">The Herdr server is unreachable, incompatible, or reports not running.</td></tr>
 <tr><td class="wrap"><code>firstmate.commit_compat</code> WARNING</td><td class="wrap">Official FirstMate is ahead of the validated baseline - expected after an official update.</td></tr>
 <tr><td class="wrap"><code>runtime.herdr_version</code>, <code>harnesses.*_version</code> WARNING</td><td class="wrap">A tool is newer than the version this configuration was tested with. Unvalidated, not broken.</td></tr>
+<tr><td class="wrap"><code>library.install</code> WARNING</td><td class="wrap">The pinned Agent Library is not installed, differs from the pin (for example after a rollback), has a pending finalize, or another installer is running. <code>fm update</code> resolves the first three.</td></tr>
+<tr><td class="wrap"><code>library.runtime</code> WARNING</td><td class="wrap"><code>fm</code> would hand the Captain no usable Library (missing CLI or <code>bun</code>, or an explicit <code>AGENT_LIBRARY_ROOT</code> that names none); tasks keep the normal FirstMate behavior.</td></tr>
 </tbody>
 </table>
 
 <h2 id="pins">Updating a pinned dependency</h2>
-<p>Shared skills from other repositories are pinned by commit in <code>skills/external.lock</code>; <code>fm update</code> never moves a pin. For the Ponytail skills there is a dedicated helper:</p>
+<p>Shared skills from other repositories are pinned by commit in <code>skills/external.lock</code>, and the Agent Library by commit and tree in <code>firstmate/stack-manifest.tsv</code>; <code>fm update</code> never moves a pin. For the Ponytail skills there is a dedicated helper:</p>
 <pre data-label="shell"><code>ponytail-update
 git diff -- skills/external.lock</code></pre>
 <p><code>ponytail-update</code> requires a clean <code>main</code> that can fast-forward with <code>origin/main</code>. It checks the latest stable Ponytail release; if one is newer it rewrites the pin, runs the Ponytail test suites, applies it with <code>./install.sh</code>, verifies, and checks again.

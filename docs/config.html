@@ -19,7 +19,7 @@
 <tbody>
 <tr><td><code>firstmate/crew-dispatch.json</code></td><td class="wrap">Routing rules per dispatch category. See <a href="dispatch.html">Dispatch routing</a>.</td><td class="wrap">FirstMate (through a symlink), <code>fm doctor</code></td></tr>
 <tr><td><code>firstmate/captain-startup-models.tsv</code></td><td class="wrap">Ordered Captain startup candidates.</td><td class="wrap"><code>fm</code>, <code>fm doctor</code></td></tr>
-<tr><td><code>firstmate/stack-manifest.tsv</code></td><td class="wrap">Validated FirstMate commit and Pi/OMP/Herdr versions.</td><td class="wrap"><code>install.sh</code>, <code>fm update</code>, <code>fm doctor</code>, <code>fm version</code></td></tr>
+<tr><td><code>firstmate/stack-manifest.tsv</code></td><td class="wrap">Validated FirstMate commit, Pi/OMP/Herdr versions, and the Agent Library pin.</td><td class="wrap"><code>install.sh</code>, <code>fm update</code>, <code>fm doctor</code>, <code>fm version</code></td></tr>
 <tr><td><code>firstmate/primary-policy.md</code></td><td class="wrap">The Captain's operating contract for delegation.</td><td class="wrap">The Captain, at session start</td></tr>
 <tr><td><code>firstmate/captain.md</code></td><td class="wrap">Template for the machine's Captain preferences.</td><td class="wrap"><code>install.sh</code> (seed only)</td></tr>
 <tr><td><code>roles/*/ROLE.md</code></td><td class="wrap">The eight roles, each also an OMP agent definition (<code>fm-&lt;role&gt;</code>).</td><td class="wrap">Workers, by absolute path in the brief; OMP, through the installed agent links; <code>fm doctor</code>; <code>fm bot</code> (role check)</td></tr>
@@ -45,7 +45,11 @@
 <tr><td><code>~/.agents/commands/</code></td><td class="wrap">Symlinks to this repository's slash commands.</td></tr>
 <tr><td><code>~/.omp/agent/agents/fm-*.md</code></td><td class="wrap">Symlinks to the role files, one OMP agent per role. Other files there are yours and are left alone.</td></tr>
 <tr><td><code>~/.agents/references</code></td><td class="wrap">Symlink to the addyosmani references that its skills link to.</td></tr>
-<tr><td><code>~/.local/share/firstmate-config/skills-src/</code></td><td class="wrap">Cache with one clone per pinned skill repository.</td></tr>
+<tr><td><code>~/.local/share/firstmate-config/skills-src/</code></td><td class="wrap">Cache with one clone per pinned skill repository, plus <code>agent-library.git</code>, a bare cache holding only the fetched Agent Library pin.</td></tr>
+<tr><td><code>${XDG_DATA_HOME:-~/.local/share}/agent-library</code></td><td class="wrap">The active Agent Library: a relative symlink to <code>.agent-library/&lt;commit&gt;</code>, replaced only by an atomic rename (<a href="install.html#library">Installation</a>).</td></tr>
+<tr><td><code>${XDG_DATA_HOME:-~/.local/share}/.agent-library/&lt;commit&gt;/</code></td><td class="wrap">Installed, verified Library versions; older ones are retained, never deleted.</td></tr>
+<tr><td><code>${XDG_DATA_HOME:-~/.local/share}/firstmate-config/agent-library.receipt</code></td><td class="wrap">Ownership receipt for the pointer and versions above (device, inode, link text, checksum). Never edit it: a changed receipt is refused, not repaired.</td></tr>
+<tr><td><code>${XDG_DATA_HOME:-~/.local/share}/firstmate-config/agent-library.lock</code></td><td class="wrap">Lock anchor serializing installers; created once, never unlinked or recreated.</td></tr>
 <tr><td><code>~/.local/bin/fm</code>, <code>~/.local/bin/ponytail-update</code></td><td class="wrap">Launcher symlinks.</td></tr>
 <tr><td><code>~/.pi/agent/git/github.com/DietrichGebert/ponytail</code></td><td class="wrap">Pi's own pinned Ponytail checkout, kept separate from the shared skill cache.</td></tr>
 </tbody>
@@ -69,7 +73,8 @@
 <tr><td><code>FM_SKILL_CACHE</code></td><td class="wrap"><code>~/.local/share/firstmate-config/skills-src</code></td><td class="wrap">Where pinned skill repositories are cloned.</td></tr>
 <tr><td><code>FM_BIN_DIR</code></td><td class="wrap"><code>~/.local/bin</code></td><td class="wrap">Where <code>install.sh</code> links launchers.</td></tr>
 <tr><td><code>FIRSTMATE_ORIGIN</code></td><td class="wrap"><code>firstmate_repo</code> from the manifest</td><td class="wrap">Clone source, used by <code>install.sh</code> only when the checkout is missing. <code>fm update</code> still requires <code>origin</code> to equal the manifest value.</td></tr>
-<tr><td><code>AGENT_LIBRARY_ROOT</code></td><td class="wrap">unset</td><td class="wrap">Optional agent-library checkout the Captain may query for a task's required capabilities (<a href="roles-skills.html#library">Roles and skills</a>). An export in the shell <code>fm</code> starts from always wins, even when it is empty or names no Library. Unset, <code>fm</code> hands the Captain <code>${XDG_DATA_HOME:-$HOME/.local/share}/agent-library</code> when that directory holds <code>library/bin/agent-library.ts</code>, expanded for that launch and never written anywhere; otherwise there is no Library and behavior is ordinary.</td></tr>
+<tr><td><code>AGENT_LIBRARY_ROOT</code></td><td class="wrap">unset</td><td class="wrap">Optional agent-library checkout the Captain may query for a task's required capabilities (<a href="roles-skills.html#library">Roles and skills</a>). An export in the shell <code>fm</code> starts from always wins, even when it is empty or names no Library. Unset, <code>fm</code> hands the Captain <code>${XDG_DATA_HOME:-$HOME/.local/share}/agent-library</code> - where <code>install.sh</code> installs the pinned Library - when that directory holds <code>library/bin/agent-library.ts</code>, expanded for that launch and never written anywhere; otherwise there is no Library and behavior is ordinary.</td></tr>
+<tr><td><code>XDG_DATA_HOME</code></td><td class="wrap"><code>~/.local/share</code></td><td class="wrap">Data home for the installed Agent Library and its receipt and lock. It must be an absolute path; the installer refuses a relative one.</td></tr>
 </tbody>
 </table>
 <div class="callout warn"><span class="t">The env file wins</span>
@@ -95,6 +100,8 @@ export FIRSTMATE_ROOT FM_CONFIG_ROOT FM_HOME FM_BACKEND</code></pre>
 <tr><td><code>pi_min_version</code>, <code>pi_tested_version</code></td><td class="wrap">Pi hard minimum and tested version.</td></tr>
 <tr><td><code>omp_min_version</code>, <code>omp_tested_version</code></td><td class="wrap">OMP hard minimum and tested version.</td></tr>
 <tr><td><code>herdr_min_version</code>, <code>herdr_tested_version</code></td><td class="wrap">Herdr hard minimum and tested version.</td></tr>
+<tr><td><code>library_repo</code>, <code>library_commit</code>, <code>library_tree</code></td><td class="wrap">The Agent Library pin: its Git source (no credentials in the URL), the exact commit, and that commit's tree. All three or none; full lowercase object ids.</td></tr>
+<tr><td><code>library_ref</code></td><td class="wrap">Optional <code>refs/tags/&lt;name&gt;</code> fetched only when the server refuses the commit id; never trusted as the pin.</td></tr>
 </tbody>
 </table>
 <p>Below the minimum is a <code>FAIL</code>; above the tested version is a <code>WARNING</code>. Auth, credentials, machine paths, the project registry, runtime task state, and Captain model routing are deliberately <em>not</em> in this file. To move a pin, verify the new values against a real installation, edit the file, and commit.</p>

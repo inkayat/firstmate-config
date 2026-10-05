@@ -60,6 +60,38 @@ manifest_baseline=${SM_FIRSTMATE_COMMIT:-unknown}
 platform=$(uname -s 2>/dev/null || printf unknown)
 arch=$(uname -m 2>/dev/null || printf unknown)
 
+# The pinned Agent Library and what is installed, through the same read-only
+# state rules as install.sh --verify and fm doctor (stack_library status
+# never creates or repairs anything), and the root fm would hand the Captain.
+LIBRARY_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+lib_state=not_pinned lib_commit='' lib_msg=''
+if [ -n "$SM_LIBRARY_REPO" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    IFS=$'\t' read -r _ lib_state lib_commit lib_msg < <(stack_library status "$LIBRARY_DATA_HOME" '')
+    [ "$lib_commit" != - ] || lib_commit=''
+    [ -n "$lib_state" ] || lib_state=unknown
+  else
+    lib_state=unknown lib_msg='python3 is not on PATH'
+  fi
+fi
+case $lib_state in
+  not_pinned) lib_installed='not pinned' ;;
+  healthy) lib_installed="$lib_commit (pinned, receipt-owned, tree verified)" ;;
+  differs) lib_installed="$lib_commit (differs from the pin $SM_LIBRARY_COMMIT)" ;;
+  not_installed) lib_installed=none ;;
+  pending) lib_installed='update incomplete (receipt finalize pending)' ;;
+  busy) lib_installed='update in progress' ;;
+  ownership) lib_installed="invalid ownership: $lib_msg" ;;
+  corrupt) lib_installed="corrupt receipt or state: $lib_msg" ;;
+  *) lib_installed="unknown${lib_msg:+ ($lib_msg)}" ;;
+esac
+stack_library_runtime "$LIBRARY_DATA_HOME"
+if [ "$SL_RUNTIME_MODE" = explicit ]; then lib_runtime="explicit AGENT_LIBRARY_ROOT=$SL_RUNTIME_ROOT"; else lib_runtime="default root $SL_RUNTIME_ROOT"; fi
+if [ -z "$SL_RUNTIME_REASON" ]; then lib_runtime="$lib_runtime (available)"; else lib_runtime="$lib_runtime (unavailable: $SL_RUNTIME_REASON)"; fi
+lib_pin_json=null
+[ -z "$SM_LIBRARY_REPO" ] || lib_pin_json=$(printf '{"repo":%s,"commit":%s,"tree":%s,"ref":%s}' \
+  "$(jstr "$SM_LIBRARY_REPO")" "$(jstr "$SM_LIBRARY_COMMIT")" "$(jstr "$SM_LIBRARY_TREE")" "$(jstr "$SM_LIBRARY_REF")")
+
 if [ "$JSON" -eq 1 ]; then
   printf '{'
   printf '"schema_version":4,'
@@ -68,6 +100,9 @@ if [ "$JSON" -eq 1 ]; then
   printf '"components":{"pi":%s,"omp":%s,"herdr":%s},' "$(jstr "$pi_version")" "$(jstr "$omp_version")" "$(jstr "$herdr_version")"
   printf '"captain_harness":%s,' "$(jstr "$CAPTAIN_HARNESS")"
   printf '"stack_manifest":{"schema_version":%s,"firstmate_validated_commit":%s},' "$(jstr "$manifest_schema")" "$(jstr "$manifest_baseline")"
+  printf '"agent_library":{"pin":%s,"installed":{"state":%s,"commit":%s},"runtime":{"mode":%s,"root":%s,"available":%s,"reason":%s}},' \
+    "$lib_pin_json" "$(jstr "$lib_state")" "$(jstr "$lib_commit")" "$(jstr "$SL_RUNTIME_MODE")" "$(jstr "$SL_RUNTIME_ROOT")" \
+    "$([ -z "$SL_RUNTIME_REASON" ] && printf true || printf false)" "$(jstr "$SL_RUNTIME_REASON")"
   printf '"fm_home":%s,"platform":%s,"architecture":%s' "$(jstr "$FM_HOME")" "$(jstr "$platform")" "$(jstr "$arch")"
   printf '}\n'
 else
@@ -78,6 +113,13 @@ else
   printf 'OMP: %s\n' "$omp_version"
   printf 'Herdr: %s\n' "$herdr_version"
   printf 'Validated FirstMate baseline: %s (stack manifest schema %s)\n' "$manifest_baseline" "$manifest_schema"
+  if [ -n "$SM_LIBRARY_REPO" ]; then
+    printf 'Agent Library pin: %s (tree %s) from %s\n' "$SM_LIBRARY_COMMIT" "$SM_LIBRARY_TREE" "$SM_LIBRARY_REPO"
+  else
+    printf 'Agent Library pin: none\n'
+  fi
+  printf 'Agent Library installed: %s\n' "$lib_installed"
+  printf 'Agent Library runtime: %s\n' "$lib_runtime"
   printf 'FM_HOME: %s\n' "$FM_HOME"
   printf 'Platform: %s %s\n' "$platform" "$arch"
 fi

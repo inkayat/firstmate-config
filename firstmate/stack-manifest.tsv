@@ -28,6 +28,15 @@
 # them below, and commit. This file is tracked; nothing here is
 # machine-local state.
 #
+# The Agent Library pin (library_repo, library_commit and library_tree: all
+# three or none). install.sh step 10 fetches exactly library_commit from
+# library_repo, requires its tree to be library_tree, and installs it at
+# ${XDG_DATA_HOME:-$HOME/.local/share}/agent-library. library_ref is only a
+# fallback for a server that refuses a fetch by commit id, never the pin, and
+# no branch head is ever followed: the Library moves only when a reviewed
+# change moves these rows. The repository is private; each machine brings
+# its own Git read access, never a credential here or in the URL.
+#
 # Format, tab-separated key<TAB>value:
 schema_version	1
 firstmate_repo	https://github.com/kunchenguid/firstmate.git
@@ -38,3 +47,7 @@ omp_min_version	18.1.21
 omp_tested_version	18.1.21
 herdr_min_version	0.8.0
 herdr_tested_version	0.8.0
+library_repo	https://github.com/inkayat/agent-skill-vault-private.git
+library_commit	3b85849ccbc3f7564e6b9a6e17165b8f3136959c
+library_tree	42f95f24546fcd73627d4166cfdbb4f354d51c4b
+library_ref	refs/tags/agent-library-license-v1

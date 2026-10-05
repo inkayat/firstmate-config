@@ -249,9 +249,30 @@ cd firstmate-config
 The installer checks the local toolchain, creates or verifies the official
 FirstMate checkout, writes machine-local resolution, installs tracked skills
 and slash commands (`~/.agents/skills`, `~/.agents/commands`), links each role
-file as an OMP agent (`~/.omp/agent/agents/fm-<role>.md`), and links commands
-into `~/.local/bin`. Running it again is the normal reconcile path and is
-idempotent.
+file as an OMP agent (`~/.omp/agent/agents/fm-<role>.md`), links commands
+into `~/.local/bin`, and installs the pinned Agent Library. Running it again
+is the normal reconcile path and is idempotent.
+
+The Agent Library is pinned in `firstmate/stack-manifest.tsv` by repository,
+exact commit and Git tree (`library_repo`, `library_commit`, `library_tree`;
+`library_ref` is only a fetch fallback, never the pin, and a branch head is
+never followed). Step 10 installs it outside every checkout, at the portable
+root `fm` already discovers: `${XDG_DATA_HOME:-$HOME/.local/share}/agent-library`
+is a relative symlink to a verified version under `.agent-library/<commit>`.
+It fetches only that commit, checks its commit and tree ids, exports it into a
+private staging directory, rebuilds the pinned tree id from the exported
+bytes, modes and symlinks, and only then switches the pointer with one atomic
+rename recorded in a receipt it owns. A failed fetch, a failed check or an
+interruption leaves the active version as it was; older versions are kept,
+never deleted; anything the receipt does not record - a same-looking
+directory or symlink, a changed inode, a missing or damaged receipt - is
+refused, never adopted or repaired. `./install.sh --library-rollback`
+switches back to the retained previous version the same way; the next
+install or `fm update` returns to the pin. An exported `AGENT_LIBRARY_ROOT`
+still wins over the installed root, and nothing writes that variable. The
+private Library source needs this machine's own Git read access once (a
+credential helper or SSH key); without it the step fails with the installed
+version left active. Details: [Install](docs/install.html).
 
 Read-only drift check:
 
@@ -350,10 +371,13 @@ Only a run that ends with `fm update complete` updated everything.
 
 Nothing is forced, stashed, reset, merged, rebased, or pushed, and no branch
 or file is deleted (the only pruning is `fm update`'s existing `fetch --prune`
-of stale `firstmate-config` remote-tracking refs). Secondmates and projects
-are never updated. A separate manual `./install.sh`
-is not required after a successful `fm update`; run it directly only when
-diagnosing installed state without pulling.
+of stale `firstmate-config` remote-tracking refs; the Agent Library step
+removes only its own unfinished staging directory and temporary pointer, and
+keeps every installed version). Secondmates and projects are never updated.
+A separate manual `./install.sh` is not required after a successful
+`fm update`: it installs or moves the pinned Agent Library too, and a second
+run with nothing to change rewrites nothing. Run `./install.sh` directly only
+when diagnosing installed state without pulling.
 
 A running Captain keeps the instructions, skills, and launch-time wiring it
 loaded at startup and is not restarted or notified: to adopt an official

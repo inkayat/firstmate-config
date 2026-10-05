@@ -23,13 +23,22 @@
 #      settings so its bundled ponytail/ponytail-review duplicates never
 #      collide with step 7's authoritative copies, and defaultMode=off in
 #      ponytail's own config
+#  10. reconciles the pinned Agent Library (library_* in the stack manifest)
+#      at ${XDG_DATA_HOME:-$HOME/.local/share}/agent-library, the root bin/fm
+#      discovers: an exact-commit fetch, a verified private export, and an
+#      atomic pointer switch recorded in a receipt it owns; retained versions
+#      are never deleted, and state it never recorded is never adopted
+#      (firstmate/fm-stack-manifest.sh stack_library)
 #
 # What it never does: store a credential, touch a project repository, or modify
 # anything tracked in the official FirstMate checkout.
 #
 # Usage:
-#   ./install.sh            reconcile
-#   ./install.sh --verify   report drift without changing anything
+#   ./install.sh                     reconcile
+#   ./install.sh --verify            report drift without changing anything
+#   ./install.sh --library-rollback  switch the Agent Library back to the
+#                                    retained previous version (step 10 only);
+#                                    the next reconcile returns it to the pin
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,6 +65,8 @@ export GIT_OPTIONAL_LOCKS=0
 
 VERIFY=0
 [ "${1:-}" != --verify ] || VERIFY=1
+ROLLBACK=0
+[ "${1:-}" != --library-rollback ] || ROLLBACK=1
 
 changed=0
 failed=0
@@ -71,6 +82,57 @@ would() { # <description>
   if [ "$VERIFY" -eq 1 ]; then driftf "$1"; return 1; fi
   return 0
 }
+
+# Step 10, defined ahead of step 1 so --library-rollback can run it alone.
+# stack_library prints step-9-style result lines (install/rollback) or one
+# status line (verify), mapped here onto this script's own report.
+LIBRARY_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+library_step() { # install|rollback|verify
+  local out rc line state msg
+  if [ -z "$SM_LIBRARY_REPO" ]; then
+    warn 'no Agent Library pin in firstmate/stack-manifest.tsv; skipping'
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    failf 'python3 is required for the Agent Library step'
+    return 0
+  fi
+  if [ "$1" = verify ]; then
+    out=$(stack_library status "$LIBRARY_DATA_HOME" "$SKILL_CACHE/agent-library.git"); rc=$?
+    IFS="$(printf '\t')" read -r _ state _ msg <<EOF
+$out
+EOF
+    case $state in
+      healthy) ok "$msg" ;;
+      not_installed|differs|pending|busy) driftf "$msg" ;;
+      ownership|corrupt) failf "$msg" ;;
+      *) failf "the Agent Library check exited with status $rc before reporting a result" ;;
+    esac
+    return 0
+  fi
+  out=$(stack_library "$1" "$LIBRARY_DATA_HOME" "$SKILL_CACHE/agent-library.git"); rc=$?
+  while IFS= read -r line; do
+    case $line in
+      ok\ *) ok "${line#ok }" ;;
+      changed\ *) changedf "${line#changed }" ;;
+      warn\ *) warn "${line#warn }" ;;
+      fail\ *) failf "${line#fail }" ;;
+      '') ;;
+      *) failf "Agent Library step: unexpected output: $line" ;;
+    esac
+  done <<EOF
+$out
+EOF
+  [ "$rc" -eq 0 ] || failf "the Agent Library step exited with status $rc before reporting a result; rerun install.sh"
+}
+
+if [ "$ROLLBACK" -eq 1 ]; then
+  step '10. Agent Library (rollback to the retained previous version)'
+  library_step rollback
+  printf '\ninstall: %s change(s), %s failure(s)\n' "$changed" "$failed"
+  [ "$failed" -eq 0 ]
+  exit
+fi
 
 # --- 1. toolchain -----------------------------------------------------------
 step '1. toolchain'
@@ -506,6 +568,16 @@ PY
     fi
   fi
 fi
+
+# --- 10. Agent Library -----------------------------------------------------
+# The pinned Library lives outside every checkout, at the portable per-user
+# root bin/fm discovers when AGENT_LIBRARY_ROOT is unset; this step never
+# writes AGENT_LIBRARY_ROOT anywhere. A no-op when the pinned version is
+# already active and verified; a fetch or auth failure fails this run with
+# the installed version left active. Rules: stack_library in
+# firstmate/fm-stack-manifest.sh, docs/install.html.
+step '10. Agent Library'
+if [ "$VERIFY" -eq 1 ]; then library_step verify; else library_step install; fi
 
 # --- report -----------------------------------------------------------------
 if [ "$VERIFY" -eq 1 ]; then
