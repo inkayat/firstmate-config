@@ -39,7 +39,6 @@
 <tr><td>Project-local skills</td><td class="wrap">The project's own tracked directories</td><td class="wrap">The project</td><td class="wrap">Workers in that project. Always preferred over a shared skill covering the same ground.</td></tr>
 </tbody>
 </table>
-<p>The standalone <a href="https://github.com/inkayat/agent-skill-vault"><code>agent-skill-vault</code></a> repository is a separate, manually curated collection. Promoting one of its skills into the shared set is a deliberate decision, not an automatic sync.</p>
 
 <h2 id="roles">Roles</h2>
 <p>A role describes <em>how to work</em> and never outranks the project. There are nine, at <code>roles/&lt;name&gt;/ROLE.md</code>. Each file opens with OMP task-agent frontmatter - <code>name: fm-&lt;name&gt;</code>, a <code>description</code>, and optional <code>autoloadSkills</code>, <code>tools</code>, and <code>model</code> - so the same file is the role a brief points at and an OMP agent. <code>install.sh</code> links each one into <code>~/.omp/agent/agents/fm-&lt;name&gt;.md</code>, so every OMP session can spawn <code>fm-&lt;name&gt;</code>; an entry there that it did not create is left alone.</p>
