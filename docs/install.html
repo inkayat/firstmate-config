@@ -23,7 +23,7 @@
 <tr><td><code>pi</code></td><td>required</td><td class="wrap">Explicit Captain fallback and the harness for Pi-routed workers.</td></tr>
 <tr><td><code>herdr</code></td><td>required</td><td class="wrap">The runtime backend. The launcher also refuses to start without it while <code>FM_BACKEND=herdr</code>.</td></tr>
 <tr><td><code>jq</code>, <code>treehouse</code>, <code>gh</code>, <code>bun</code></td><td>recommended</td><td class="wrap">Missing tools only print a <code>warn</code> line; they are needed for full fleet behavior.</td></tr>
-<tr><td><code>python3</code></td><td>conditional</td><td class="wrap">Needed to reconcile Pi's Ponytail package settings (step 9) and the Agent Library (step 10, and its <code>--verify</code>, <code>fm doctor</code> and <code>fm version</code> checks).</td></tr>
+<tr><td><code>python3</code></td><td>conditional</td><td class="wrap">Needed only to reconcile Pi's Ponytail package settings (step 9).</td></tr>
 </tbody>
 </table>
 <p>Minimum and tested versions of Pi, OMP, and Herdr live in
@@ -38,7 +38,7 @@ cd firstmate-config
 <div class="callout warn"><span class="t">Run it from the clone you intend to keep</span>
 <p>The installer points <code>fm</code>, the dispatch file, and the skill, command, and role-agent links at the checkout it runs from. Do not run it from a throwaway worktree.</p></div>
 
-<p>It works through ten numbered steps. Every step states a desired end state and changes only what differs:</p>
+<p>It works through nine numbered steps. Every step states a desired end state and changes only what differs:</p>
 <ol class="flow">
 <li><strong>Toolchain</strong> - the checks above.</li>
 <li><strong>Official FirstMate checkout</strong> - cloned to <code>FIRSTMATE_ROOT</code> and pinned to the validated commit <em>only if it is missing</em>. An existing checkout is reported against the baseline (<code>ok</code>, or a <code>warn</code> if ahead, behind, or diverged) and never modified.</li>
@@ -49,7 +49,6 @@ cd firstmate-config
 <li><strong>Global skills, commands, and role agents</strong> - links this repository's skills and the pinned external skills into <code>~/.agents/skills</code>, its slash commands (<code>commands/*.md</code>, such as <code>/bots</code>) into <code>~/.agents/commands</code>, and each role file into <code>~/.omp/agent/agents/fm-&lt;role&gt;.md</code>. A file or directory already at a link path is reported and left alone; so is a role-agent symlink that does not point at a firstmate-config file.</li>
 <li><strong>Launchers</strong> - links <code>fm</code> and <code>ponytail-update</code> into <code>~/.local/bin</code> and warns if that directory is not on <code>PATH</code>.</li>
 <li><strong>Pi Ponytail package</strong> - a separate pinned checkout for Pi, with a skills filter so its bundled duplicates never shadow the shared ones.</li>
-<li><strong>Agent Library</strong> - the version pinned in the stack manifest, installed at <code>${XDG_DATA_HOME:-$HOME/.local/share}/agent-library</code>, the root <code>fm</code> discovers when <code>AGENT_LIBRARY_ROOT</code> is unset (<a href="#library">below</a>). Skipped with a <code>warn</code> when the manifest pins no Library.</li>
 </ol>
 <p>Every link the installer creates is relative to its own directory, so a HOME that moves or is spelled differently on another machine keeps it valid. A source is linked only when it exists inside this checkout or the skill cache; one that is missing or resolves outside them is reported as a failure and never linked. An existing link whose chain reaches that same source without leaving its tree - absolute, as older installs wrote them, relative, or through an alias inside the tree - is left exactly as it is, never rewritten for its spelling. Any other existing link - wrong, broken, or through an alias outside the tree - is reported as a failure by <code>--verify</code> and a normal run alike and is never rewritten; remove it and run the installer again to link it.</p>
 <p>A trimmed run on a settled machine looks like this:</p>
@@ -72,28 +71,6 @@ cd firstmate-config
 install: 0 change(s), 0 failure(s)</code></pre>
 <p>Lines are prefixed <code>ok</code>, <code>changed</code>, <code>warn</code>, <code>DRIFT</code> (only with <code>--verify</code>), or <code>FAIL</code>. A <code>FAIL</code> makes the script exit nonzero.</p>
 
-<h2 id="library">The Agent Library step</h2>
-<p>The pin is three rows in <code>firstmate/stack-manifest.tsv</code>: <code>library_repo</code>, <code>library_commit</code> and <code>library_tree</code> (full object ids). An optional <code>library_ref</code> (<code>refs/tags/&lt;name&gt;</code>) is only a fetch fallback for a server that refuses a fetch by commit id; whatever it brings, only the exact pinned commit and tree are ever accepted. A branch head is never followed: the Library moves only when a reviewed manifest change moves the pin.</p>
-<p>Everything step 10 owns lives under the data home <code>D=${XDG_DATA_HOME:-$HOME/.local/share}</code>, outside every checkout:</p>
-<ul>
-<li><code>D/agent-library</code> - the active pointer, a relative symlink <code>.agent-library/&lt;commit&gt;</code>. It is only ever replaced by one atomic rename, so it always names a complete, verified version.</li>
-<li><code>D/.agent-library/&lt;commit&gt;/</code> - one immutable directory per installed version. Older versions are kept; nothing deletes them.</li>
-<li><code>D/firstmate-config/agent-library.receipt</code> - the receipt: which versions, pointer and directory this installer created, by device, inode and link text, with a checksum.</li>
-<li><code>D/firstmate-config/agent-library.lock</code> - the lock anchor, created once and never unlinked or recreated.</li>
-</ul>
-<p>A run takes an exclusive, non-blocking lock on the anchor; a second installer on the same machine stops at once with <code>another installer holds the Agent Library lock</code> and changes nothing, and the kernel releases the lock if a run dies. Under the lock it reads the receipt, finishes or drops a switch an interrupted run recorded, and then, unless the pinned version is already active and still rebuilds its tree (a no-op with no write at all):</p>
-<ol class="flow">
-<li>reuses a retained verified version, or fetches only the pinned commit (non-interactive) into the source cache and checks its commit and tree ids;</li>
-<li>exports every file, mode and symlink into a private staging directory and rebuilds the pinned tree id from the exported bytes - any difference stops the run and removes that staging directory;</li>
-<li>gives the export its version name and records it in the receipt;</li>
-<li>records the coming switch durably, re-checks every identity, renames the new pointer over the old one, and finalizes the receipt.</li>
-</ol>
-<p>If the run stops before the rename, the previous version stays active. If it stops after the rename but before the receipt is finalized, the new, already verified version is active, the previous one is retained, and the receipt still says the switch is pending: <code>--verify</code> reports <code>receipt finalize pending</code> and the next run completes it.</p>
-<p><strong>Refusals.</strong> Ownership is what the receipt records, never a name or a shape. A pointer, version directory or receipt that is present but not recorded - a same-looking symlink, a copied directory with a new inode, a missing, truncated, invalid or edited receipt, a lock anchor that is a symlink, directory, hard link or foreign file - makes the step fail with nothing adopted, rewritten or repaired. So does an installed version whose bytes no longer rebuild its pinned tree, and a recorded version that is gone. These are damage cases for a human: inspect what is there, then remove the entry the message names; or, when the receipt no longer matches what is on disk (for example a retained version deleted by hand), remove <code>D/agent-library</code>, <code>D/.agent-library/</code> and the receipt together - leaving the lock anchor - and run <code>./install.sh</code> again for a fresh install. Retained versions are not meant to be deleted by hand; there is no supported way to reclaim them yet.</p>
-<p><strong>Fetch and credentials.</strong> The pinned source is a private repository, so each machine needs its own Git read access once - a credential helper (macOS Keychain, or <code>gh auth login</code> followed by <code>gh auth setup-git</code> on Linux) or an SSH key. Nothing about it is stored in the manifest or a URL; a <code>library_repo</code> with URL credentials is a manifest error. Without access, the step fails with a named fetch error, <code>install.sh</code> exits nonzero (so <code>fm update</code> fails too) and any installed version stays active and unchanged. With no Library installed at all, <code>fm</code> simply finds none and tasks keep the normal FirstMate behavior.</p>
-<p><strong>Rollback.</strong> <code>./install.sh --library-rollback</code> runs only this step: it re-verifies the receipt's retained previous version and switches to it with the same protocol. It records no hold - <code>--verify</code> reports <code>installed &lt;previous&gt; != pin &lt;pin&gt;</code> as drift and <code>fm doctor</code> a <span class="badge warning">WARNING</span> until the next <code>./install.sh</code> or <code>fm update</code>, which returns to the pin by reusing its retained version without fetching. Rollback refuses while a switch is pending, or when the previous version is missing, changed or corrupt.</p>
-<p><strong>Runtime.</strong> An exported <code>AGENT_LIBRARY_ROOT</code>, even empty or invalid, still wins over the installed root, and the installer never writes that variable anywhere. <code>fm doctor</code> and <code>fm version</code> report the pin, the installed state (not installed, pinned and verified, different from the pin, update in progress, finalize pending, invalid ownership, corrupt receipt or version) and whether <code>fm</code> would hand the Captain an explicit root, the installed one, or none; they never create, lock exclusively or repair anything.</p>
-
 <h2 id="verify">Verify</h2>
 <pre data-label="shell"><code>./install.sh --verify   # read-only drift check
 fm version              # compact identity of the installed stack
@@ -101,7 +78,7 @@ fm doctor               # read-only diagnostics</code></pre>
 <p><code>--verify</code> changes nothing and ends with <code>verify: N drift item(s), M failure(s)</code>. A clean machine reports
 <code>verify: 0 drift item(s), 0 failure(s)</code>.</p>
 <p><code>fm doctor</code> exits <code>0</code> when the mandatory architecture is healthy - warnings do not change that - and <code>1</code> on a genuine break
-such as a missing Captain executable, an unreachable Herdr server, another <code>fm</code> earlier on your <code>PATH</code>, or Agent Library state that step 10 refuses.
+such as a missing Captain executable, an unreachable Herdr server, or another <code>fm</code> earlier on your <code>PATH</code>.
 See the <a href="cli.html#doctor">CLI reference</a> for the full list.</p>
 
 <h2 id="first-run">First run</h2>
@@ -143,7 +120,7 @@ by an explicit path or name, then FirstMate's registry (<code>data/projects.md</
 
 <h2 id="never">What the installer never does</h2>
 <ul>
-<li>Store a credential, or write <code>AGENT_LIBRARY_ROOT</code>.</li>
+<li>Store a credential.</li>
 <li>Touch a project repository.</li>
 <li>Modify the official FirstMate checkout after it exists.</li>
 <li>Overwrite a file at a link location that it does not own - it prints <code>warn ... leaving it alone</code> instead.</li>

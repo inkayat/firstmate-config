@@ -112,9 +112,8 @@ The complete conditions live in the tracked routing file and
 [`firstmate/primary-policy.md`](firstmate/primary-policy.md).
 
 During the debugging period the Captain prints a short `Routing:` /
-`Skills:` block (plus a `Library:` line per required capability) before
-each delegation and a `Skill evidence:` block after each worker finishes
-(primary-policy.md section 0). Skill evidence keeps
+`Skills:` block before each delegation and a `Skill evidence:` block after
+each worker finishes (primary-policy.md section 0). Skill evidence keeps
 SELECTED, READ, APPLIED, and VERIFIED separate. READ comes from the omp
 worker's own `read` receipts in its retained OMP session record: the whole
 listed file (a mandatory companion is its own entry) before its first
@@ -129,8 +128,7 @@ record supports only `UNPROVEN`, and a missing, partial, or late read never
 becomes verified usage.
 `tests/routing-trace.sh check` compares a captured block with the real
 spawn axes, the matched rule's route (`#n`), the brief's selected skills,
-and those records, and with `--brief` the Library lines against that
-brief. It fails claims whose necessary links are missing and
+and those records. It fails claims whose necessary links are missing and
 reports located links only, with their context. Semantic application stays
 unproven by the checker, and it cannot prove the category/rule choice
 either.
@@ -159,32 +157,6 @@ standalone [`agent-skill-vault`](https://github.com/inkayat/agent-skill-vault)
 repository is a separate, manually curated skill collection; promoting one
 of its skills into this repository's shared set is a deliberate, explicit
 decision.
-
-Its optional Agent Library is a capability provider in the normal selection
-flow, never an orchestrator. At intake, before deciding whether to delegate
-a task or run it directly, the Captain assesses whether a specialized method
-would materially improve it; if so it records the task's required
-capabilities (for example `review.code`, `test.integration`) - separate from
-the dispatch category - and, when `AGENT_LIBRARY_ROOT` names a Library
-checkout in the environment `fm` starts from (unset: `fm` tries
-`${XDG_DATA_HOME:-$HOME/.local/share}/agent-library`), runs its `agent-library
-firstmate` lookup for exactly those shelves. A selected artifact goes into
-the worker contract (or is applied by the Captain when it runs the task
-itself), firstmate-config trusted skills win their families by default, a
-`Library:` line per capability reports the pick or `none`, and no candidate,
-no Library, or a lookup error leaves ordinary behavior - delegated or direct,
-as the task would have run anyway. A Claude
-worker, which under the `auto` permission mode reads only its own task
-grants, gets verified copies materialized in its task's `data/<task-id>`
-instead of shared Library paths. Each selected artifact also gets its own
-`Skill evidence` line, keyed by its artifact id, whose READ is the worker's
-receipt for that exact path - never a same-named shared skill - and counts
-only while that path holds the bytes whose sha256 the brief records (a brief
-recording none binds READ to the path's current bytes only, and the selected
-version stays unproven). Nothing is
-discovered, installed, or promoted automatically. See
-`firstmate/primary-policy.md` section 5 "Capability library" and
-`tests/agent-library-integration.sh`.
 
 Official FirstMate internal skills remain separate and are not installed as
 shared worker skills. Context and skill selection are policy and handoff
@@ -249,30 +221,9 @@ cd firstmate-config
 The installer checks the local toolchain, creates or verifies the official
 FirstMate checkout, writes machine-local resolution, installs tracked skills
 and slash commands (`~/.agents/skills`, `~/.agents/commands`), links each role
-file as an OMP agent (`~/.omp/agent/agents/fm-<role>.md`), links commands
-into `~/.local/bin`, and installs the pinned Agent Library. Running it again
-is the normal reconcile path and is idempotent.
-
-The Agent Library is pinned in `firstmate/stack-manifest.tsv` by repository,
-exact commit and Git tree (`library_repo`, `library_commit`, `library_tree`;
-`library_ref` is only a fetch fallback, never the pin, and a branch head is
-never followed). Step 10 installs it outside every checkout, at the portable
-root `fm` already discovers: `${XDG_DATA_HOME:-$HOME/.local/share}/agent-library`
-is a relative symlink to a verified version under `.agent-library/<commit>`.
-It fetches only that commit, checks its commit and tree ids, exports it into a
-private staging directory, rebuilds the pinned tree id from the exported
-bytes, modes and symlinks, and only then switches the pointer with one atomic
-rename recorded in a receipt it owns. A failed fetch, a failed check or an
-interruption leaves the active version as it was; older versions are kept,
-never deleted; anything the receipt does not record - a same-looking
-directory or symlink, a changed inode, a missing or damaged receipt - is
-refused, never adopted or repaired. `./install.sh --library-rollback`
-switches back to the retained previous version the same way; the next
-install or `fm update` returns to the pin. An exported `AGENT_LIBRARY_ROOT`
-still wins over the installed root, and nothing writes that variable. The
-private Library source needs this machine's own Git read access once (a
-credential helper or SSH key); without it the step fails with the installed
-version left active. Details: [Install](docs/install.html).
+file as an OMP agent (`~/.omp/agent/agents/fm-<role>.md`), and links commands
+into `~/.local/bin`. Running it again is the normal reconcile path and is
+idempotent.
 
 Read-only drift check:
 
@@ -371,13 +322,10 @@ Only a run that ends with `fm update complete` updated everything.
 
 Nothing is forced, stashed, reset, merged, rebased, or pushed, and no branch
 or file is deleted (the only pruning is `fm update`'s existing `fetch --prune`
-of stale `firstmate-config` remote-tracking refs; the Agent Library step
-removes only its own unfinished staging directory and temporary pointer, and
-keeps every installed version). Secondmates and projects are never updated.
-A separate manual `./install.sh` is not required after a successful
-`fm update`: it installs or moves the pinned Agent Library too, and a second
-run with nothing to change rewrites nothing. Run `./install.sh` directly only
-when diagnosing installed state without pulling.
+of stale `firstmate-config` remote-tracking refs). Secondmates and projects
+are never updated. A separate manual `./install.sh`
+is not required after a successful `fm update`; run it directly only when
+diagnosing installed state without pulling.
 
 A running Captain keeps the instructions, skills, and launch-time wiring it
 loaded at startup and is not restarted or notified: to adopt an official

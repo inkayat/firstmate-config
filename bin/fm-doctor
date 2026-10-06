@@ -30,14 +30,10 @@
 #       running:false), a mandatory component (Pi/OMP/Herdr) below the
 #       manifest's hard minimum, the official FirstMate checkout at a
 #       known-incompatible commit (behind the validated baseline or
-#       diverged from it), an expected `fm` shadowed on PATH by a
-#       different executable earlier in PATH, or Agent Library state that
-#       install.sh step 10 refuses (a missing/invalid/corrupt receipt with
-#       Library state present, unknown or changed ownership, or an installed
-#       version that no longer rebuilds its pinned tree).
+#       diverged from it), or an expected `fm` shadowed on PATH by a
+#       different executable earlier in PATH.
 # Every other finding (routing lane availability, roles, skills, harness
-# versions, Library not installed/differing/in progress, project reporting)
-# is reported but never changes the exit code.
+# versions, project reporting) is reported but never changes the exit code.
 set -u
 
 SCHEMA_VERSION=1
@@ -1018,60 +1014,6 @@ J_SKILLS=$(printf '{"root":%s,"expected":%s,"installed":%s,"missing":%s,"broken_
   "$(json_array "${SKILL_OFFICIAL_LEAK[@]}")")
 
 # =============================================================================
-# LIBRARY
-# =============================================================================
-# The pinned Agent Library install.sh step 10 owns, read through the same
-# shared state rules (stack_library status: a shared flock with bounded
-# retries, never creating or repairing anything), and what fm would hand the
-# Captain (stack_library_runtime mirrors bin/fm's launch rule; bin/fm owns it).
-LIBRARY_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
-LIBRARY_STATE=not_pinned
-LIBRARY_COMMIT=
-LIBRARY_BROKEN=0
-if [ -z "$SM_LIBRARY_REPO" ]; then
-  add_check library.install NOT_APPLICABLE "no Agent Library pin in the stack manifest" ""
-elif ! command -v python3 >/dev/null 2>&1; then
-  LIBRARY_STATE=unknown
-  add_check library.install UNKNOWN "python3 is not on PATH; the installed Agent Library cannot be inspected" ""
-else
-  IFS=$'\t' read -r _ LIBRARY_STATE LIBRARY_COMMIT library_msg < <(stack_library status "$LIBRARY_DATA_HOME" '')
-  [ "$LIBRARY_COMMIT" != - ] || LIBRARY_COMMIT=
-  case $LIBRARY_STATE in
-    healthy) add_check library.install PASS "$library_msg" "pin $SM_LIBRARY_COMMIT (tree $SM_LIBRARY_TREE) from $SM_LIBRARY_REPO" ;;
-    not_installed|differs|pending|busy) add_check library.install WARNING "$library_msg" "fm update installs, completes or returns to the pinned version" ;;
-    ownership|corrupt)
-      LIBRARY_BROKEN=1
-      add_check library.install FAIL "$library_msg" "step 10 never adopts or repairs state it did not record; see docs/install.html"
-      ;;
-    *)
-      LIBRARY_STATE=unknown
-      add_check library.install UNKNOWN "the Agent Library state check reported no result" ""
-      ;;
-  esac
-fi
-stack_library_runtime "$LIBRARY_DATA_HOME"
-if [ "$SL_RUNTIME_MODE" = explicit ]; then
-  if [ -z "$SL_RUNTIME_REASON" ]; then
-    add_check library.runtime PASS "explicit-root mode: AGENT_LIBRARY_ROOT=$SL_RUNTIME_ROOT is what fm hands the Captain (the installed Library is not used)" ""
-  else
-    add_check library.runtime WARNING "explicit-root mode: AGENT_LIBRARY_ROOT=$SL_RUNTIME_ROOT is unavailable ($SL_RUNTIME_REASON); tasks use the normal FirstMate fallback" ""
-  fi
-elif [ -z "$SL_RUNTIME_REASON" ]; then
-  add_check library.runtime PASS "fm discovers the Agent Library at $SL_RUNTIME_ROOT" ""
-elif [ "$LIBRARY_STATE" = not_pinned ]; then
-  add_check library.runtime NOT_APPLICABLE "no Agent Library ($SL_RUNTIME_REASON); tasks use the normal FirstMate fallback" ""
-else
-  add_check library.runtime WARNING "Agent Library unavailable to fm ($SL_RUNTIME_REASON); tasks use the normal FirstMate fallback" ""
-fi
-
-J_LIBRARY_PIN=null
-[ -z "$SM_LIBRARY_REPO" ] || J_LIBRARY_PIN=$(printf '{"repo":%s,"commit":%s,"tree":%s,"ref":%s}' \
-  "$(jstr "$SM_LIBRARY_REPO")" "$(jstr "$SM_LIBRARY_COMMIT")" "$(jstr "$SM_LIBRARY_TREE")" "$(jstr "$SM_LIBRARY_REF")")
-J_LIBRARY=$(printf '{"pin":%s,"install":{"state":%s,"commit":%s},"runtime":{"mode":%s,"root":%s,"available":%s,"reason":%s}}' \
-  "$J_LIBRARY_PIN" "$(jstr "$LIBRARY_STATE")" "$(jstr "$LIBRARY_COMMIT")" \
-  "$(jstr "$SL_RUNTIME_MODE")" "$(jstr "$SL_RUNTIME_ROOT")" "$(jtri "$([ -z "$SL_RUNTIME_REASON" ] && echo true || echo false)")" "$(jstr "$SL_RUNTIME_REASON")")
-
-# =============================================================================
 # PROJECTS
 # =============================================================================
 
@@ -1174,12 +1116,6 @@ MANDATORY_FAIL=0
 [ "$STACK_OMP_HARD_FAIL" -eq 0 ] || MANDATORY_FAIL=1
 [ "$STACK_HERDR_HARD_FAIL" -eq 0 ] || MANDATORY_FAIL=1
 [ "$STACK_COMMIT_INCOMPATIBLE" -eq 0 ] || MANDATORY_FAIL=1
-# Agent Library state step 10 refuses (an unknown or changed owner, an
-# invalid receipt, a version no longer matching its pinned tree) blocks every
-# fm update until a human resolves it, and is what fm could otherwise hand the
-# Captain unverified. Not installed, differing, pending or in progress stays
-# WARNING.
-[ "$LIBRARY_BROKEN" -eq 0 ] || MANDATORY_FAIL=1
 
 WORST_RANK=0
 for i in "${!CHECK_STATUSES[@]}"; do
@@ -1212,7 +1148,6 @@ section_of() {
     routing.*) printf ROUTING ;;
     roles.*) printf ROLES ;;
     skills.*) printf SKILLS ;;
-    library.*) printf LIBRARY ;;
     projects.*) printf PROJECTS ;;
     *) printf OTHER ;;
   esac
@@ -1259,7 +1194,6 @@ render_json() {
   done
   out="$out},"
   out="$out\"skills\":$J_SKILLS,"
-  out="$out\"agent_library\":$J_LIBRARY,"
   out="$out\"projects\":$J_PROJECTS,"
   out="$out\"checks\":["
   first=1

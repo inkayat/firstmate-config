@@ -1068,11 +1068,8 @@ fi
 ICFG="$TMP_ROOT/inst-cfg"
 mkdir -p "$ICFG/bin" "$ICFG/firstmate" "$ICFG/skills" "$ICFG/commands" "$TMP_ROOT/inst-fake-bin" "$TMP_ROOT/inst-firstmate"
 cp "$CONFIG_ROOT/install.sh" "$ICFG/install.sh"
-cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" \
+cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$CONFIG_ROOT/firstmate/stack-manifest.tsv" \
    "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$CONFIG_ROOT/firstmate/captain.md" "$ICFG/firstmate/"
-# The Agent Library pin is install.sh step 10's own concern (tests/stack-manifest.sh
-# section E); without it this fixture never fetches the private Library source.
-grep -v '^library_' "$CONFIG_ROOT/firstmate/stack-manifest.tsv" > "$ICFG/firstmate/stack-manifest.tsv"
 cp -R "$CONFIG_ROOT/skills/bot-builder" "$ICFG/skills/"
 cp "$CONFIG_ROOT/commands/bots.md" "$ICFG/commands/"
 : > "$ICFG/bin/fm"; : > "$ICFG/bin/ponytail-update"; chmod +x "$ICFG/bin/fm" "$ICFG/bin/ponytail-update"

@@ -35,13 +35,6 @@
 #   extensions      OMP discovers .omp/extensions from the official cwd.
 #                   Never pass duplicate -e flags or the worker posture overlay.
 #                   Pi retains its trust-aware explicit/discover mode.
-#   AGENT_LIBRARY_ROOT
-#                   the optional Agent Library root the Captain may query
-#                   (primary-policy.md section 5). An exported value, even an
-#                   empty or invalid one, passes through unchanged; only when it is unset,
-#                   ${XDG_DATA_HOME:-$HOME/.local/share}/agent-library is
-#                   handed over if it holds library/bin/agent-library.ts.
-#                   Otherwise the Captain runs without a Library.
 #
 # Working directory. The harness runs IN the checkout, because AGENTS.md is a
 # working-directory context file and a captain whose harness never loaded it is
@@ -366,14 +359,6 @@ export FM_HOME FM_BACKEND
 export FM_FORK_ORIGIN_CWD="$ORIGIN_CWD"
 export FM_FORK_ORIGIN_IS_PROJECT="$ORIGIN_IS_PROJECT"
 export FM_CONFIG_ROOT="$CONFIG_ROOT"
-# An AGENT_LIBRARY_ROOT set in the environment, even empty, is the operator's
-# explicit choice, so it is never replaced, even when it names no Library.
-# Only when it is unset is the portable per-user default tried: expanded on
-# this machine for this process and never written anywhere.
-if [ -z "${AGENT_LIBRARY_ROOT+set}" ]; then
-  library_default="${XDG_DATA_HOME:-$HOME/.local/share}/agent-library"
-  [ ! -f "$library_default/library/bin/agent-library.ts" ] || export AGENT_LIBRARY_ROOT="$library_default"
-fi
 
 # Machine-local record of what this captain was actually launched with. macOS
 # refuses to show another process's environment, so without this there is no

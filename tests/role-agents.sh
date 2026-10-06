@@ -43,11 +43,8 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 CFG="$TMP_ROOT/cfg"
 mkdir -p "$CFG/bin" "$CFG/firstmate" "$CFG/skills" "$TMP_ROOT/fake-bin" "$TMP_ROOT/firstmate"
 cp "$CONFIG_ROOT/install.sh" "$CFG/install.sh"
-cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" \
+cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$CONFIG_ROOT/firstmate/stack-manifest.tsv" \
    "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$CONFIG_ROOT/firstmate/captain.md" "$CFG/firstmate/"
-# The Agent Library pin is install.sh step 10's own concern (tests/stack-manifest.sh
-# section E); without it this fixture never fetches the private Library source.
-grep -v '^library_' "$CONFIG_ROOT/firstmate/stack-manifest.tsv" > "$CFG/firstmate/stack-manifest.tsv"
 cp -R "$CONFIG_ROOT/roles" "$CFG/roles"
 : > "$CFG/bin/fm"; : > "$CFG/bin/ponytail-update"; chmod +x "$CFG/bin/fm" "$CFG/bin/ponytail-update"
 for t in pi omp herdr; do : > "$TMP_ROOT/fake-bin/$t"; chmod +x "$TMP_ROOT/fake-bin/$t"; done
@@ -155,9 +152,8 @@ PY
 make_cfg() {  # <dir>: a disposable configuration tree with one skill, command and role
   mkdir -p "$1/bin" "$1/firstmate" "$1/skills/demo" "$1/commands" "$1/roles/demo"
   cp "$CONFIG_ROOT/install.sh" "$1/install.sh"
-  cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" \
+  cp "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$CONFIG_ROOT/firstmate/stack-manifest.tsv" \
      "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$CONFIG_ROOT/firstmate/captain.md" "$1/firstmate/"
-  grep -v '^library_' "$CONFIG_ROOT/firstmate/stack-manifest.tsv" > "$1/firstmate/stack-manifest.tsv"
   printf -- '---\nname: demo\ndescription: demo skill\n---\n' > "$1/skills/demo/SKILL.md"
   printf 'demo command\n' > "$1/commands/demo.md"
   printf -- '---\nname: fm-demo\ndescription: demo role\n---\n' > "$1/roles/demo/ROLE.md"

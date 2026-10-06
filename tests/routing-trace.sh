@@ -5,7 +5,7 @@
 #
 # Usage:
 #   tests/routing-trace.sh                     run the offline fixture suite
-#   tests/routing-trace.sh check <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]] [--brief <brief-file>]
+#   tests/routing-trace.sh check <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]]
 #       check ONE worker's captured trace block against the actual spawn
 #       axes (the harness/model/effort really passed to fm-spawn, e.g. from
 #       state/<id>.meta or the worker's own process line) and the skills
@@ -16,25 +16,9 @@
 #       retained OMP session record
 #       (~/.omp/agent/sessions/<worktree>/<id>.jsonl), also check the
 #       block's "Skill evidence:" lines against it; a `review` excerpt
-#       additionally needs another session's record. With
-#       --brief, also check the block's "Library:" lines (primary-policy.md
-#       section 5 "Capability library") against that brief's "Required
-#       capabilities:" block and the agent-library selections it carries,
-#       and check the brief itself: it must not carry the adapter's
-#       FirstMate-only report, and must not provably exceed section 5's
-#       budget (library picks have a known kind; other skills may be either,
-#       so only an overrun no method/reference split explains fails), and
-#       for a claude spawn every Library pick's path (trusted ones included)
-#       must be a copy materialized under the brief's own data dir
-#       (agent-library/). With a worker session record as well, each
-#       "Selected library artifact:" pick needs its own Skill evidence line,
-#       keyed by artifact id, whose READ is computed from the exact path the
-#       brief selected and is "mismatch" (only UNPROVEN passes) when that
-#       path's bytes differ from the sha256 the brief's Requirement records.
-#       A block with Library: lines and no --brief fails as unverifiable.
-#       Prints PASS/FAIL per check, INSPECT for located context the checker
-#       does not assess, and a SUMMARY per skill; exit 0 only when nothing
-#       FAILs.
+#       additionally needs another session's record. Prints PASS/FAIL per
+#       check, INSPECT for located context the checker does not assess, and
+#       a SUMMARY per skill; exit 0 only when nothing FAILs.
 #
 # What this proves and what it cannot: `check` compares text the Captain
 # printed with facts supplied by the caller. The Routing line starts with
@@ -64,22 +48,13 @@ set -u
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CREW_DISPATCH="$CONFIG_ROOT/firstmate/crew-dispatch.json"
 
-trace_check() { # <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]] [--brief <brief>]
+trace_check() { # <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]]
   python3 - "$CREW_DISPATCH" "$CONFIG_ROOT/roles" "$@" <<'PY'
 import hashlib, json, os, re, sys
 
-dispatch, roles_dir, args = sys.argv[1], sys.argv[2], sys.argv[3:]
-brief_path = None
-if "--brief" in args:
-    at = args.index("--brief")
-    if at + 1 >= len(args):
-        print("FAIL - --brief needs a brief file")
-        sys.exit(2)
-    brief_path = args[at + 1]
-    del args[at:at + 2]
-trace_path, harness, model, effort, skills_arg = args[:5]
-transcript_path = args[5] if len(args) > 5 else None
-review_path = args[6] if len(args) > 6 else None
+dispatch, roles_dir, trace_path, harness, model, effort, skills_arg = sys.argv[1:8]
+transcript_path = sys.argv[8] if len(sys.argv) > 8 else None
+review_path = sys.argv[9] if len(sys.argv) > 9 else None
 # primary-policy.md sections 3-4: two roles are fixed to their categories;
 # every other category takes senior-fullstack or any specialist role file.
 FIXED_ROLES = {"ARCHITECTURE": "architecture", "TENTH-MAN": "tenth-man"}
@@ -395,104 +370,6 @@ traced = set() if body == "none" else {skill_id(re.split(" [-\u2013\u2014] ", e,
 selected = set() if skills_arg == "none" else {skill_id(s) for s in skills_arg.split(",") if s.strip()}
 result(traced == selected, "Skills names exactly the selected skills %s (trace says %s)" % (sorted(selected) or "none", sorted(traced) or "none"))
 
-# Library: lines (primary-policy.md section 5 "Capability library"), one per
-# required capability, verified against the brief itself: its "Required
-# capabilities:" block and every selection block whose Requirement carries
-# the agent-library adapter's "(agent-library <id>; <kind>; trust <t>" mark.
-lib_lines = [l for l in lines if l.startswith("Library:")]
-# A pick under `Selected library artifact:` is its own Skill evidence entry,
-# keyed by artifact id, read from the exact path the brief selected (section
-# 0); a trusted pick under the shared header is an ordinary Skills entry.
-lib_sources, lib_shas = {}, {}
-if brief_path is None and lib_lines:
-    result(False, "Library: lines can only be verified against the brief (pass --brief <brief-file>)")
-elif brief_path is not None:
-    brief = open(brief_path).read().splitlines()
-    required = []
-    for i, l in enumerate(brief):
-        if l.strip() != "Required capabilities:":
-            continue
-        for entry in brief[i + 1:]:
-            if not entry[:1].isspace() or not entry.strip():
-                break
-            cap, sep, why = entry.strip().partition(" - ")
-            result(bool(sep and why.strip()), "Required capabilities entry %r has a '<capability> - <reason>' justification" % entry.strip())
-            required.append(cap)
-    picks, lib_methods, lib_paths = {}, 0, []
-    mark = re.compile(r"Read and apply for (.+?) \(agent-library ([^;\s]+); ([^;\s]+); trust ([a-z]+)")
-    for i, l in enumerate(brief):
-        if l.strip() not in ("Selected library artifact:", "Selected shared worker skill:"):
-            continue
-        req = next((k for k in range(i + 1, min(i + 4, len(brief))) if brief[k].strip() == "Requirement:"), None)
-        m = mark.search(brief[req + 1]) if req is not None and req + 1 < len(brief) else None
-        if m:
-            lib_methods += 1
-            # Every Library pick, trusted ones under the shared header included;
-            # an ordinary (non-Library) shared skill is not this check's concern.
-            lib_paths.append(brief[i + 1].strip())
-            if l.strip() == "Selected library artifact:":
-                lib_sources[m.group(2)] = brief[i + 1].strip()
-                sha = re.search(r"; sha256 ([0-9a-f]{64})", brief[req + 1])
-                if sha:
-                    lib_shas[m.group(2)] = sha.group(1)
-            for cap in m.group(1).split(" + "):
-                picks.setdefault(cap.strip(), set()).add("%s (%s, %s)" % m.group(2, 3, 4))
-    claimed, seen = {}, []
-    for l in lib_lines:
-        parts = [p.strip() for p in l[len("Library:"):].split("|")]
-        sel = re.fullmatch(r"(\S+) -> (\S+) \((\S+), (\S+)\)", parts[0])
-        none = re.fullmatch(r"(\S+) -> none", parts[0])
-        shaped = (sel and len(parts) == 3 and parts[1].startswith("runtime ")) or (none and len(parts) == 2)
-        if not shaped or not parts[-1].startswith("why:") or not parts[-1][len("why:"):].strip():
-            result(False, "Library line has '<capability> -> <artifact-id> (<kind>, <trust>) | runtime <harness> | why: ...' or '<capability> -> none | why: ...' shape (got %r)" % l)
-            continue
-        cap = (sel or none).group(1)
-        seen.append(cap)
-        claimed.setdefault(cap, set())
-        if sel:
-            claimed[cap].add("%s (%s, %s)" % sel.group(2, 3, 4))
-            runtime = parts[1][len("runtime "):].strip()
-            result(runtime == harness, "Library: %s runtime is the actual spawn harness %s (trace says %s)" % (cap, harness, runtime))
-    result(len(seen) == len(set(seen)), "Library: one line per capability (got %s)" % (seen or "none"))
-    result(set(seen) == set(required),
-           "Library: lines cover exactly the brief's required capabilities %s (trace says %s)" % (sorted(set(required)) or "none", sorted(set(seen)) or "none"))
-    for cap in sorted(set(claimed) | set(picks)):
-        want, got = picks.get(cap, set()), claimed.get(cap, set())
-        result(want == got, "Library: %s reports the brief's selection %s (trace says %s)" % (cap, sorted(want) or "none", sorted(got) or "none"))
-    # The adapter's report below its delimiter is the Captain's alone
-    # (section 5 "Handover"); a brief carrying it tells the worker to browse.
-    leaked = [l for l in brief if l.strip() == "--- for FirstMate, not the worker brief ---"
-              or l.startswith("Library lookup trace (") or l.startswith("No automatic library pick for ")]
-    result(not leaked, "the brief carries none of the adapter's FirstMate-only report (found %r)" % (leaked[:1] or "none"))
-    # Section 5's budget: two methods and one reference. Checked only for a
-    # brief with Library content, and only over the optional picks - shared
-    # skills and Library picks. Required project skills are mandatory: they
-    # only shrink the Library's slots when the Captain plans the lookup and
-    # are never what fails a brief. Library picks have a known kind
-    # (selections are methods, knowledge entries are references); a shared
-    # skill may be either, so only an overrun no method/reference split
-    # explains fails.
-    shared = [i for i, l in enumerate(brief) if l.strip() in ("Selected shared worker skill:", "Selected library artifact:")]
-    others = len(shared) - lib_methods
-    lib_refs = 0
-    for i, l in enumerate(brief):
-        if l.startswith("Optional library knowledge"):
-            for entry in brief[i + 1:]:
-                if not entry[:1].isspace() or not entry.strip():
-                    break
-                lib_refs += 1
-                lib_paths.append(entry.split(" -- ")[0].strip())
-    if required or lib_methods or lib_refs:
-        result(lib_methods <= 2 and lib_refs <= 1 and others <= (2 - lib_methods) + (1 - lib_refs),
-               "the brief stays within section 5's budget of two methods and one reference (%d library method(s), %d library reference(s), %d other shared skill(s))" % (lib_methods, lib_refs, others))
-    # A Claude worker reads only its task-channel grants, which include its own
-    # data/<id> (section 5 "Claude workers"): library artifacts reach it only as
-    # copies materialized under the brief's own directory.
-    if harness == "claude":
-        home = os.path.realpath(os.path.dirname(os.path.abspath(brief_path)))
-        outside = [p for p in lib_paths if not (os.path.realpath(p).startswith(home + os.sep) and "/agent-library/" in p)]
-        result(not outside, "claude: every library artifact path is materialized under the brief's own data dir %s/.../agent-library/ (outside: %s)" % (home, outside or "none"))
-
 if transcript_path is not None:
     starts = [i for i, l in enumerate(lines) if l.startswith("Skill evidence:")]
     if len(starts) != 1:
@@ -514,9 +391,8 @@ if transcript_path is not None:
         result(False, "Skill evidence: says none selected but lists %d skill line(s)" % len(entries))
     names = [name for name, _ in entries]
     result(len(names) == len(set(names)), "Skill evidence has one line per skill (got %s)" % names)
-    covered = selected | set(lib_sources)
-    result(set(names) == covered,
-           "Skill evidence covers exactly the selected skills and the brief's Library picks %s (got %s)" % (sorted(covered) or "none", sorted(set(names)) or "none"))
+    result(set(names) == selected,
+           "Skill evidence covers exactly the selected skills %s (got %s)" % (sorted(selected) or "none", sorted(set(names)) or "none"))
 
     # Only an OMP worker's retained record is read; any other harness's
     # record (Pi shares the session header) supports only UNPROVEN.
@@ -530,7 +406,6 @@ if transcript_path is not None:
             rec["path"], rec["id"], rec["started"], rec["cwd"], rec["brief"], "%s %s" % rec["mutation"][1:] if rec["mutation"] else "none"))
     review_rec = load_record(review_path) if review_path else None
     sources = {} if skills_arg == "none" else {skill_id(s): s for s in skills_arg.split(",") if s.strip()}
-    sources.update(lib_sources)
     EVIDENCE = re.compile(r"read (\S+) \| applied (.+?) \| result (.+?) \| review (.+?) \| usage (\S+)")
     for name, text in entries:
         m = EVIDENCE.fullmatch(text)
@@ -543,8 +418,6 @@ if transcript_path is not None:
 
         # READ: only the record's own successful read results count.
         rs = read_status(rec, skill_source(sources[name], rec["cwd"])) if rec else None
-        if rs and name in lib_shas and rs["status"] != "unreadable" and rs["sha"] != lib_shas[name]:
-            rs.update(status="mismatch", done=None)  # the path no longer holds the brief's selected artifact
         if claim not in READ_STATES + ("UNPROVEN",):
             result(False, "%s: read is one of %s or UNPROVEN (got %r)" % (name, "/".join(READ_STATES), claim))
         elif rs is None:
@@ -638,7 +511,7 @@ PY
 }
 if [ "${1:-}" = check ]; then
   shift
-  [ "$#" -ge 5 ] || { printf 'usage: %s check <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]] [--brief <brief-file>]\n' "$0" >&2; exit 2; }
+  [ "$#" -ge 5 ] || { printf 'usage: %s check <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]]\n' "$0" >&2; exit 2; }
   trace_check "$@"
   exit $?
 fi
@@ -814,6 +687,14 @@ EM_DASH=$(t em-dash.txt "Routing: REVIEW #3 | role code-reviewer | omp | $OPUS |
 Skills: $VBC — ground the review in executed evidence")
 expect 'an em-dash Skills reason, as the real Captain printed it, names the selected skill' pass "$EM_DASH" omp "$OPUS" xhigh "$VBC"
 expect 'an em-dash Skills reason still rejects a different selection' fail "$EM_DASH" omp "$OPUS" xhigh "$TDD"
+# Skills entries are separated by `;` (primary-policy.md section 0): a
+# semicolon inside a reason invents a second skill; commas are words.
+expect_rejects 'a semicolon inside a genuine shared skill reason invents a second skill and is rejected' 'Skills names exactly the selected skills' \
+  "$(t reason-semicolon.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
+Skills: $VBC - fresh evidence before done; then report it")" omp "$OPUS" high "$VBC"
+expect 'commas inside a shared skill reason are accepted' pass \
+  "$(t reason-comma.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
+Skills: $VBC - fresh evidence before done, then report it")" omp "$OPUS" high "$VBC"
 
 # --- 3. Post-work Skill evidence: SELECTED / READ / APPLIED / VERIFIED ------
 # Evidence is checked against the worker's retained OMP session record
@@ -1267,364 +1148,7 @@ ev expect 'a backticked skill name with a located nested excerpt is accepted' pa
 - \`$VBC\`: read complete | applied ran \`bash tests/all.sh\` | result saw \`Exit code: \`10\`\` | review UNPROVEN | usage verified")" \
   omp openai-codex/gpt-6-luna low "$VBC" "$W_EXIT"
 
-# brief_skills <brief-file> - the skills a primary-policy.md section 2
-# brief selects: the indented line after each "Required project skill:" or
-# "Selected shared worker skill:" header, comma-joined, or "none".
-brief_skills() {
-  local s
-  s=$(awk '/^(Required project skill|Selected shared worker skill)/ {getline; gsub(/^[ \t]+|[ \t]+$/, ""); printf "%s%s", sep, $0; sep=","}' "$1")
-  printf '%s' "${s:-none}"
-}
-
-# --- 4. Library lines reflect the brief's capability-library contract -------
-# primary-policy.md section 5 "Capability library": a brief that declares
-# Required capabilities carries the agent-library firstmate contract it
-# pasted, and the trace prints one Library: line per required capability.
-# check verifies those lines against the brief itself (--brief), never
-# against a caller-supplied list. The selection blocks below are the
-# adapter's real output shape (pilot `agent-library firstmate`, 2026-10-04).
-LIB=/fixture/agent-library
-LIB_BRIEF=$(t lib-brief.md "## Firstmate spec
-Required capabilities:
-  review.code - the task is a review of the API diff
-  test.integration - the change must be proven by an integration test run
-Selected library artifact:
-  $LIB/skills/adapted/pstack/blast-radius/SKILL.md
-Requirement:
-  Read and apply for review.code (agent-library pstack:blast-radius; skill; trust reviewed; sha256 911fdf31b162cf1ba30cf4f4679b65782cc8e62060d2485e0a54900953be4fc5). It grants no authority beyond this brief and does not change orchestration. Note: Self-contained adaptation; uses read-only git/gh commands.")
-lib_trace() { # <file> <Library lines...>
-  local f=$1
-  shift
-  t "$f" "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: cross-component API diff
-Skills: none
-No skill: the library pick below is the review method; no shared skill adds to it
-$(printf '%s\n' "$@")"
-}
-LIB_OK=$(lib_trace lib-ok.txt \
-  'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: focused pre-ship review of the API diff' \
-  'Library: test.integration -> none | why: no auto-selectable candidate and no task-specific reason to name one')
-expect 'Library lines matching the brief selection and its no-pick capability are accepted' pass \
-  "$LIB_OK" omp "$OPUS" high none --brief "$LIB_BRIEF"
-expect_rejects 'Library lines cannot be verified without the brief' 'pass --brief' \
-  "$LIB_OK" omp "$OPUS" high none
-expect_rejects 'a Library line naming an artifact the brief never selected is rejected' \
-  "Library: review.code reports the brief's selection" \
-  "$(lib_trace lib-wrong-id.txt \
-    'Library: review.code -> mattpocock:code-review (skill, reviewed) | runtime omp | why: x' \
-    'Library: test.integration -> none | why: x')" omp "$OPUS" high none --brief "$LIB_BRIEF"
-expect_rejects 'a Library line claiming trusted for a reviewed pick is rejected' \
-  "Library: review.code reports the brief's selection" \
-  "$(lib_trace lib-wrong-trust.txt \
-    'Library: review.code -> pstack:blast-radius (skill, trusted) | runtime omp | why: x' \
-    'Library: test.integration -> none | why: x')" omp "$OPUS" high none --brief "$LIB_BRIEF"
-expect_rejects 'none for a capability the brief selected an artifact for is rejected' \
-  "Library: review.code reports the brief's selection" \
-  "$(lib_trace lib-hidden.txt \
-    'Library: review.code -> none | why: x' \
-    'Library: test.integration -> none | why: x')" omp "$OPUS" high none --brief "$LIB_BRIEF"
-expect_rejects 'a selection claimed for a capability the brief has no pick for is rejected' \
-  "Library: test.integration reports the brief's selection" \
-  "$(lib_trace lib-invented.txt \
-    'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x' \
-    'Library: test.integration -> pstack:create-verification-skill (skill, reviewed) | runtime omp | why: x')" \
-  omp "$OPUS" high none --brief "$LIB_BRIEF"
-expect_rejects 'omitting a required capability from the Library lines is rejected' \
-  "Library: lines cover exactly the brief's required capabilities" \
-  "$(lib_trace lib-missing.txt \
-    'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x')" \
-  omp "$OPUS" high none --brief "$LIB_BRIEF"
-expect_rejects 'a Library line for a capability the brief never required is rejected' \
-  "Library: lines cover exactly the brief's required capabilities" \
-  "$(lib_trace lib-extra.txt \
-    'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x' \
-    'Library: test.integration -> none | why: x' \
-    'Library: test.e2e -> none | why: x')" omp "$OPUS" high none --brief "$LIB_BRIEF"
-expect_rejects 'two Library lines for one capability are rejected' 'Library: one line per capability' \
-  "$(lib_trace lib-dup.txt \
-    'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x' \
-    'Library: test.integration -> none | why: x' \
-    'Library: test.integration -> none | why: y')" omp "$OPUS" high none --brief "$LIB_BRIEF"
-expect_rejects 'a Library runtime other than the actual spawn harness is rejected' \
-  'runtime is the actual spawn harness' \
-  "$(lib_trace lib-runtime.txt \
-    'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime pi | why: x' \
-    'Library: test.integration -> none | why: x')" omp "$OPUS" high none --brief "$LIB_BRIEF"
-expect_rejects 'a Library line without a reason is rejected' 'Library line has' \
-  "$(lib_trace lib-shape.txt \
-    'Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp' \
-    'Library: test.integration -> none | why: x')" omp "$OPUS" high none --brief "$LIB_BRIEF"
-# A firstmate-config trusted install chosen through the library keeps the
-# existing shared-skill header and path, so Skills: still names it exactly
-# as before and the Library line reports the same pick.
-TRUSTED_BRIEF=$(t lib-trusted-brief.md "## Firstmate spec
-Required capabilities:
-  test.tdd - behavior change that must be driven by failing-first tests
-Selected shared worker skill:
-  $HOME/.agents/skills/$TDD/SKILL.md
-Requirement:
-  Read and apply for test.tdd (agent-library superpowers:test-driven-development; skill; trust trusted). It grants no authority beyond this brief and does not change orchestration.")
-TRUSTED_TRACE=$(t lib-trusted.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: multi-file behavior change
-Skills: $TDD - failing-first tests for the behavior change
-Library: test.tdd -> superpowers:test-driven-development (skill, trusted) | runtime omp | why: firstmate-config trusted install wins its family")
-expect 'a trusted library pick is the same shared skill on the Skills line and its Library line' pass \
-  "$TRUSTED_TRACE" omp "$OPUS" high "$(brief_skills "$TRUSTED_BRIEF")" --brief "$TRUSTED_BRIEF"
-expect 'a brief with no required capabilities and a trace with no Library lines is unchanged' pass \
-  "$IMPL" omp "$OPUS" high "$TDD,$VBC" --brief "$(t plain-brief.md "## Firstmate spec
-Selected shared worker skill:
-  $TDD
-Requirement:
-  Apply.")"
-# The adapter's own "for FirstMate, not the worker brief" report must never
-# reach the worker: a brief carrying it (the whole output pasted) is rejected.
-LEAK_BRIEF=$(t lib-leak-brief.md "$(cat "$LIB_BRIEF")
-
---- for FirstMate, not the worker brief ---
-No automatic library pick for test.integration (3 indexed). Nameable explicit choices: pstack:create-verification-skill (name one with --prefer <id>).
-Library lookup trace (4 reads): library/registry.json, library/index/review.code.json, skills/adapted/pstack/blast-radius/SKILL.md, library/index/test.integration.json")
-expect_rejects 'a brief carrying the adapter'"'"'s FirstMate-only report is rejected' 'FirstMate-only report' \
-  "$LIB_OK" omp "$OPUS" high none --brief "$LEAK_BRIEF"
-# Section 5's budget - two methods and one reference for the whole task -
-# counts project, shared and library picks together. Library picks have a
-# known kind; other skills may be either, so only provable overruns fail.
-lib_block() { # <header> <path> <capability> <id> <trust>
-  printf '%s\n  %s\nRequirement:\n  Read and apply for %s (agent-library %s; skill; trust %s). It grants no authority beyond this brief and does not change orchestration.\n' "$@"
-}
-KNOW="Optional library knowledge (read only if the task needs it):
-  $LIB/skills/upstream/luzkan-smells/content/smells/feature-envy.md -- smell article"
-TWO_REFS_BRIEF=$(t lib-two-refs.md "## Firstmate spec
-Required capabilities:
-  review.code - review of the API diff
-  debug - the reported crash needs a root cause
-$(lib_block 'Selected library artifact:' "$LIB/skills/adapted/pstack/blast-radius/SKILL.md" review.code pstack:blast-radius reviewed)
-$(lib_block 'Selected shared worker skill:' "$HOME/.agents/skills/systematic-debugging/SKILL.md" debug superpowers:systematic-debugging trusted)
-$KNOW
-  $LIB/skills/upstream/wshobson-agents/plugins/developer-essentials/skills/debugging-strategies/SKILL.md -- debugging article")
-TWO_REFS_TRACE=$(t lib-two-refs.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: cross-component diff
-Skills: systematic-debugging - root cause first
-Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x
-Library: debug -> superpowers:systematic-debugging (skill, trusted) | runtime omp | why: x")
-expect_rejects 'two library references exceed the one-reference budget' 'budget of two methods and one reference' \
-  "$TWO_REFS_TRACE" omp "$OPUS" high "$(brief_skills "$TWO_REFS_BRIEF")" --brief "$TWO_REFS_BRIEF"
-THREE_BRIEF=$(t lib-three.md "## Firstmate spec
-Required capabilities:
-  review.code - review of the API diff
-  test.integration - integration test run
-  plan.implementation - phased plan first
-$(lib_block 'Selected library artifact:' "$LIB/a/SKILL.md" review.code pstack:blast-radius reviewed)
-$(lib_block 'Selected library artifact:' "$LIB/b/SKILL.md" test.integration pstack:create-verification-skill reviewed)
-$(lib_block 'Selected library artifact:' "$LIB/c/SKILL.md" plan.implementation addy:spec-driven-development reviewed)")
-THREE_TRACE=$(t lib-three.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: x
-Skills: none
-Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x
-Library: test.integration -> pstack:create-verification-skill (skill, reviewed) | runtime omp | why: x
-Library: plan.implementation -> addy:spec-driven-development (skill, reviewed) | runtime omp | why: x")
-expect_rejects 'three library methods exceed the two-method budget' 'budget of two methods and one reference' \
-  "$THREE_TRACE" omp "$OPUS" high none --brief "$THREE_BRIEF"
-FULL_BRIEF=$(t lib-full.md "## Firstmate spec
-Required capabilities:
-  review.code - review of the API diff
-  test.integration - integration test run
-Selected shared worker skill:
-  $VBC
-Requirement:
-  Apply before declaring the task complete.
-$(lib_block 'Selected library artifact:' "$LIB/a/SKILL.md" review.code pstack:blast-radius reviewed)
-$KNOW")
-FULL_TRACE=$(t lib-full.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: x
-Skills: $VBC - fresh evidence before done
-Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x
-Library: test.integration -> none | why: budget: one method slot left after $VBC")
-expect 'one shared skill, one library method and one library reference fill the budget exactly' pass \
-  "$FULL_TRACE" omp "$OPUS" high "$VBC" --brief "$FULL_BRIEF"
-OVER_BRIEF=$(t lib-over.md "$(cat "$FULL_BRIEF")
-Selected shared worker skill:
-  $TDD
-Requirement:
-  Apply.")
-expect_rejects 'a second shared skill on top of a library method and reference overruns the budget' 'budget of two methods and one reference' \
-  "$(t lib-over.txt "$(sed "s/^Skills: .*/Skills: $VBC - x; $TDD - y/" "$FULL_TRACE")")" omp "$OPUS" high "$VBC,$TDD" --brief "$OVER_BRIEF"
-# A Claude worker under auto reads only its task-channel grants, which
-# include its own data/<id> (section 5 "Claude workers"): every library
-# artifact a Claude brief carries must be a materialized copy under the
-# brief's own data directory, never the shared Library path.
-mkdir -p "$TMP/data/claude-task"
-CLAUDE_DIR=$(cd "$TMP/data/claude-task" && pwd -P)
-claude_brief() { # <file> <body path>
-  printf '## Firstmate spec\nRequired capabilities:\n  review.code - review of the API diff\n%s\n' \
-    "$(lib_block 'Selected library artifact:' "$2" review.code addy:code-review-and-quality reviewed)" > "$1"
-  printf '%s' "$1"
-}
-CLAUDE_TRACE=$(t claude.txt "Routing: REVIEW #1 | role senior-fullstack | claude | claude-sonnet-5-5 | high | why: captain override - Claude worker
-Skills: none
-Library: review.code -> addy:code-review-and-quality (skill, reviewed) | runtime claude | why: materialized for claude")
-expect 'a Claude brief whose library artifact is materialized under its own data dir is accepted' pass \
-  "$CLAUDE_TRACE" claude claude-sonnet-5-5 high none --brief "$(claude_brief "$CLAUDE_DIR/brief.md" "$CLAUDE_DIR/agent-library/skills/upstream/addyosmani-agent-skills/skills/code-review-and-quality/SKILL.md")"
-expect_rejects 'a Claude brief pointing at the shared Library path is rejected' 'materialized under the brief' \
-  "$CLAUDE_TRACE" claude claude-sonnet-5-5 high none --brief "$(claude_brief "$CLAUDE_DIR/brief-native.md" "$LIB/skills/upstream/addyosmani-agent-skills/skills/code-review-and-quality/SKILL.md")"
-expect 'the same shared Library path stays valid for an omp worker' pass \
-  "$(t omp-native.txt "$(sed 's/| claude | claude-sonnet-5-5 | high | why: captain override - Claude worker/| omp | anthropic\/claude-sonnet-5-5 | high | why: x/; s/runtime claude/runtime omp/' "$CLAUDE_TRACE")")" \
-  omp "$SONNET" high none --brief "$TMP/data/claude-task/brief-native.md"
-# A trusted Library pick is never copied: at its native path a Claude worker
-# under auto cannot read it, so it must not pass as delivered either.
-TRUSTED_CLAUDE_BRIEF="$CLAUDE_DIR/brief-trusted.md"
-printf '## Firstmate spec\nRequired capabilities:\n  test.tdd - failing-first fix\n%s\n' \
-  "$(lib_block 'Selected shared worker skill:' "$HOME/.agents/skills/$TDD/SKILL.md" test.tdd superpowers:test-driven-development trusted)" > "$TRUSTED_CLAUDE_BRIEF"
-TRUSTED_CLAUDE_TRACE=$(t trusted-claude.txt "Routing: IMPLEMENT #2 | role senior-fullstack | claude | claude-sonnet-5-5 | high | why: captain override - Claude worker
-Skills: $TDD - failing-first fix
-Library: test.tdd -> superpowers:test-driven-development (skill, trusted) | runtime claude | why: trusted default")
-expect_rejects 'a Claude brief carrying a trusted Library pick at its native path is rejected' 'materialized under the brief' \
-  "$TRUSTED_CLAUDE_TRACE" claude claude-sonnet-5-5 high "$(brief_skills "$TRUSTED_CLAUDE_BRIEF")" --brief "$TRUSTED_CLAUDE_BRIEF"
-expect 'the same trusted native pick stays valid for an omp worker' pass \
-  "$(t trusted-omp.txt "$(sed 's/| claude | claude-sonnet-5-5 | high | why: captain override - Claude worker/| omp | anthropic\/claude-opus-5-5 | high | why: x/; s/runtime claude/runtime omp/' "$TRUSTED_CLAUDE_TRACE")")" \
-  omp "$OPUS" high "$(brief_skills "$TRUSTED_CLAUDE_BRIEF")" --brief "$TRUSTED_CLAUDE_BRIEF"
-# A Library pick that stands in for a role's unavailable shared default is
-# reported only on its Library: line (section 0). The first trace is the
-# exact block a live Captain printed for the final natural review (v6,
-# role code-reviewer, the role's shared code-review-and-quality default not
-# installed): it names the Library method as a selected skill, and its
-# semicolon makes a second "skill" of the reason. Both are rejected; the
-# corrected block is accepted. A genuine shared skill's reason may carry
-# commas, never a semicolon.
-ROLE_DEFAULT_BRIEF=$(t role-default-brief.md "## Firstmate spec
-Role: code-reviewer.
-Required capabilities:
-  review.code - correctness and maintainability review of the CSV diff
-$(lib_block 'Selected library artifact:' "$LIB/skills/upstream/addyosmani-agent-skills/skills/code-review-and-quality/SKILL.md" review.code addy:code-review-and-quality reviewed)")
-ROLE_DEFAULT_ROUTE="Routing: REVIEW #1 | role code-reviewer | omp | $SONNET | high | why: small, self-contained CSV change."
-ROLE_DEFAULT_LIB='Library: review.code -> addy:code-review-and-quality (skill, reviewed) | runtime omp | why: correctness and maintainability method fits this diff better than the default pre-ship checklist.'
-expect_rejects 'the live trace listing the Library stand-in for a role default under Skills is rejected' 'Skills names exactly the selected skills' \
-  "$(t role-default-live.txt "$ROLE_DEFAULT_ROUTE
-Skills: code-review-and-quality — reviewed Library equivalent; the shared install is absent.
-$ROLE_DEFAULT_LIB")" omp "$SONNET" high none --brief "$ROLE_DEFAULT_BRIEF"
-expect 'the same pick reported only on its Library line, with Skills: none and its reason, is accepted' pass \
-  "$(t role-default-fixed.txt "$ROLE_DEFAULT_ROUTE
-Skills: none
-No skill: the shared role default is unavailable, the reviewed Library method below supplies the review
-$ROLE_DEFAULT_LIB")" omp "$SONNET" high none --brief "$ROLE_DEFAULT_BRIEF"
-expect_rejects 'a semicolon inside a genuine shared skill reason invents a second skill and is rejected' 'Skills names exactly the selected skills' \
-  "$(t reason-semicolon.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
-Skills: $VBC - fresh evidence before done; then report it")" omp "$OPUS" high "$VBC"
-expect 'commas inside a shared skill reason are accepted' pass \
-  "$(t reason-comma.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
-Skills: $VBC - fresh evidence before done, then report it")" omp "$OPUS" high "$VBC"
-# Project-required skills are mandatory and outrank the budget: a brief
-# without Library content is never budget-checked, and project skills are
-# never what makes a Library brief fail.
-proj_block() { printf 'Required project skill:\n  .agents/skills/%s/SKILL.md\nRequirement:\n  Read and apply.\n' "$1"; }
-FOUR_PROJECT_BRIEF=$(t four-project.md "## Firstmate spec
-$(proj_block a)
-$(proj_block b)
-$(proj_block c)
-$(proj_block d)")
-FOUR_PROJECT_TRACE=$(t four-project.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
-Skills: .agents/skills/a/SKILL.md - a; .agents/skills/b/SKILL.md - b; .agents/skills/c/SKILL.md - c; .agents/skills/d/SKILL.md - d")
-expect 'a brief with four required project skills and no Library content passes as before' pass \
-  "$FOUR_PROJECT_TRACE" omp "$OPUS" high "$(brief_skills "$FOUR_PROJECT_BRIEF")" --brief "$FOUR_PROJECT_BRIEF"
-PROJECT_LIB_BRIEF=$(t project-lib.md "$(cat "$FOUR_PROJECT_BRIEF")
-Required capabilities:
-  review.code - review of the API diff
-$(lib_block 'Selected library artifact:' "$LIB/a/SKILL.md" review.code pstack:blast-radius reviewed)")
-expect 'mandatory project skills never make a Library brief fail the budget' pass \
-  "$(t project-lib.txt "$(cat "$FOUR_PROJECT_TRACE")
-Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x")" \
-  omp "$OPUS" high "$(brief_skills "$PROJECT_LIB_BRIEF")" --brief "$PROJECT_LIB_BRIEF"
-REF_ONLY_BRIEF=$(t ref-only.md "## Firstmate spec
-Required capabilities:
-  review.code - review of the API diff
-$(lib_block 'Selected library artifact:' "$LIB/a/SKILL.md" review.code pstack:blast-radius reviewed)
-$KNOW
-  $LIB/skills/upstream/luzkan-smells/content/smells/shotgun-surgery.md -- second smell article")
-expect_rejects 'one Library method with two Library references overruns the one-reference budget' 'budget of two methods and one reference' \
-  "$(t ref-only.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: x
-Skills: none
-Library: review.code -> pstack:blast-radius (skill, reviewed) | runtime omp | why: x")" omp "$OPUS" high none --brief "$REF_ONLY_BRIEF"
-FOUR_SHARED_BRIEF=$(t four-shared.md "## Firstmate spec
-$(for s in a b c d; do printf 'Selected shared worker skill:\n  %s\nRequirement:\n  Apply.\n' "$s"; done)")
-expect 'a brief with four shared skills and no Library content is not budget-checked by the Library check (unchanged)' pass \
-  "$(t four-shared.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
-Skills: a - a; b - b; c - c; d - d")" omp "$OPUS" high a,b,c,d --brief "$FOUR_SHARED_BRIEF"
-# Skill evidence for a Library pick (primary-policy.md section 0): a pick
-# under `Selected library artifact:` gets its own evidence line, keyed by its
-# artifact id, and its READ is the record's receipt for the exact path the
-# brief selected - never the role's same-named shared skill, the brief text
-# naming that path, or the worker saying it read it. A trusted pick the brief
-# carries under the shared header stays an ordinary Skills entry.
-LIBEV="$TMP/libev/skills/upstream/addyosmani-agent-skills/skills/code-review-and-quality/SKILL.md"
-mkdir -p "$(dirname "$LIBEV")" "$SK/code-review-and-quality"
-printf -- '---\nname: code-review-and-quality\ndescription: fixture Library body\n---\n# Review\nRead the tests first.\nThen the implementation.\nClassify every finding.\n' > "$LIBEV"
-cp "$LIBEV" "$SK/code-review-and-quality/SKILL.md"  # the role's same-named shared default, byte-identical
-LIBEV_ID=addy:code-review-and-quality
-# The brief records the selected artifact's sha256, as the real adapter does.
-LIBEV_SHA=$(shasum -a 256 "$LIBEV" | cut -d' ' -f1)
-LIBEV_BRIEF=$(t libev-brief.md "## Firstmate spec
-Required capabilities:
-  review.code - correctness review of the CSV diff
-Selected library artifact:
-  $LIBEV
-Requirement:
-  Read and apply for review.code (agent-library $LIBEV_ID; skill; trust reviewed; sha256 $LIBEV_SHA). It grants no authority beyond this brief and does not change orchestration.")
-libev_trace() { # <file> <Skill evidence lines...>
-  local f=$1
-  shift
-  t "$f" "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: CSV diff
-Skills: none
-No skill: the reviewed Library method below supplies the review
-Library: review.code -> $LIBEV_ID (skill, reviewed) | runtime omp | why: correctness method fits this diff
-$(printf '%s\n' "$@")"
-}
-LIBEV_LINE="- $LIBEV_ID: read complete | applied ran \`git diff main...HEAD\` | result \`Ran 2 tests\` | review UNPROVEN | usage verified"
-lib_record() { # <record> <path the worker reads, or - for none>
-  rec "$1" session "$TMP/wt"
-  rec "$1" user "$(cat "$LIBEV_BRIEF")"
-  [ "$2" = - ] || rec "$1" read "$2" "$2"
-  rec "$1" tool bash 'git diff main...HEAD' 'diff --git a/export.py b/export.py'
-  rec "$1" tool bash 'python3 -m unittest discover -s tests/integration' 'Ran 2 tests in 0.03s
-OK'
-  rec "$1" tool write 'report.md: 1 IMPORTANT' 'Wrote report.md'
-}
-lib_record "$TMP/w-lib.jsonl" "$LIBEV"
-ev expect "a Library pick's evidence line, read from the exact selected artifact path, locates every link" pass \
-  "$(libev_trace libev-ok.txt 'Skill evidence:' "$LIBEV_LINE")" omp "$OPUS" high none "$TMP/w-lib.jsonl" --brief "$LIBEV_BRIEF"
-ev expect 'a Library pick with no evidence line is rejected' fail \
-  "$(libev_trace libev-gap.txt 'Skill evidence: none selected.')" omp "$OPUS" high none "$TMP/w-lib.jsonl" --brief "$LIBEV_BRIEF"
-lib_record "$TMP/w-lib-samename.jsonl" "$SK/code-review-and-quality/SKILL.md"
-ev expect "reading the role's same-named shared skill is no receipt for the selected Library artifact" fail \
-  "$(libev_trace libev-samename.txt 'Skill evidence:' "$LIBEV_LINE")" omp "$OPUS" high none "$TMP/w-lib-samename.jsonl" --brief "$LIBEV_BRIEF"
-lib_record "$TMP/w-lib-claim.jsonl" -
-rec "$TMP/w-lib-claim.jsonl" say "I read $LIBEV_ID at $LIBEV in full and applied it."
-ev expect 'the selected artifact named only in the brief and the worker claim is no read receipt' fail \
-  "$(libev_trace libev-claim.txt 'Skill evidence:' "$LIBEV_LINE")" omp "$OPUS" high none "$TMP/w-lib-claim.jsonl" --brief "$LIBEV_BRIEF"
-TRUSTEV_BRIEF=$(t trustev-brief.md "## Firstmate spec
-Required capabilities:
-  test.tdd - failing-first fix
-$(lib_block 'Selected shared worker skill:' "$SK/$TDD/SKILL.md" test.tdd superpowers:test-driven-development trusted)")
-ev expect 'a trusted pick under the shared header is evidenced by its Skills entry alone' pass \
-  "$(t trustev.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
-Skills: $TDD - trusted default
-Library: test.tdd -> superpowers:test-driven-development (skill, trusted) | runtime omp | why: trusted default
-Skill evidence:
-- $TDD: $VERIFIED_LINE")" omp "$OPUS" high "$(brief_skills "$TRUSTEV_BRIEF")" "$W_GOOD" --brief "$TRUSTEV_BRIEF"
-# The selected artifact is the one whose sha256 the brief records: bytes at
-# the selected path that differ from it (the shared checkout updated, or a
-# materialized copy replaced, after selection) are another artifact, so a
-# full read of them is no complete read and credits no pre-work read. A
-# selected path that is no readable file stays unreadable.
-LIBEV_OTHER="$TMP/libev-other/skills/upstream/addyosmani-agent-skills/skills/code-review-and-quality/SKILL.md"
-mkdir -p "$(dirname "$LIBEV_OTHER")"
-printf -- '---\nname: code-review-and-quality\ndescription: fixture Library body, later version\n---\n# Review\nSkip the tests.\nSkim the implementation.\nApprove.\n' > "$LIBEV_OTHER"
-OTHER_BRIEF=$(t libev-other-brief.md "$(sed "s#$LIBEV#$LIBEV_OTHER#" "$LIBEV_BRIEF")")
-lib_record "$TMP/w-lib-other.jsonl" "$LIBEV_OTHER"
-ev expect "a full read of bytes that differ from the brief's recorded sha256 is not a complete read of the selected artifact" fail \
-  "$(libev_trace libev-other.txt 'Skill evidence:' "$LIBEV_LINE")" omp "$OPUS" high none "$TMP/w-lib-other.jsonl" --brief "$OTHER_BRIEF"
-ev expect 'bytes that differ from the recorded sha256 credit no pre-work read, so they cannot back verified usage' fail \
-  "$(libev_trace libev-other-usage.txt 'Skill evidence:' "- $LIBEV_ID: read UNPROVEN | applied ran \`git diff main...HEAD\` | result \`Ran 2 tests\` | review UNPROVEN | usage verified")" \
-  omp "$OPUS" high none "$TMP/w-lib-other.jsonl" --brief "$OTHER_BRIEF"
-GONE_BRIEF=$(t libev-gone-brief.md "$(sed "s#$LIBEV#$TMP/libev-gone/SKILL.md#" "$LIBEV_BRIEF")")
-ev expect_shows 'a selected path that is no readable file stays unreadable, never a sha mismatch' 'the record shows unreadable' \
-  "$(libev_trace libev-gone.txt 'Skill evidence:' "- $LIBEV_ID: read UNPROVEN | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN")" \
-  omp "$OPUS" high none "$TMP/w-lib.jsonl" --brief "$GONE_BRIEF"
-
-# --- 5. Real dispatch/brief/spawn seam --------------------------------------
+# --- 4. Real dispatch/brief/spawn seam --------------------------------------
 # The real, unmodified official bin/fm-spawn.sh launches one task on an
 # isolated tmux server (never the shared session) into a real treehouse
 # worktree of a disposable project - the same seam tests/multi-project-
@@ -1639,6 +1163,15 @@ ev expect_shows 'a selected path that is no readable file stays unreadable, neve
 # received and did.
 FIRSTMATE_ROOT_REAL="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | tail -1; }
+
+# brief_skills <brief-file> - the skills a primary-policy.md section 2
+# brief selects: the indented line after each "Required project skill:" or
+# "Selected shared worker skill:" header, comma-joined, or "none".
+brief_skills() {
+  local s
+  s=$(awk '/^(Required project skill|Selected shared worker skill)/ {getline; gsub(/^[ \t]+|[ \t]+$/, ""); printf "%s%s", sep, $0; sep=","}' "$1")
+  printf '%s' "${s:-none}"
+}
 
 if ! command -v tmux >/dev/null 2>&1 || ! command -v treehouse >/dev/null 2>&1 || [ ! -x "$FIRSTMATE_ROOT_REAL/bin/fm-spawn.sh" ]; then
   printf 'SKIP - real spawn seam: needs tmux, treehouse, and %s/bin/fm-spawn.sh (never reported as PASS)\n' "$FIRSTMATE_ROOT_REAL"
