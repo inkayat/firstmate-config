@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# routing-taxonomy.sh - acceptance for the eleven-category worker dispatch
+# routing-taxonomy.sh - acceptance for the ten-category (plus DEFAULT) worker dispatch
 # taxonomy in firstmate/crew-dispatch.json: structural shape, the pinned
 # active-primary route per category rule, quota-array purity (a `use`
 # array holds only genuinely interchangeable candidates - never a

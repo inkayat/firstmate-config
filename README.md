@@ -38,7 +38,7 @@ policy chooses worker harness, model, effort, and role by task semantics.
 ## Highlights
 
 - OMP-first Captain with an explicit Pi fallback
-- Semantic task routing across eleven dispatch categories
+- Semantic task routing across ten dispatch categories plus a DEFAULT catch-all
 - Opus 5.5-biased routing: substantive work lands on Opus 5.5, bounded work
   may stay on Sonnet 5.5, trivial work on Haiku 4.5 or GPT-6 Luna; GPT-6.1 Sol
   is the everyday cross-family challenger, with Astra limited to each
@@ -54,10 +54,10 @@ policy chooses worker harness, model, effort, and role by task semantics.
   agent root as `fm-<role>` (`firstmate/primary-policy.md` sections 4-5)
 - Reproducibly installed shared worker skills and external pins
 - Browser/manual validation policy for user-visible work
-- Independent review before merge for substantive or risky Captain-dispatched
-  mutating work - advisory only, distinct from `no-mistakes`'s own automated
-  pipeline gate (see `firstmate/primary-policy.md` "Independent review
-  before merge")
+- Review authority stays with the selected official FirstMate delivery path;
+  an explicitly requested separate review is a scoped, read-only knowledge
+  deliverable (see `firstmate/primary-policy.md` "Review under the selected
+  delivery path")
 - Read-only `fm doctor` and `fm version` diagnostics
 - Fast-forward-only `fm update` (official FirstMate checkout, then this repository) and deterministic, idempotent installation
 

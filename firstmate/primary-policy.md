@@ -97,7 +97,7 @@ After a worker finishes:
   words or a space (`done` and `passed`, not `done`-`passed`). An excerpt
   that itself contains backticks is quoted whole: `Exit code: `1``.
 
-Independent review stays separate from any automated pipeline:
+A separately requested review stays separate from any automated pipeline:
 
     Review: <role> | <harness> <model> <effort> | why: <reason> | skills: <...> | BLOCKER n, IMPORTANT n, OPTIONAL n
     no-mistakes: <result>
@@ -269,7 +269,8 @@ the others along - a hard task does not automatically mean the strongest
 model, and a strong model does not automatically mean maximum effort.
 
 **Category first.** Every delegated task maps to exactly one of ten
-dispatch categories before harness/model/effort are chosen. Categories are a
+dispatch categories, or to the DEFAULT catch-all when none fits, before
+harness/model/effort are chosen. Categories are a
 semantic-fit classification, not a size ladder and not a keyword match - read
 the full "when"/"why" text for each in `config/crew-dispatch.json`, the
 authoritative source this table summarizes. An explicit captain choice always
@@ -319,9 +320,10 @@ complex UI/BROWSER, both DEEP forms, and - during the debugging period -
 the DEFAULT catch-all. Small or bounded work may stay on Sonnet 5.5
 (bounded REVIEW/IMPLEMENT, normal UI/BROWSER, ordinary RESEARCH, hard
 EXPLORE) and trivial work on Haiku 4.5 or GPT-6 Luna (QUICK, simple
-EXPLORE). "Substantive" is the same standard section 7 uses to require
-review: meaningful new behavior, a nontrivial refactor, work spanning
-multiple components, or real cross-component regression risk. When
+EXPLORE). "Substantive" means meaningful new behavior, a nontrivial
+refactor, work spanning multiple components, or real cross-component
+regression risk; it selects model and effort here and never creates review
+authority (section 7). When
 uncertain between Sonnet 5.5 and Opus 5.5 for a substantive task, choose
 Opus 5.5. TENTH-MAN enforces model-family diversity directly: it never
 shares a model family with the work it is challenging, defaulting to GPT-6.1
@@ -381,9 +383,9 @@ ship. Judge the actual task, not the category label.
 `anthropic/claude-sonnet-5-5`, `anthropic/claude-opus-5-5`,
 `openai-codex/gpt-6-luna`, `openai-codex/gpt-6.1-sol`, and
 `openai-codex/gpt-6-astra`. OMP's native catalog lists all six with low
-through xhigh support; Pi exposes no Anthropic provider on this machine, so
-every Claude route is OMP. `openai-codex/gpt-6.1-sol` is also the
-Captain-startup candidate in `captain-startup-models.tsv` (medium effort);
+through xhigh support; every Claude route is OMP. `openai-codex/gpt-6.1-sol`
+is also the Captain-startup candidate in `captain-startup-models.tsv`
+(medium effort);
 that chain's Claude Sonnet fallback step is harness-scoped (OMP's own
 `anthropic/claude-sonnet-5-5` versus Pi's unversioned
 `pi-claude-code-provider/sonnet` alias) - see README.md "Captain startup
@@ -427,8 +429,8 @@ role file plus its line here, never a new dispatch category:
 
 - `security-engineer` - finds, evidences, and ranks security weaknesses in a
   named scope; report-only, never exploits
-- `code-reviewer` - read-only review of a handed diff, including section 7's
-  independent review pass
+- `code-reviewer` - read-only review of a handed diff, including a review
+  the captain explicitly requests (section 7)
 - `refactorist` - one small, behavior-preserving improvement per task, proven
   by tests
 - `django-pro` - Django and Django REST Framework backend implementation
@@ -562,100 +564,61 @@ reveal a problem automated tests miss, whether that verification was assigned,
 whether the relevant flow was actually exercised, and whether the evidence
 matches the change's risk and scope.
 
-### Independent review before merge
+### Review under the selected delivery path
 
-Before treating a merge-eligible task as ready, judge whether the change
-warrants an independent read-only review pass separate from the worker that
-wrote it. This is advisory guidance layered on the existing REVIEW/TENTH-MAN
-routes (section 3) - it adds no new dispatch category, severity engine, or
-router logic. This section
-governs only the Captain-dispatched advisory path described below; a task
-running through `no-mistakes`'s own automated pipeline is reviewed by that
-pipeline's own gate, which this policy does not touch, does not duplicate,
-and cannot guarantee a separate outside reviewer for - reaching into that
-pipeline to insert or require one is an official FirstMate change, out of
-scope for this configuration.
+Official FirstMate `AGENTS.md` section 7 ("Selected delivery path and merge
+authority") owns review, fixes, and verification: the selected delivery path
+(`no-mistakes`, direct-PR, or local-only) owns its own rigor. This
+configuration adds no review requirement of its own. Section 3 still chooses
+model and effort by semantics; no category, "substantive" classification, or
+security, payment, or other risk label is by itself authority for a reviewer.
 
-**When review is required**, not merely considered: IMPLEMENT-LARGE work
-(including its reasoning-heavy escalation), a DEEP ship/implementation
-outcome, any change touching authentication or security, payments, data
-integrity, a nontrivial migration, concurrency, or otherwise carrying a
-high blast radius, release-critical status, or a substantial public API
-change - and, independent of that topic list, any change that is
-materially substantive (meaningful new behavior, a nontrivial refactor, or
-work spanning multiple components) or that carries real cross-component
-regression risk, whatever its category. Ordinary IMPLEMENT work is judged
-by its actual risk and substance against that same standard, never
-exempted merely for not naming a listed topic - a normal IMPLEMENT task
-that is materially substantive, carries cross-component regression risk,
-or touches one of the listed areas needs review; a narrowly bounded one
-that does none of those does not. QUICK work and other genuinely trivial,
-narrowly bounded changes may skip review only when neither a listed
-mandatory-risk topic nor this substantive/regression-risk trigger applies
-- never as a blanket exemption for the category alone.
+**Ordinary implementation.** The implementation worker validates its own
+change as its path requires (see "Browser and manual verification" above) and
+no independent reviewer is dispatched or awaited - for substantive,
+cross-component, security, or payment work too - unless the captain
+explicitly requested one. Genuine security, destructive, irreversible, and
+payment authority boundaries still escalate to the captain exactly as the
+official contract and the task's own authority require, independent of this
+section.
 
-**How review runs.** Every required review needs a different, read-only
-worker in a fresh context, never the implementation worker itself even in
-a new context or session - this is the baseline independence axis, and
-REVIEW's existing rules (bounded, substantive, critical, section 3) already
-satisfy it by construction, since REVIEW always dispatches as its own
-separate task with its own worker. Model-family or adversarial independence is a second, separate
-axis: reach for REVIEW's cross-family second-reviewer rule or for
-TENTH-MAN only when that additional adversarial or cross-family check is
-itself warranted - the highest-stakes review escalation, or a deliberate
-adversarial challenge - never merely because a review is required; an
-ordinary REVIEW pass in a fresh session already satisfies this section's
-baseline. The reviewer is read-only: it inspects the resulting diff and the
-surrounding code it touches, never re-implements. Read-only also means it
-never fetches, pulls, or otherwise updates a canonical checkout (official
+**Explicitly requested review.** When the captain explicitly requests a
+separate review or audit, or the authorized task is itself a knowledge-only
+review, it is a scoped knowledge deliverable, categorized and routed by the
+existing section 3 criteria and run by a different read-only worker than the
+implementer, answering what was asked and nothing wider. Hand it a concrete
+artifact: the complete diff with its base and head revision, or an immutable
+commit/patch reviewable from its own worktree - never a bare "review the
+change". It works from that
+artifact, refs already in its own worktree, or a disposable clone, and never
+fetches, pulls, or otherwise updates a canonical checkout (official
 FirstMate, this configuration repository, or a project's own primary
-checkout) to get evidence - it works from the diff/patch and base/head
-revisions it was handed, refs already present in its own isolated
-worktree, or a disposable clone made for that one review, never a live
-`git fetch`/`git pull`/`fm update` against shared state. This is a rule
-for how a review is conducted, not new enforcement infrastructure. Model
-and harness choice for the reviewer stays exactly what section 3 already
-assigns for the matched rule - this policy changes when a reviewer is
-required and what it must report, never which model reviews it.
+checkout). It reports each finding as **BLOCKER** (must be fixed before
+merge), **IMPORTANT** (should be fixed; only the captain waives it), or
+**OPTIONAL** (never blocking), and carries no authority to fix, publish, or
+merge. Acting on findings is a separate authorized task; a re-review the
+captain requests is handed the original findings along with the corrected
+delta, not only the original diff again.
 
-Because each dispatched task owns its own isolated worktree (section 2), a
-separately dispatched reviewer cannot assume it can see the implementation
-worker's uncommitted change on its own. Before a review pass counts as run,
-the Captain hands the reviewer the actual complete diff together with its
-base and head revision, or an immutable commit/patch reviewable from the
-reviewer's own worktree - never a bare instruction to "review the change"
-with no reviewable artifact. The same handoff - including the original
-findings/report the re-review must close, not just the corrected code -
-scoped to the corrected delta, is required before a re-review can be
-claimed complete: a re-review report is not valid without evidence the
-reviewer actually received and read the corrected code against those
-original findings, not merely the original diff again.
+**`no-mistakes` and verification requests.** Whether a request to run
+`no-mistakes`, to gate, ship, or validate changes, or to do a task and then
+validate it selects the `no-mistakes` path is decided by official FirstMate
+intake and the official `no-mistakes` skill's own triggers applied to the
+exact request; this configuration adds no exclusion or activation rule. When
+`no-mistakes` is the selected path, `no-mistakes` alone owns review, fixes,
+tests, documentation, push, PR, and CI: never add a manual reviewer or gate
+on top of it, and never hold work outside it for a manual clean verdict. A
+request for tests, a smoke run, or browser verification is evidence the
+worker performs under the selected path; by itself it grants no commit,
+push, or publication authority. If the work needs more rigor than the
+selected path gives, escalate whether to use `no-mistakes`; never silently
+add a reviewer instead.
 
-**Findings and severity.** The reviewer reports each finding as one of:
-
-- **BLOCKER** - must be fixed before the change is merge-ready.
-- **IMPORTANT** - should be fixed; waivable only by the captain's explicit
-  word, never by the implementation worker or the reviewer itself.
-- **OPTIONAL** - worth noting, never blocking.
-
-Fix every BLOCKER finding and every IMPORTANT finding that is not
-explicitly waived, and send each fix through a targeted independent
-re-review of the corrected delta before treating the change as
-merge-ready - re-review is not optional for either severity once a fix is
-made, only the fix-or-waive choice differs between them: BLOCKER must be
-fixed, IMPORTANT either gets fixed or stays open pending an explicit
-captain waiver, and it is never silently dropped. OPTIONAL findings alone,
-with nothing outstanding at BLOCKER or unwaived IMPORTANT, may proceed
-without another review pass.
-
-**Report.** For any task this section applied to, state: what was
-implemented, how it was verified, whether review ran or was judged
-skippable and why, who reviewed (route/model/harness), the
-BLOCKER/IMPORTANT/OPTIONAL counts, and the resulting
-merge-readiness. This is guidance and reporting discipline, not a
+**Report.** State what was implemented and how it was verified; when a
+requested review ran, also who reviewed (route/model/harness) and the
+BLOCKER/IMPORTANT/OPTIONAL counts. This is reporting discipline, not a
 mechanical gate: this configuration has no trusted enforcement runner for
-it, so it never auto-merges on a pass and never substitutes for genuinely
-running the review it calls for.
+it and never auto-merges on a pass.
 
 This policy and the selected verification skills are guidance, not a
 mechanical completion check. This configuration has no trusted verification

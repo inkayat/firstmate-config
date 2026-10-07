@@ -7,7 +7,7 @@ learns about how I like to work survive every reinstall and every update.
 ## Standing instructions
 
 Read `$FM_CONFIG_ROOT/firstmate/primary-policy.md` at session start and follow
-it. It is short and it is the operating contract for delegation: which
+it. It is long - page through all of it - and it is the operating contract for delegation: which
 project a task belongs to, authority resolution within that project, the
 preflight before every delegated task, harness routing, roles, the skill
 budget, and what counts as finished. `FM_CONFIG_ROOT` is exported by the `fm`

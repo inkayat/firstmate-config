@@ -15,7 +15,7 @@
           "effort": "low"
         }
       ],
-      "why": "Claude practical capacity is about 20 versus GPT's about 5 on this fleet - roughly 4:1, not 20:1 - so the smallest ordinary lane defaults to Claude Haiku rather than spending scarcer GPT headroom on trivial work. Haiku and Luna are genuinely interchangeable same-tier candidates for this bucket (both cheap, both low effort, neither semantically preferred over the other) so FirstMate's quota-array procedure may resolve between them after this rule matches. Escalate to anthropic/claude-sonnet-5-5 at low or medium, by explicit captain choice, only if the task needs more reasoning than either cheap-tier model comfortably gives - never Astra or Opus for ordinary quick work; Opus 5.5 belongs to substantive work in the neighboring categories and Astra to their most exceptional escalations. QUICK versus IMPLEMENT is a size/decision test, not a keyword match: a rename is QUICK, a rename that also requires touching call sites across a module and deciding a new interface is IMPLEMENT."
+      "why": "The smallest ordinary lane uses a cheap low-effort model rather than spending a larger one on trivial work. Haiku and Luna are genuinely interchangeable same-tier candidates for this bucket (both cheap, both low effort, neither semantically preferred over the other) so FirstMate's quota-array procedure may resolve between them after this rule matches. Escalate to anthropic/claude-sonnet-5-5 at low or medium, by explicit captain choice, only if the task needs more reasoning than either cheap-tier model comfortably gives - never Astra or Opus for ordinary quick work; Opus 5.5 belongs to substantive work in the neighboring categories and Astra to their most exceptional escalations. QUICK versus IMPLEMENT is a size/decision test, not a keyword match: a rename is QUICK, a rename that also requires touching call sites across a module and deciding a new interface is IMPLEMENT."
     },
     {
       "category": "EXPLORE",
@@ -224,7 +224,7 @@
           "effort": "high"
         }
       ],
-      "why": "Opus 5.5 at high effort is the Opus-biased route for substantive implementation - the same 'materially substantive' standard primary-policy.md section 7 uses to require independent review. Bounded work stays on Sonnet 5.5 above; broad multi-file execution is IMPLEMENT-LARGE."
+      "why": "Opus 5.5 at high effort is the Opus-biased route for substantive implementation - \"substantive\" as primary-policy.md section 3 defines it for model choice. Bounded work stays on Sonnet 5.5 above; broad multi-file execution is IMPLEMENT-LARGE."
     },
     {
       "category": "IMPLEMENT-LARGE",

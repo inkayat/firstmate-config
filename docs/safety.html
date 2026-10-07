@@ -60,9 +60,9 @@
 <h2 id="project-wins">Project rules win</h2>
 <p>Project-native instructions and project-local skills outrank every role and every shared skill here. A shared skill that conflicts with a project rule loses. See <a href="roles-skills.html#precedence">Precedence</a>.</p>
 
-<h2 id="review">Independent review</h2>
-<p>Substantive or risky Captain-dispatched changes get an independent, read-only review in a fresh context before they are treated as merge-ready. Findings are <strong>BLOCKER</strong> (must fix), <strong>IMPORTANT</strong> (fix, or an explicit waiver from you), and <strong>OPTIONAL</strong>. A reviewer works from the diff and revisions it is given and never fetches, pulls, or updates a canonical checkout.</p>
-<p>This is advisory guidance distinct from the separate <code>no-mistakes</code> automated pipeline, which has its own gate.</p>
+<h2 id="review">Review</h2>
+<p>The selected official FirstMate delivery path owns review, fixes, and verification; this configuration adds no review requirement of its own and never stacks a manual reviewer on top of <code>no-mistakes</code>. Official FirstMate allows a separate review or audit only when you explicitly request it or the authorized task is itself a knowledge-only review. This configuration adds only how such a review runs: scoped, read-only, working from a diff or patch with its base and head revisions, never fetching, pulling, or updating a canonical checkout, and with no authority to fix, publish, or merge. Findings are <strong>BLOCKER</strong>, <strong>IMPORTANT</strong> (only you waive it), and <strong>OPTIONAL</strong>.</p>
+<p>Whether a request selects <code>no-mistakes</code> is decided by official FirstMate intake and its own skill, not by this configuration; when it is selected, it alone owns review and no manual reviewer is stacked on it. Asking for tests or a smoke run grants no commit, push, or publication authority by itself. If a task needs more rigor than its delivery path gives, the question escalated to you is whether to use <code>no-mistakes</code>.</p>
 
 <h2 id="limits">What is not guaranteed</h2>
 <div class="callout warn"><span class="t">Be precise about these</span>

@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
 # captain-review-scenarios.sh - real, isolated Captain scenarios for
-# firstmate/primary-policy.md's "Independent review before merge" section
-# (AGENTS.md section 7's task lifecycle owns the underlying dispatch this
-# policy layers advisory guidance on top of).
+# firstmate/primary-policy.md's "Review under the selected delivery path"
+# section (official FirstMate AGENTS.md section 7, "Selected delivery path
+# and merge authority", owns review; this policy only adds the delta for an
+# explicitly requested separate review).
 #
-# Four scenarios, matching the policy's own named cases:
-#   A. A low-risk QUICK change may skip independent review, with a stated
-#      reason.
-#   B. A substantive IMPLEMENT change, with NO task-specific user review
-#      request in its brief.
-#   C. An IMPORTANT/BLOCKER finding withholds merge-readiness, is fixed,
-#      then receives a targeted independent re-review - with the captain's
-#      explicit authorization to request and hold review present in the
-#      brief.
-#   D. A premium/Opus implementer does not waive or replace independent
-#      review by a separate, cheaper-model reviewer.
+# Three scenarios (letters are historical; the former B, which only
+# evidenced a since-resolved policy conflict, is removed):
+#   A. A low-risk QUICK change completes through the selected local-only
+#      path with no separate reviewer.
+#   C. An explicitly requested read-only review of a seeded defect reports a
+#      real finding; the fix is a separate captain-authorized task, then a
+#      captain-requested targeted re-review closes it.
+#   D. An explicitly requested review of premium/Opus-authored work runs as
+#      a separate reviewer on the routed REVIEW model.
 #
 # This is real, not mocked: every dispatch below is a real, unmodified
 # `bin/fm-spawn.sh` launch of the real `omp` harness on the real tmux
@@ -31,11 +30,11 @@
 # explicit reason - never PASS. A missing prerequisite (tmux, treehouse,
 # omp, the official FirstMate checkout, or omp's own credential store)
 # reports BLOCKED with the exact missing piece - also never PASS. This
-# mirrors the platform's own honesty: firstmate-config's independent-review
-# policy is advisory guidance with no trusted enforcement runner
-# (primary-policy.md "Independent review before merge" says so directly),
-# so this script proves real dispatch behavior against that advisory
-# policy, never a mechanical policy gate it does not actually have.
+# mirrors the platform's own honesty: firstmate-config's review delta is
+# guidance with no trusted enforcement runner (primary-policy.md "Review
+# under the selected delivery path" says so directly), so this script
+# proves real dispatch behavior against that guidance, never a mechanical
+# policy gate it does not actually have.
 #
 # Real dispatches never pin an LLM worker's own incidental wording -
 # assertions below are structural (a real commit landed on the expected
@@ -43,22 +42,6 @@
 # readable shape, a reviewer's own recorded task metadata carries a
 # different model than the implementer's) never a `contains` match on a
 # model's free-text explanation, which is expected to vary run to run.
-#
-# Scenario B's real, structural result is a genuine, disclosed policy
-# conflict, not a bug in this script: official FirstMate's own AGENTS.md
-# section 7 ("otherwise follow the faster path without adding an
-# independent reviewer"; "A separate review or audit is allowed only when
-# the captain explicitly requests that deliverable or the authorized task
-# is a knowledge-only review") means a substantive IMPLEMENT task with no
-# task-specific review request never gets a second dispatched reviewer in
-# real practice - contradicting this configuration's own
-# primary-policy.md, which calls that same shape of change
-# review-required. This script never resolves that conflict (it cannot:
-# official FirstMate is out of scope for this configuration, and inventing
-# enforcement here would be pseudo-enforcement) - it reports scenario B as
-# real, structural FAIL/BLOCKED evidence of the conflict, every time it is
-# run live, until the two policies are reconciled by someone with standing
-# to change one of them.
 #
 # Cleanup: every scratch directory and tmux socket this script creates is
 # removed before it exits, success or failure (trap below) - nothing here
@@ -81,10 +64,9 @@ contains() { case $2 in *"$3"*) pass "$1" ;; *) fail "$1 (missing '$3' in '$2')"
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | tail -1; }
 
 if [ "${FM_LIVE_CAPTAIN_SCENARIOS:-0}" != 1 ]; then
-  skip 'A: low-risk QUICK may skip review with a stated reason - live run not opted in (set FM_LIVE_CAPTAIN_SCENARIOS=1)'
-  skip 'B: substantive IMPLEMENT, no task-specific review request - live run not opted in (set FM_LIVE_CAPTAIN_SCENARIOS=1)'
-  skip 'C: IMPORTANT/BLOCKER finding -> fix -> targeted re-review - live run not opted in (set FM_LIVE_CAPTAIN_SCENARIOS=1)'
-  skip 'D: premium/Opus implementer does not waive independent review - live run not opted in (set FM_LIVE_CAPTAIN_SCENARIOS=1)'
+  skip 'A: low-risk QUICK completes through the selected path - live run not opted in (set FM_LIVE_CAPTAIN_SCENARIOS=1)'
+  skip 'C: explicitly requested review -> fix task -> targeted re-review - live run not opted in (set FM_LIVE_CAPTAIN_SCENARIOS=1)'
+  skip 'D: explicitly requested review of premium/Opus work runs as a distinct reviewer - live run not opted in (set FM_LIVE_CAPTAIN_SCENARIOS=1)'
   printf '\nCAPTAIN REVIEW SCENARIOS SKIPPED (opt-in required)\n'
   exit 0
 fi
@@ -228,7 +210,7 @@ wait_for_status() { # <status-file> <timeout>
 }
 
 # =============================================================================
-# A. QUICK, low-risk: may skip review with a stated reason.
+# A. QUICK, low-risk: completes through the selected local-only path.
 # =============================================================================
 A_DIR=$(new_scratch_home scenario-a)
 new_scratch_project "$A_DIR"
@@ -247,8 +229,7 @@ local-only, yolo off. Add a single docstring line inside add() stating it
 returns the sum of a and b. Commit on branch fm/scen-a with message
 "Document add()". Then append \`done [at=<epoch>]: docstring added\` to
 '$A_STATUS' (substitute <epoch> with the real Unix time from \`date +%s\`)
-and stop. In your final chat reply only, state one sentence on whether an
-independent review is warranted here and why.
+and stop.
 EOF
 A_WT=$(spawn_worker "$A_DIR" scen-a anthropic/claude-haiku-4-5 low "$TMP_ROOT/brief-a.md")
 if [ -n "$A_WT" ] && wait_for_status "$A_STATUS" 240; then
@@ -257,44 +238,6 @@ if [ -n "$A_WT" ] && wait_for_status "$A_STATUS" 240; then
   contains 'A: status file carries a real done line' "$(cat "$A_STATUS")" 'done [at='
 else
   fail 'A: real worker never produced a status file within budget'
-fi
-
-# =============================================================================
-# B. Substantive IMPLEMENT, NO task-specific review request in the brief.
-#    Structural, policy-level result (not model-output-dependent): official
-#    FirstMate AGENTS.md section 7 means no second reviewer is dispatched
-#    here in real practice, which conflicts with this configuration's own
-#    primary-policy.md "review required for substantive IMPLEMENT work".
-#    This scenario deliberately reports that conflict as FAIL/BLOCKED - see
-#    this file's header. It is never "fixed" by dispatching a reviewer
-#    anyway, which would smuggle authorization the brief never carried.
-# =============================================================================
-B_DIR=$(new_scratch_home scenario-b)
-new_scratch_project "$B_DIR"
-B_STATUS="$B_DIR/status"
-cat > "$TMP_ROOT/brief-b.md" <<EOF
-# Task
-
-## Captain's intent
-Implement interval merging: add merge_intervals(intervals) to scratch.py -
-take a list of (start, end) integer tuples and return merged
-non-overlapping intervals, sorted by start, merging on overlap or touch.
-
-## Firstmate spec
-Project: scratch-target, from its clean default branch base. Delivery
-local-only, yolo off. Implement merge_intervals in scratch.py; keep add
-unchanged. Commit on branch fm/scen-b with message "Add merge_intervals".
-Then append \`done [at=<epoch>]: merge_intervals implemented\` to
-'$B_STATUS' (substitute <epoch> with the real Unix time from \`date +%s\`)
-and stop.
-EOF
-B_WT=$(spawn_worker "$B_DIR" scen-b anthropic/claude-sonnet-5-5 medium "$TMP_ROOT/brief-b.md")
-if [ -n "$B_WT" ] && wait_for_status "$B_STATUS" 240; then
-  check 'B: real worker committed a substantive change on the expected branch' fm/scen-b "$(git -C "$B_WT" branch --show-current)"
-  contains 'B: the real diff adds real new behavior (not a no-op)' "$(git -C "$B_WT" diff main -- scratch.py)" 'def merge_intervals'
-  fail 'B: no task-specific review request was given (by design) - official FirstMate AGENTS.md section 7 means no second reviewer is dispatched here, contradicting primary-policy.md own review-required clause for substantive IMPLEMENT work; see this file header for the disclosed, unresolved policy conflict'
-else
-  fail 'B: real worker never produced a status file within budget'
 fi
 
 # =============================================================================
@@ -432,8 +375,8 @@ EOF
 fi
 
 # =============================================================================
-# D. A premium/Opus implementer does not waive or replace independent
-#    review: the reviewer must be a real, distinct worker AND, per section
+# D. An explicitly requested review of premium/Opus-authored work runs as a
+#    real, distinct, read-only worker AND, per section
 #    3's own routing (a bounded one-function review is bounded REVIEW on
 #    Sonnet 5.5 high, never escalated merely because the implementer was
 #    premium), a genuinely different, cheaper model.
@@ -503,5 +446,5 @@ EOF
   fi
 fi
 
-printf '\nCAPTAIN REVIEW SCENARIOS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo 'FAIL (see B above - a disclosed policy conflict, not a script defect)')"
+printf '\nCAPTAIN REVIEW SCENARIOS %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]
