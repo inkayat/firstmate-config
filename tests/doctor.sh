@@ -359,7 +359,7 @@ out=$(run_doctor); code=$?
 check 'healthy: exit code is 0' 0 "$code"
 contains 'healthy: overall status is UNKNOWN (only commit_compat is unproven offline)' "$out" 'DOCTOR UNKNOWN exit=0'
 contains 'healthy: launcher resolves ours first' "$out" "PASS          launcher.resolution"
-contains 'healthy: captain selects the preferred candidate' "$out" 'selected preferred candidate xai/grok-4.7'
+contains 'healthy: captain selects the preferred candidate' "$out" 'selected preferred candidate openai-codex/gpt-6.1-sol'
 contains 'healthy: herdr server reported running' "$out" 'PASS          runtime.herdr_server'
 contains 'healthy: FM_HOME is explicitly reported' "$out" "FM_HOME=$FAKE_FM_HOME"
 contains 'healthy: an explicit heartbeat check is reported' "$out" 'runtime.heartbeat'

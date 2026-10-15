@@ -1,7 +1,6 @@
 # Ordered Captain startup candidates, checked through the selected harness.
-# xai/grok-4.7 high is the manually configured first preference; like every
-# row it is skipped when that harness's availability owner reports it
-# UNAVAILABLE.
+# openai-codex/gpt-6.1-sol high is the first preference; like every row it
+# is skipped when that harness's availability owner reports it UNAVAILABLE.
 # Format: model<TAB>effort<TAB>harness (harness optional; blank applies to
 # every harness). The Claude Sonnet fallback step is harness-scoped because
 # the two harnesses expose it under different provider ids: OMP's own
@@ -10,8 +9,7 @@
 # model id, so it never belongs in the harness-agnostic candidate rows. That
 # Pi id is an unversioned alias Claude Code resolves itself; the provider
 # offers no versioned Sonnet selector.
-xai/grok-4.7	high
-openai-codex/gpt-6.1-sol	medium
+openai-codex/gpt-6.1-sol	high
 anthropic/claude-sonnet-5-5	high	omp
 pi-claude-code-provider/sonnet	high	pi
 openai-codex/gpt-6-astra	xhigh

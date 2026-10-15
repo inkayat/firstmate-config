@@ -26,7 +26,7 @@ fm
 ```
 
 Pi is the default Captain harness, so a plain `fm` starts the Captain on Pi,
-preferring `xai/grok-4.7` at high effort. OMP stays available explicitly:
+preferring `openai-codex/gpt-6.1-sol` at high effort. OMP stays available explicitly:
 
 ```sh
 fm --harness omp
@@ -168,20 +168,16 @@ completion.
 
 `firstmate/captain-startup-models.tsv` is the ordered list of Captain startup
 candidates, tried in order and skipped on any authoritative `UNAVAILABLE`
-result: `xai/grok-4.7` high (the manually configured first preference), then
-`openai-codex/gpt-6.1-sol` medium, then a harness-scoped Claude Sonnet step,
-then `openai-codex/gpt-6-astra` xhigh. `bin/fm`, `fm doctor`, and `fm version`
-all resolve this chain through the one shared availability path in
-`firstmate/fm-captain-lib.sh`. Like every row, Grok 4.7 is skipped only when
-the selected harness reports it `UNAVAILABLE` (for example, absent from OMP's
-native catalog or without high effort); the launch then falls back to the next
-row with a visible fallback reason. The default Pi Captain is where Grok 4.7 is
-expected to run; `fm --harness omp` uses OMP's own catalog and falls back
-visibly while OMP does not list it.
+result: `openai-codex/gpt-6.1-sol` high, then a harness-scoped Claude Sonnet
+step, then `openai-codex/gpt-6-astra` xhigh. `bin/fm`, `fm doctor`, and
+`fm version` all resolve this chain through the one shared availability path
+in `firstmate/fm-captain-lib.sh`. Like every row, Sol is skipped only when the
+selected harness reports it `UNAVAILABLE`; the launch then falls back to the
+next row with a visible fallback reason.
 
 `fm --model codex|claude|grok` (either order with `--harness`) replaces the
 chain for one launch with a preset: `codex` is `openai-codex/gpt-6.1-sol` at
-medium, `claude` is `anthropic/claude-sonnet-5-5` (Sonnet 5.5) at high,
+high, `claude` is `anthropic/claude-sonnet-5-5` (Sonnet 5.5) at high,
 `grok` is `xai/grok-4.7` at high. The `codex` and `claude` ids are exact and
 version-pinned in OMP's native catalog and in Pi's built-in registry;
 `xai/grok-4.7` is the exact id Pi's registry lists, and on OMP it is checked
@@ -245,9 +241,9 @@ Read-only drift check:
 
 | Command | Purpose |
 | --- | --- |
-| `fm` | Start the Pi Captain (Grok 4.7 high preferred) from any directory |
+| `fm` | Start the Pi Captain (GPT-6.1 Sol high) from any directory |
 | `fm --harness omp` | Start the Captain explicitly on OMP |
-| `fm --model codex\|claude\|grok [--harness omp\|pi]` | Start this Captain on GPT-6.1 Sol (medium), Sonnet 5.5 (high), or Grok 4.7 (high), either flag order; any other value or an unavailable preset warns and uses the default startup chain |
+| `fm --model codex\|claude\|grok [--harness omp\|pi]` | Start this Captain on GPT-6.1 Sol (high), Sonnet 5.5 (high), or Grok 4.7 (high), either flag order; any other value or an unavailable preset warns and uses the default startup chain |
 | `fm doctor` | Run read-only architecture, compatibility, routing, and installation diagnostics |
 | `fm version` | Print compact stack identity and version information |
 | `fm update` | Fast-forward the official FirstMate checkout (`FIRSTMATE_ROOT`), then the `firstmate-config` checkout, then reconcile and verify this machine via its own `install.sh`; check both checkouts before changing either, refuse anything that is not a clean, plain fast-forward, and report a failure after the official stage as a partial update |

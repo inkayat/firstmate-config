@@ -27,7 +27,7 @@ case ${1:-} in
     printf '{"models":['
     [ "${GROK:-absent}" != available ] || printf '{"provider":"xai","id":"grok-4.7","selector":"xai/grok-4.7","reasoning":true,"thinking":["%s","xhigh"]},' "${GROK_EFFORT:-high}"
     if [ "${CATALOG:-normal}" != astra ] && [ "${CATALOG:-normal}" != sonnet ]; then
-      printf '{"provider":"openai-codex","id":"gpt-6.1-sol","selector":"openai-codex/gpt-6.1-sol","reasoning":true,"thinking":["%s"]},' "${SOL_EFFORT:-medium}"
+      printf '{"provider":"openai-codex","id":"gpt-6.1-sol","selector":"openai-codex/gpt-6.1-sol","reasoning":true,"thinking":["%s"]},' "${SOL_EFFORT:-high}"
     fi
     if [ "${CATALOG:-normal}" = sonnet ] || [ "${CATALOG:-normal}" = full ]; then
       printf '{"provider":"anthropic","id":"claude-sonnet-5-5","selector":"anthropic/claude-sonnet-5-5","reasoning":true,"thinking":["%s","xhigh"]},' "${SONNET_EFFORT:-high}"
@@ -90,33 +90,34 @@ failed=0
 check() { if [ "$2" = "$3" ]; then printf 'ok   - %s\n' "$1"; else printf 'FAIL - %s (expected %s, got %s)\n' "$1" "$2" "$3"; failed=1; fi; }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 run() { (cd "$TMP/origin" && "$ROOT/bin/fm" "$@"); }
-OMP_DEFAULT="$FM_OMP_BIN --model openai-codex/gpt-6.1-sol --thinking medium"
+OMP_DEFAULT="$FM_OMP_BIN --model openai-codex/gpt-6.1-sol --thinking high"
 OMP_CLAUDE="$FM_OMP_BIN --model anthropic/claude-sonnet-5-5 --thinking high"
 OMP_GROK="$FM_OMP_BIN --model xai/grok-4.7 --thinking high"
 PI_EXTS="-e $FIRSTMATE_ROOT/.pi/extensions/fm-primary-turnend-guard.ts -e $FIRSTMATE_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
-PI_DEFAULT="$FM_PI_BIN --model openai-codex/gpt-6.1-sol --thinking medium $PI_EXTS"
+PI_DEFAULT="$FM_PI_BIN --model openai-codex/gpt-6.1-sol --thinking high $PI_EXTS"
 PI_SONNET55="$FM_PI_BIN --model anthropic/claude-sonnet-5-5 --thinking high $PI_EXTS"
 PI_GROK_CMD="$FM_PI_BIN --model xai/grok-4.7 --thinking high $PI_EXTS"
 out=$(PI_GROK=listed run --print-command 2>&1)
 check 'default Captain harness is Pi' pi "$(field "$out" CAPTAIN_HARNESS)"
-check 'default Pi Captain prefers Grok 4.7 at high when Pi reports it' "$PI_GROK_CMD" "$(field "$out" COMMAND)"
-check 'Grok default needs no fallback reason' '' "$(field "$out" FALLBACK_REASON)"
+check 'default Pi Captain prefers GPT-6.1 Sol at high even when Grok is listed' "$PI_DEFAULT" "$(field "$out" COMMAND)"
+check 'listed Grok is not a startup fallback reason' '' "$(field "$out" FALLBACK_REASON)"
 check 'default Captain cwd is official, not origin' "$FIRSTMATE_ROOT" "$(field "$out" CAPTAIN_CWD)"
 out=$(run --print-command 2>&1)
-check 'default Pi without Grok falls back to Sol with trust-free extensions' "$PI_DEFAULT" "$(field "$out" COMMAND)"
-check 'default without Grok names it as the skipped first preference' xai/grok-4.7 "$(field "$out" FALLBACK_REASON | cut -d' ' -f1)"
+check 'default Pi without Grok still selects Sol at high' "$PI_DEFAULT" "$(field "$out" COMMAND)"
+check 'default without Grok has no fallback reason' '' "$(field "$out" FALLBACK_REASON)"
 out=$(PI_GROK=listed PI_GROK_THINKING=no run --print-command 2>&1)
 check 'Pi Grok without thinking support is skipped' openai-codex/gpt-6.1-sol "$(field "$out" SELECTED_MODEL)"
 out=$(PI_GROK=listed run --harness pi --print-command 2>&1)
-check 'explicit Pi selects the same Grok command' "$PI_GROK_CMD" "$(field "$out" COMMAND)"
+check 'explicit Pi selects Sol at high even when Grok is listed' "$PI_DEFAULT" "$(field "$out" COMMAND)"
 out=$(run --harness omp --print-command 2>&1)
 check 'explicit OMP uses native command' "$OMP_DEFAULT" "$(field "$out" COMMAND)"
-check 'explicit OMP without Grok names it as the skipped first preference' xai/grok-4.7 "$(field "$out" FALLBACK_REASON | cut -d' ' -f1)"
+check 'explicit OMP without Grok selects Sol at high' "$OMP_DEFAULT" "$(field "$out" COMMAND)"
+check 'explicit OMP without Grok has no fallback reason' '' "$(field "$out" FALLBACK_REASON)"
 out=$(GROK=available run --harness omp --print-command 2>&1)
-check 'explicit OMP prefers Grok 4.7 at high when OMP reports it' "$OMP_GROK" "$(field "$out" COMMAND)"
-check 'OMP Grok selection needs no fallback reason' '' "$(field "$out" FALLBACK_REASON)"
+check 'explicit OMP keeps Sol at high when Grok is available' "$OMP_DEFAULT" "$(field "$out" COMMAND)"
+check 'available Grok does not become the OMP startup model' '' "$(field "$out" FALLBACK_REASON)"
 out=$(GROK=available GROK_EFFORT=medium run --harness omp --print-command 2>&1)
-check 'Grok without exact high effort is skipped, never downgraded' "$OMP_DEFAULT" "$(field "$out" COMMAND)"
+check 'Grok effort does not change the Sol startup selection' "$OMP_DEFAULT" "$(field "$out" COMMAND)"
 out=$(CATALOG=astra run --harness omp --print-command 2>&1)
 check 'OMP skips absent Sol and the Pi-only Sonnet candidate without inventing replacement' openai-codex/gpt-6-astra "$(field "$out" SELECTED_MODEL)"
 check 'Astra effort is not downgraded' xhigh "$(field "$out" SELECTED_EFFORT)"
@@ -142,7 +143,7 @@ check 'OMP establishes its own identity after scrubbing' omp "$(field "$out" EXE
 check 'OMP selects stock timeout topology within ancestry bound' bash "$(field "$out" EXEC_TIMEOUT)"
 out=$(PI_GROK=listed FM_OMP_HARNESS=omp FM_TIMEOUT_MECHANISM_OVERRIDE= run 2>&1)
 check 'default launch crosses directly into Pi' pi "$(field "$out" EXEC_HARNESS)"
-check 'default Pi launch receives Grok 4.7 at high' "--model xai/grok-4.7 --thinking high $PI_EXTS" "$(field "$out" EXEC_ARGS)"
+check 'default Pi launch receives GPT-6.1 Sol at high' "--model openai-codex/gpt-6.1-sol --thinking high $PI_EXTS" "$(field "$out" EXEC_ARGS)"
 check 'default Pi does not inherit OMP identity' '' "$(field "$out" EXEC_OMP_MARKER)"
 check 'default Pi does not force OMP timeout topology' '' "$(field "$out" EXEC_TIMEOUT)"
 
@@ -172,7 +173,7 @@ for harness in omp pi; do
 done
 out=$(PI_GROK=listed run doctor --json 2>/dev/null)
 actual=$(printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin)["captain"]; print(d["harness"], d["selected_model"])' 2>/dev/null)
-check 'doctor reports the same default Pi Captain and Grok selection as launch' 'pi xai/grok-4.7' "$actual"
+check 'doctor reports the same default Pi Captain and Sol selection as launch' 'pi openai-codex/gpt-6.1-sol' "$actual"
 out=$(run version --json 2>/dev/null)
 actual=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["captain_harness"])' 2>/dev/null)
 check 'version reports the same default Pi Captain as launch' pi "$actual"
@@ -232,7 +233,7 @@ CATALOG=full fallback 'preset names are exact' "$OMP_DEFAULT" --harness omp --mo
 fallback 'shell metacharacters' "$PI_DEFAULT" --model "\$(touch $TMP/pwned);\`touch $TMP/pwned\`"
 check 'shell metacharacters in --model are never evaluated' absent "$([ -e "$TMP/pwned" ] && echo present || echo absent)"
 out=$(CATALOG=failed run --harness omp --model claude --print-command 2>&1)
-check 'unreachable OMP catalog restores the default chain head, still eligible as UNKNOWN' "$OMP_GROK" "$(field "$out" COMMAND)"
+check 'unreachable OMP catalog restores the default chain head, still eligible as UNKNOWN' "$OMP_DEFAULT" "$(field "$out" COMMAND)"
 has 'unreachable OMP catalog is reported as unverified' "$out" 'could not be verified'
 out=$(PI_AUTH=unknown run --harness pi --model codex --print-command 2>&1)
 check 'unverifiable Pi auth restores the default command' "$PI_DEFAULT" "$(field "$out" COMMAND)"
@@ -250,13 +251,13 @@ check 'real OMP launch receives the claude preset model and effort' '--model ant
 out=$(PI_ANTHROPIC=configured run --model claude --harness pi 2>&1)
 check 'real Pi launch receives the claude preset model and effort' "--model anthropic/claude-sonnet-5-5 --thinking high $PI_EXTS" "$(field "$out" EXEC_ARGS)"
 out=$(GROK=available run --harness omp 2>&1)
-check 'real explicit OMP launch receives Grok 4.7 at high' '--model xai/grok-4.7 --thinking high' "$(field "$out" EXEC_ARGS)"
+check 'real explicit OMP launch keeps Sol at high when Grok is available' '--model openai-codex/gpt-6.1-sol --thinking high' "$(field "$out" EXEC_ARGS)"
 out=$(GROK=available run --harness omp --model codex 2>&1)
-check 'real OMP launch with codex overrides the Grok preference' '--model openai-codex/gpt-6.1-sol --thinking medium' "$(field "$out" EXEC_ARGS)"
+check 'real OMP launch with codex uses Sol at high' '--model openai-codex/gpt-6.1-sol --thinking high' "$(field "$out" EXEC_ARGS)"
 out=$(PI_GROK=listed run --model codex 2>&1)
-check 'real default Pi launch with codex overrides the Grok default' "--model openai-codex/gpt-6.1-sol --thinking medium $PI_EXTS" "$(field "$out" EXEC_ARGS)"
+check 'real default Pi launch with codex uses Sol at high' "--model openai-codex/gpt-6.1-sol --thinking high $PI_EXTS" "$(field "$out" EXEC_ARGS)"
 out=$(run --harness omp --model claude 2>&1)
-check 'real fallback launch execs OMP once with the default flags' '--model openai-codex/gpt-6.1-sol --thinking medium' "$(field "$out" EXEC_ARGS)"
+check 'real fallback launch execs OMP once with Sol at high' '--model openai-codex/gpt-6.1-sol --thinking high' "$(field "$out" EXEC_ARGS)"
 
 usage_error() { # label fm-args...
   local label=$1 out rc

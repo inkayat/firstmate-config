@@ -333,9 +333,8 @@ ship. Judge the actual task, not the category label.
 `openai-codex/gpt-6-astra`. OMP's native catalog lists all six with low
 through xhigh support; every Claude route is OMP. `openai-codex/gpt-6.1-sol`
 is also the OMP GPT alternative in all four IMPLEMENT/IMPLEMENT-LARGE rules
-(same effort as each rule's Claude candidate) and the second
-Captain-startup candidate in `captain-startup-models.tsv` (medium effort),
-after the manually configured first preference `xai/grok-4.7` (high effort);
+(same effort as each rule's Claude candidate) and the first
+Captain-startup candidate in `captain-startup-models.tsv` (high effort);
 that chain's Claude Sonnet fallback step is harness-scoped (OMP's own
 `anthropic/claude-sonnet-5-5` versus Pi's unversioned
 `pi-claude-code-provider/sonnet` alias) - see README.md "Captain startup

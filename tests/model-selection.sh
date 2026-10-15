@@ -125,21 +125,16 @@ run_fm() {
 }
 
 out=$(run_fm 2>&1) || { fail "healthy startup command failed: $out"; printf '\nMODEL SELECTION FAIL\n'; exit 1; }
-check 'healthy startup selects Grok 4.7' 'xai/grok-4.7' "$(field "$out" SELECTED_MODEL)"
+check 'healthy startup selects GPT-6.1 Sol' 'openai-codex/gpt-6.1-sol' "$(field "$out" SELECTED_MODEL)"
 check 'healthy startup keeps high effort' 'high' "$(field "$out" SELECTED_EFFORT)"
-check 'preferred model is observable' 'xai/grok-4.7' "$(field "$out" PREFERRED_MODEL)"
+check 'preferred model is observable' 'openai-codex/gpt-6.1-sol' "$(field "$out" PREFERRED_MODEL)"
 check 'preferred effort is observable' 'high' "$(field "$out" PREFERRED_EFFORT)"
-check 'Pi command carries the selected model' 'xai/grok-4.7' "$(printf '%s\n' "$(field "$out" COMMAND)" | awk '{for (i=1;i<=NF;i++) if ($i=="--model") print $(i+1)}')"
+check 'Pi command carries the selected model' 'openai-codex/gpt-6.1-sol' "$(printf '%s\n' "$(field "$out" COMMAND)" | awk '{for (i=1;i<=NF;i++) if ($i=="--model") print $(i+1)}')"
 check 'Pi command carries selected effort' 'high' "$(printf '%s\n' "$(field "$out" COMMAND)" | awk '{for (i=1;i<=NF;i++) if ($i=="--thinking") print $(i+1)}')"
 
-out=$(FM_TEST_AVAILABLE='openai-codex/gpt-6.1-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra' run_fm 2>&1) || { fail "fallback to Sol command failed: $out"; out=''; }
-check 'unavailable Grok selects GPT-6.1 Sol' 'openai-codex/gpt-6.1-sol' "$(field "$out" SELECTED_MODEL)"
-check 'Sol fallback keeps medium effort' 'medium' "$(field "$out" SELECTED_EFFORT)"
-contains 'Grok fallback reason is visible' "$(field "$out" FALLBACK_REASON)" 'xai/grok-4.7'
-
-out=$(FM_TEST_GROK_THINKING=no run_fm 2>&1) || { fail "Grok without thinking command failed: $out"; out=''; }
-check 'Grok without thinking support is skipped, never downgraded' 'openai-codex/gpt-6.1-sol' "$(field "$out" SELECTED_MODEL)"
-contains 'Grok unsupported effort reason is visible' "$(field "$out" FALLBACK_REASON)" 'unsupported configured effort high'
+out=$(FM_TEST_SOL_THINKING=no run_fm 2>&1) || { fail "Sol without thinking command failed: $out"; out=''; }
+check 'Sol without high thinking is skipped, never downgraded' 'pi-claude-code-provider/sonnet' "$(field "$out" SELECTED_MODEL)"
+contains 'Sol unsupported effort reason is visible' "$(field "$out" FALLBACK_REASON)" 'unsupported configured effort high'
 
 out=$(FM_TEST_AVAILABLE='pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra' run_fm 2>&1) || { fail "fallback to Sonnet command failed: $out"; out=''; }
 check 'unavailable Sol selects usable Claude Sonnet despite broker invalid_state' 'pi-claude-code-provider/sonnet' "$(field "$out" SELECTED_MODEL)"
@@ -164,7 +159,6 @@ if out=$(FM_TEST_AVAILABLE='' run_fm 2>&1); then
 else
   pass 'all unavailable candidates fail startup'
   contains 'all-unavailable failure is clear' "$out" 'no configured captain startup model is available'
-  contains 'all-unavailable failure names Grok' "$out" 'xai/grok-4.7'
   contains 'all-unavailable failure names Sol' "$out" 'openai-codex/gpt-6.1-sol'
   contains 'all-unavailable failure names Sonnet' "$out" 'pi-claude-code-provider/sonnet'
   contains 'all-unavailable failure names Astra' "$out" 'openai-codex/gpt-6-astra'
@@ -173,7 +167,7 @@ fi
 out=$(FM_TEST_AVAILABLE='openai-codex/gpt-6.1-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra' FM_TEST_SOL_THINKING=no run_fm 2>&1) || { fail "unsupported effort fallback command failed: $out"; out=''; }
 check 'unsupported effort does not downgrade and skips candidate' 'pi-claude-code-provider/sonnet' "$(field "$out" SELECTED_MODEL)"
 check 'next candidate effort remains high' 'high' "$(field "$out" SELECTED_EFFORT)"
-contains 'unsupported effort reason is visible' "$(field "$out" FALLBACK_REASON)" 'unsupported configured effort medium'
+contains 'unsupported effort reason is visible' "$(field "$out" FALLBACK_REASON)" 'unsupported configured effort high'
 
 before=$(shasum -a 256 "$CONFIG_ROOT/firstmate/crew-dispatch.json" | awk '{print $1}')
 run_fm >/dev/null 2>&1 || true
