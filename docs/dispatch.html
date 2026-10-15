@@ -38,8 +38,8 @@
 <tr><td><code>REVIEW</code></td><td>4</td><td class="wrap">Bounded: OMP · Sonnet 5.5 high. Substantive: OMP · Opus 5.5 high. Critical: OMP · Opus 5.5 xhigh. Optional cross-family second reviewer: Pi · GPT-6.1 Sol xhigh</td><td class="wrap">Correctness and maintainability review.</td></tr>
 <tr><td><code>ARCHITECTURE</code></td><td>3</td><td class="wrap">OMP · Opus 5.5 high; very difficult: xhigh; Pi · GPT-6 Astra xhigh only when ultra-exceptional</td><td class="wrap">Boundaries, data models, migrations, structural decisions. Role: <code>architecture</code>.</td></tr>
 <tr><td><code>TENTH-MAN</code></td><td>3</td><td class="wrap">Claude-authored work: Pi · GPT-6.1 Sol xhigh (Astra xhigh only if critical and unresolved after Sol). Astra- or OpenAI-authored work: OMP · Opus 5.5 xhigh</td><td class="wrap">Independent adversarial challenge. Role: <code>tenth-man</code>.</td></tr>
-<tr><td><code>IMPLEMENT</code></td><td>2</td><td class="wrap">Small or bounded: OMP · Sonnet 5.5 high. Substantive: OMP · Opus 5.5 high</td><td class="wrap">Features, fixes, refactors, tests.</td></tr>
-<tr><td><code>IMPLEMENT-LARGE</code></td><td>2</td><td class="wrap">OMP · Opus 5.5 high; reasoning-heavy: xhigh</td><td class="wrap">Broad, mostly settled implementation.</td></tr>
+<tr><td><code>IMPLEMENT</code></td><td>2</td><td class="wrap">Small or bounded: OMP · Sonnet 5.5 high. Substantive: OMP · Opus 5.5 high. Each rule also lists OMP · GPT-6.1 Sol at the same effort as its GPT alternative</td><td class="wrap">Features, fixes, refactors, tests.</td></tr>
+<tr><td><code>IMPLEMENT-LARGE</code></td><td>2</td><td class="wrap">OMP · Opus 5.5 high; reasoning-heavy: xhigh. Each rule also lists OMP · GPT-6.1 Sol at the same effort as its GPT alternative</td><td class="wrap">Broad, mostly settled implementation.</td></tr>
 <tr><td><code>DEEP</code></td><td>5</td><td class="wrap">Scout or ship: OMP · Opus 5.5 xhigh. Explicit escalation: GPT-6.1 Sol xhigh (Pi to diagnose, OMP to implement). Last escalation: Pi · GPT-6 Astra xhigh</td><td class="wrap">Hard root-cause work and reasoning-heavy implementation.</td></tr>
 <tr><td><code>UI/BROWSER</code></td><td>2</td><td class="wrap">Normal: OMP · Sonnet 5.5 high. Complex or cross-layer: OMP · Opus 5.5 high</td><td class="wrap">Browser-visible behavior and end-to-end flows.</td></tr>
 <tr><td><code>DEFAULT</code></td><td>default</td><td class="wrap">OMP · Opus 5.5 high (debugging period)</td><td class="wrap">Work that fits no more specific category.</td></tr>
@@ -78,7 +78,7 @@
 <ul>
 <li><code>default</code> is a bare candidate list used when no rule matches.</li>
 <li>Several rules can share one <code>category</code>. The extra ones are <em>sub-lanes</em> with a narrower trigger. The Captain shows the matched rule as <code>#n</code>, its 1-based position within its category.</li>
-<li>A <code>use</code> array is resolved by FirstMate's quota procedure, so it contains only genuine peers. Only QUICK and simple EXPLORE pair two models (Haiku and Luna). Every other rule has one candidate, so nothing can be picked by quota ahead of an Opus 5.5 primary.</li>
+<li>A <code>use</code> array is resolved by FirstMate's quota procedure, so it contains only genuine peers. QUICK and simple EXPLORE pair Haiku with Luna, and the four IMPLEMENT and IMPLEMENT-LARGE rules pair their Claude candidate with GPT-6.1 Sol at the same effort. Every other rule has one candidate, so nothing can be picked by quota ahead of an Opus 5.5 primary there.</li>
 <li>Each primary rule's <code>when</code> text names the neighboring category it could be confused with and states the test that separates them (for example QUICK against IMPLEMENT, or REVIEW against TENTH-MAN). Read those before changing a category.</li>
 </ul>
 

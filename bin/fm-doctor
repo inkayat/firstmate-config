@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fm-doctor - read-only, cross-platform diagnostics for the
-# OMP Captain -> FirstMate -> Herdr -> Pi/OMP architecture (explicit Pi fallback).
+# Pi Captain (default; explicit OMP) -> FirstMate -> Herdr -> Pi/OMP architecture.
 #
 # Never installs, repairs, or restarts anything. Never modifies FM_HOME,
 # projects, or the official FirstMate checkout. Never makes a paid/live model

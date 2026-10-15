@@ -50,7 +50,8 @@ repo=$(cd "$repo" && pwd)
   && git -c user.email=smoke@example.invalid -c user.name=smoke commit -qm init ) || exit 1
 
 for origin in "$plain" "$repo" "$FIRSTMATE_ROOT"; do
-  out=$(cd "$origin" && "$FM" --print-command 2>&1) || { fail "fm --print-command failed in $origin: $out"; continue; }
+  check "[$(basename "$origin")] default Captain is Pi" pi "$( (cd "$origin" && "$FM" --check 2>&1) | sed -n 's/^CAPTAIN_HARNESS=//p' | tail -1)"
+  out=$(cd "$origin" && "$FM" --harness omp --print-command 2>&1) || { fail "fm --harness omp --print-command failed in $origin: $out"; continue; }
   label=$(basename "$origin")
   check "[$label] launcher resolves the official checkout" "$FIRSTMATE_ROOT" "$(field "$out" FIRSTMATE_ROOT)"
   check "[$label] launcher resolves the machine-local home" "$FM_HOME" "$(field "$out" FM_HOME)"
@@ -59,7 +60,7 @@ for origin in "$plain" "$repo" "$FIRSTMATE_ROOT"; do
   check "[$label] the invoking directory is carried through" "$origin" "$(field "$out" FM_FORK_ORIGIN_CWD)"
   selected=$(field "$out" SELECTED_MODEL)
   effort=$(field "$out" SELECTED_EFFORT)
-  check "[$label] default Captain is OMP" omp "$(field "$out" CAPTAIN_HARNESS)"
+  check "[$label] explicit OMP Captain is OMP" omp "$(field "$out" CAPTAIN_HARNESS)"
   check "[$label] extensions use native discovery" discover "$(field "$out" CAPTAIN_EXTENSIONS)"
   case "$(field "$out" COMMAND)" in
     *' -e '*|*' --config '*) fail "[$label] Captain command includes explicit extensions or an overlay" ;;

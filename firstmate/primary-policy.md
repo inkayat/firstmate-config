@@ -284,7 +284,7 @@ conditions also live in `why`, and rules refer to those above or below.
 If the whole file has not been shown since session start or the last
 compaction, or output was paged, truncated, or elided, continue until every
 line has been shown in full before choosing. On OMP, use the native `read`
-path selector `config/crew-dispatch.json:raw:1-346` for this profile;
+path selector `config/crew-dispatch.json:raw:1-366` for this profile;
 `:raw` alone still stops at 300 lines. If the file grows, extend the range
 through its end. On Pi, the native full-file read fits this profile;
 continue any truncation. If complete exposure cannot be obtained, report
@@ -332,8 +332,10 @@ ship. Judge the actual task, not the category label.
 `openai-codex/gpt-6-luna`, `openai-codex/gpt-6.1-sol`, and
 `openai-codex/gpt-6-astra`. OMP's native catalog lists all six with low
 through xhigh support; every Claude route is OMP. `openai-codex/gpt-6.1-sol`
-is also the Captain-startup candidate in `captain-startup-models.tsv`
-(medium effort);
+is also the OMP GPT alternative in all four IMPLEMENT/IMPLEMENT-LARGE rules
+(same effort as each rule's Claude candidate) and the second
+Captain-startup candidate in `captain-startup-models.tsv` (medium effort),
+after the manually configured first preference `xai/grok-4.7` (high effort);
 that chain's Claude Sonnet fallback step is harness-scoped (OMP's own
 `anthropic/claude-sonnet-5-5` versus Pi's unversioned
 `pi-claude-code-provider/sonnet` alias) - see README.md "Captain startup

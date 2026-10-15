@@ -18,17 +18,18 @@ for the latest tagged version; `main` may contain newer reviewed changes.
 
 ```text
 fm
- └─ OMP Captain
+ └─ Pi Captain (default) or OMP Captain (--harness omp)
      └─ FirstMate
          └─ Herdr
              ├─ Pi workers
              └─ OMP workers
 ```
 
-OMP is the default Captain harness. Pi remains an explicit fallback:
+Pi is the default Captain harness, so a plain `fm` starts the Captain on Pi,
+preferring `xai/grok-4.7` at high effort. OMP stays available explicitly:
 
 ```sh
-fm --harness pi
+fm --harness omp
 ```
 
 The Captain harness and worker routing are separate decisions. FirstMate owns
@@ -37,12 +38,13 @@ policy chooses worker harness, model, effort, and role by task semantics.
 
 ## Highlights
 
-- OMP-first Captain with an explicit Pi fallback
+- Pi-first Captain (Grok 4.7 high first) with an explicit OMP option
 - Semantic task routing across ten dispatch categories plus a DEFAULT catch-all
 - Opus 5.5-biased routing: substantive work lands on Opus 5.5, bounded work
   may stay on Sonnet 5.5, trivial work on Haiku 4.5 or GPT-6 Luna; GPT-6.1 Sol
-  is the everyday cross-family challenger, with Astra limited to each
-  lane's most extreme, exceptional escalation
+  is the everyday cross-family challenger and the same-effort GPT alternative
+  in IMPLEMENT and IMPLEMENT-LARGE, with Astra limited to each lane's most
+  extreme, exceptional escalation
 - Temporary routing/skill trace in the Captain chat during the debugging
   period (`firstmate/primary-policy.md` section 0)
 - Multi-project operation with per-task project resolution
@@ -84,8 +86,8 @@ Captain choices can override the table.
 | `REVIEW` | Bounded: OMP · Claude Sonnet 5.5 high; substantive/cross-component: OMP · Claude Opus 5.5 high; critical/high-consequence: OMP · Claude Opus 5.5 xhigh, optionally plus a Pi · GPT-6.1 Sol xhigh cross-family second reviewer | Correctness and maintainability review |
 | `ARCHITECTURE` | OMP · Claude Opus 5.5 high; very difficult: xhigh; GPT-6 Astra xhigh only when ultra-exceptional | Boundaries, data models, migrations, structural decisions |
 | `TENTH-MAN` | Claude-authored work: Pi · GPT-6.1 Sol xhigh (GPT-6 Astra xhigh only when critical/unresolved after Sol); Astra/OpenAI-authored work: OMP · Claude Opus 5.5 xhigh | Independent adversarial challenge |
-| `IMPLEMENT` | Small/bounded: OMP · Claude Sonnet 5.5 high; substantive: OMP · Claude Opus 5.5 high | Features, fixes, refactors, and tests |
-| `IMPLEMENT-LARGE` | OMP · Claude Opus 5.5 high; reasoning-heavy: xhigh | Broad, mostly settled implementation |
+| `IMPLEMENT` | Small/bounded: OMP · Claude Sonnet 5.5 high; substantive: OMP · Claude Opus 5.5 high; each with OMP · GPT-6.1 Sol at the same effort as its GPT alternative | Features, fixes, refactors, and tests |
+| `IMPLEMENT-LARGE` | OMP · Claude Opus 5.5 high; reasoning-heavy: xhigh; each with OMP · GPT-6.1 Sol at the same effort as its GPT alternative | Broad, mostly settled implementation |
 | `DEEP` | Scout and ship: OMP · Claude Opus 5.5 xhigh, with GPT-6.1 Sol xhigh only as an explicit escalation/second hypothesis and GPT-6 Astra xhigh as the last escalation | Hard root-cause and reasoning-heavy work |
 | `UI/BROWSER` | Normal: OMP · Claude Sonnet 5.5 high; complex/cross-layer: OMP · Claude Opus 5.5 high | Browser-visible behavior and end-to-end flows |
 | `DEFAULT` | OMP · Claude Opus 5.5 high (debugging period) | Work with no more specific category |
@@ -99,8 +101,11 @@ Routing philosophy:
 - Small, bounded work may stay on Sonnet 5.5; trivial work on Haiku 4.5 or
   GPT-6 Luna.
 - Sub-lanes are separate same-category rules, never new categories and
-  never quota peers: only QUICK and simple EXPLORE pair Haiku with Luna, so
-  nothing is picked ahead of an Opus 5.5 primary by quota.
+  never quota peers of each other. Inside one rule's `use` array, only QUICK
+  and simple EXPLORE (Haiku with Luna) and the four IMPLEMENT/IMPLEMENT-LARGE
+  rules (the Claude candidate first, then GPT-6.1 Sol at the same effort)
+  list quota peers; every other rule has one candidate, so quota resolution
+  never picks a model ahead of an Opus 5.5 primary anywhere else.
 - TENTH-MAN enforces model-family diversity: a Claude-authored change is
   challenged by Pi + GPT-6.1 Sol, escalating to Pi + GPT-6 Astra only for
   critical cases Sol leaves unresolved; an Astra/OpenAI-authored change is
@@ -163,19 +168,28 @@ completion.
 
 `firstmate/captain-startup-models.tsv` is the ordered list of Captain startup
 candidates, tried in order and skipped on any authoritative `UNAVAILABLE`
-result: `openai-codex/gpt-6.1-sol` medium, then a harness-scoped Claude Sonnet
-step, then `openai-codex/gpt-6-astra` xhigh. `bin/fm`, `fm doctor`, and
-`fm version` all resolve this chain through the one shared availability path
-in `firstmate/fm-captain-lib.sh`.
+result: `xai/grok-4.7` high (the manually configured first preference), then
+`openai-codex/gpt-6.1-sol` medium, then a harness-scoped Claude Sonnet step,
+then `openai-codex/gpt-6-astra` xhigh. `bin/fm`, `fm doctor`, and `fm version`
+all resolve this chain through the one shared availability path in
+`firstmate/fm-captain-lib.sh`. Like every row, Grok 4.7 is skipped only when
+the selected harness reports it `UNAVAILABLE` (for example, absent from OMP's
+native catalog or without high effort); the launch then falls back to the next
+row with a visible fallback reason. The default Pi Captain is where Grok 4.7 is
+expected to run; `fm --harness omp` uses OMP's own catalog and falls back
+visibly while OMP does not list it.
 
-`fm --model codex|claude` (either order with `--harness`) replaces the chain
-for one launch with a preset: `codex` is `openai-codex/gpt-6.1-sol` at
-medium, `claude` is `anthropic/claude-sonnet-5-5` (Sonnet 5.5) at high. Both
-ids are exact and version-pinned in OMP's native catalog and in Pi's built-in
-registry; Pi's `pi-claude-code-provider/sonnet` is an unversioned alias and is
-never used for this preset, so on Pi `claude` needs Anthropic credentials
-configured in Pi itself. The preset is used only when that same availability
-path reports its exact model and effort `AVAILABLE` on the selected harness.
+`fm --model codex|claude|grok` (either order with `--harness`) replaces the
+chain for one launch with a preset: `codex` is `openai-codex/gpt-6.1-sol` at
+medium, `claude` is `anthropic/claude-sonnet-5-5` (Sonnet 5.5) at high,
+`grok` is `xai/grok-4.7` at high. The `codex` and `claude` ids are exact and
+version-pinned in OMP's native catalog and in Pi's built-in registry;
+`xai/grok-4.7` is the exact id Pi's registry lists, and on OMP it is checked
+through the same native catalog. Pi's `pi-claude-code-provider/sonnet` is an
+unversioned alias and is never used for the `claude` preset, so on Pi `claude`
+needs Anthropic credentials configured in Pi itself. The preset is used only
+when that same availability path reports its exact model and effort
+`AVAILABLE` on the selected harness.
 Any other value, or an unavailable or unverifiable preset, warns
 (`REQUESTED_MODEL_FALLBACK` in `--check`) and launches the unchanged chain -
 default model and effort - on the same harness; a raw model id is never passed
@@ -231,9 +245,9 @@ Read-only drift check:
 
 | Command | Purpose |
 | --- | --- |
-| `fm` | Start the OMP Captain from any directory |
-| `fm --harness pi` | Start the Captain with the explicit Pi fallback |
-| `fm --model codex\|claude [--harness pi]` | Start this Captain on GPT-6.1 Sol (medium) or Sonnet 5.5 (high), either flag order; any other value or an unavailable preset warns and uses the default startup chain |
+| `fm` | Start the Pi Captain (Grok 4.7 high preferred) from any directory |
+| `fm --harness omp` | Start the Captain explicitly on OMP |
+| `fm --model codex\|claude\|grok [--harness omp\|pi]` | Start this Captain on GPT-6.1 Sol (medium), Sonnet 5.5 (high), or Grok 4.7 (high), either flag order; any other value or an unavailable preset warns and uses the default startup chain |
 | `fm doctor` | Run read-only architecture, compatibility, routing, and installation diagnostics |
 | `fm version` | Print compact stack identity and version information |
 | `fm update` | Fast-forward the official FirstMate checkout (`FIRSTMATE_ROOT`), then the `firstmate-config` checkout, then reconcile and verify this machine via its own `install.sh`; check both checkouts before changing either, refuse anything that is not a clean, plain fast-forward, and report a failure after the official stage as a partial update |

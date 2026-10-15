@@ -15,8 +15,8 @@
 # semantics documented in README.md "Captain startup model". Do not add a
 # second detector or a paid probe for this provider.
 
-captain_harness_init() { # [omp|pi]; defaults only here
-  CAPTAIN_HARNESS=${1:-omp}
+captain_harness_init() { # [omp|pi]; defaults only here (Pi; OMP is explicit)
+  CAPTAIN_HARNESS=${1:-pi}
   case $CAPTAIN_HARNESS in
     omp)
       CAPTAIN_BIN=${FM_OMP_BIN:-omp}

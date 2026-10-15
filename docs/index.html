@@ -29,7 +29,7 @@ out of Git - without forking or patching FirstMate.</p>
 
 <p>When you run <code>fm</code>, this is what happens:</p>
 <ol class="flow">
-<li>The launcher loads <code>~/.config/firstmate-config/env</code>, selects the Captain harness (OMP unless you pass <code>--harness pi</code>), and runs a preflight.</li>
+<li>The launcher loads <code>~/.config/firstmate-config/env</code>, selects the Captain harness (Pi unless you pass <code>--harness omp</code>), and runs a preflight.</li>
 <li>It walks <code>captain-startup-models.tsv</code> in order and picks the first model that is not <em>known</em> to be unavailable.</li>
 <li>It changes into the official FirstMate checkout, so FirstMate's own <code>AGENTS.md</code> is the only global instruction file the Captain loads.</li>
 <li>The Captain follows <code>primary-policy.md</code> for each task: resolve the project, read that project's own instructions, pick a dispatch category, a role, and at most a few skills, then hand the work to an isolated worker.</li>
@@ -45,7 +45,7 @@ everything configured here.</p>
 
 <h2 id="what-you-get">What you get</h2>
 <ul>
-<li><strong>OMP-first Captain</strong> with an explicit Pi fallback, and a startup model chain that falls back on a known-unavailable model.</li>
+<li><strong>Pi-first Captain</strong> (Grok 4.7 high preferred) with an explicit OMP option, and a startup model chain that falls back on a known-unavailable model.</li>
 <li><strong>Semantic routing</strong> across ten dispatch categories plus a DEFAULT catch-all, kept in one JSON file.</li>
 <li><strong>Eight roles</strong> - three core and five specialists - that double as OMP agents, and pinned shared skills, all layered <em>below</em> project instructions.</li>
 <li><strong>Read-only diagnostics</strong>: <code>fm doctor</code> and <code>fm version</code>.</li>

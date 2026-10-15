@@ -19,8 +19,8 @@
 <thead><tr><th>Tool</th><th>Status</th><th>Why</th></tr></thead>
 <tbody>
 <tr><td><code>git</code></td><td>required</td><td class="wrap">Clones, fast-forwards, and pins everything.</td></tr>
-<tr><td><code>omp</code></td><td>required</td><td class="wrap">Default Captain harness and the harness for most workers.</td></tr>
-<tr><td><code>pi</code></td><td>required</td><td class="wrap">Explicit Captain fallback and the harness for Pi-routed workers.</td></tr>
+<tr><td><code>omp</code></td><td>required</td><td class="wrap">Explicit Captain harness option and the harness for most workers.</td></tr>
+<tr><td><code>pi</code></td><td>required</td><td class="wrap">Default Captain harness and the harness for Pi-routed workers.</td></tr>
 <tr><td><code>herdr</code></td><td>required</td><td class="wrap">The runtime backend. The launcher also refuses to start without it while <code>FM_BACKEND=herdr</code>.</td></tr>
 <tr><td><code>jq</code>, <code>treehouse</code>, <code>gh</code>, <code>bun</code></td><td>recommended</td><td class="wrap">Missing tools only print a <code>warn</code> line; they are needed for full fleet behavior.</td></tr>
 <tr><td><code>python3</code></td><td>conditional</td><td class="wrap">Needed only to reconcile Pi's Ponytail package settings (step 9).</td></tr>
@@ -90,14 +90,14 @@ FM_HOME=~/.firstmate
 FM_BACKEND=herdr
 FM_FORK_ORIGIN_CWD=~/src/my-project
 FM_FORK_ORIGIN_IS_PROJECT=true
-CAPTAIN_HARNESS=omp
+CAPTAIN_HARNESS=pi
 CAPTAIN_CWD=~/Developer/tools/firstmate
-CAPTAIN_BIN=omp
+CAPTAIN_BIN=pi
 CAPTAIN_EXTENSIONS=discover
-PREFERRED_MODEL=openai-codex/gpt-6.1-sol
-PREFERRED_EFFORT=medium
-SELECTED_MODEL=openai-codex/gpt-6.1-sol
-SELECTED_EFFORT=medium
+PREFERRED_MODEL=xai/grok-4.7
+PREFERRED_EFFORT=high
+SELECTED_MODEL=xai/grok-4.7
+SELECTED_EFFORT=high
 SELECTED_AVAILABILITY=AVAILABLE
 ...
 PREFLIGHT=ok</code></pre>
@@ -111,7 +111,7 @@ PREFLIGHT=ok</code></pre>
 <pre data-label="shell"><code>cd ~/src/my-project   # optional: becomes the default-project hint
 fm</code></pre>
 <p>The launcher prints the harness, the preferred and selected model, and availability, then replaces itself with the harness process.</p>
-<p>To use the Pi fallback instead, pass the harness before any subcommand: <code>fm --harness pi</code>. It is explicit and never automatic.</p>
+<p>To use OMP instead, pass the harness before any subcommand: <code>fm --harness omp</code>. It is explicit and never automatic.</p>
 
 <h2 id="projects">Projects</h2>
 <p>Project registration and the task lifecycle belong to upstream FirstMate. This configuration only reads them: a task's project is resolved

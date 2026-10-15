@@ -212,10 +212,12 @@ check 'rules carry only category/use/when/why - no rule-level skills or role fie
 #    IMPLEMENT-LARGE, UI/BROWSER, ARCHITECTURE, DEEP, and the DEFAULT
 #    catch-all lands on Opus 5.5, while bounded work may stay on Sonnet 5.5 and
 #    trivial work on Haiku/Luna. Multi-candidate arrays are limited to the
-#    deliberate Haiku/Luna peer sets for QUICK and ordinary EXPLORE; every
-#    other lane escalates through separate single-candidate conditional
-#    rules instead of quota-resolved arrays, so Sol/Astra can never be
-#    selected ahead of an Opus 5.5 primary by quota resolution.
+#    deliberate Haiku/Luna peer sets for QUICK and ordinary EXPLORE and the
+#    Claude-first, GPT-6.1 Sol-alternative pairs (same harness and effort)
+#    in every IMPLEMENT and IMPLEMENT-LARGE rule; every other lane escalates
+#    through separate single-candidate conditional rules instead of
+#    quota-resolved arrays, so Sol/Astra can never be selected ahead of an
+#    Opus 5.5 primary there by quota resolution.
 #
 #    Limitation: which sub-lane a real task falls into is the Captain's
 #    (an LLM's) reading of these "when" texts; no classifier runs here, so
@@ -305,18 +307,24 @@ case $tenthman_claude_challenger in
 esac
 
 # IMPLEMENT: two separate rules (small/bounded Sonnet 5.5 high, then
-# substantive Opus 5.5 high).
-check_array_length IMPLEMENT 1 1
-check_array_length IMPLEMENT 2 1
+# substantive Opus 5.5 high), each with GPT-6.1 Sol as its same-effort
+# OMP alternative.
+check_array_length IMPLEMENT 1 2
+check_array_length IMPLEMENT 2 2
 check_rule_use IMPLEMENT 1 1 omp anthropic/claude-sonnet-5-5 high
-check_rule_use IMPLEMENT 2 2 omp anthropic/claude-opus-5-5 high
+check_rule_use IMPLEMENT 1 2 omp openai-codex/gpt-6.1-sol high
+check_rule_use IMPLEMENT 2 3 omp anthropic/claude-opus-5-5 high
+check_rule_use IMPLEMENT 2 4 omp openai-codex/gpt-6.1-sol high
 
 # IMPLEMENT-LARGE: two separate rules (broad Opus 5.5 high, then the
-# reasoning-heavy escalation to Opus 5.5 xhigh).
-check_array_length IMPLEMENT-LARGE 1 1
-check_array_length IMPLEMENT-LARGE 2 1
+# reasoning-heavy escalation to Opus 5.5 xhigh), each with GPT-6.1 Sol as
+# its same-effort OMP alternative.
+check_array_length IMPLEMENT-LARGE 1 2
+check_array_length IMPLEMENT-LARGE 2 2
 check_rule_use IMPLEMENT-LARGE 1 1 omp anthropic/claude-opus-5-5 high
-check_rule_use IMPLEMENT-LARGE 2 2 omp anthropic/claude-opus-5-5 xhigh
+check_rule_use IMPLEMENT-LARGE 1 2 omp openai-codex/gpt-6.1-sol high
+check_rule_use IMPLEMENT-LARGE 2 3 omp anthropic/claude-opus-5-5 xhigh
+check_rule_use IMPLEMENT-LARGE 2 4 omp openai-codex/gpt-6.1-sol xhigh
 
 # DEEP: five single-candidate conditional rules, never quota-resolved
 # arrays, so Sol/Astra can never be selected ahead of Opus 5.5 by quota

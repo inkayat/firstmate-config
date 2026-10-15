@@ -210,9 +210,14 @@
           "harness": "omp",
           "model": "anthropic/claude-sonnet-5-5",
           "effort": "high"
+        },
+        {
+          "harness": "omp",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "high"
         }
       ],
-      "why": "Sonnet 5.5 at high effort for small, bounded code changes: enough care for a clean, tested change without spending Opus 5.5 on work a careful Sonnet pass fully covers. Only move to a neighboring category when one of its specific triggers actually applies. Substantive implementation is a separate, more specific rule below, never a quota-resolved peer of this bounded case."
+      "why": "Sonnet 5.5 at high effort for small, bounded code changes: enough care for a clean, tested change without spending Opus 5.5 on work a careful Sonnet pass fully covers. GPT-6.1 Sol at the same high effort on OMP is this rule's GPT alternative, listed after the Claude candidate in the same use array for FirstMate's quota-array procedure. Only move to a neighboring category when one of its specific triggers actually applies. Substantive implementation is a separate, more specific rule below, never a quota-resolved peer of this bounded case."
     },
     {
       "category": "IMPLEMENT",
@@ -222,9 +227,14 @@
           "harness": "omp",
           "model": "anthropic/claude-opus-5-5",
           "effort": "high"
+        },
+        {
+          "harness": "omp",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "high"
         }
       ],
-      "why": "Opus 5.5 at high effort is the Opus-biased route for substantive implementation - \"substantive\" as primary-policy.md section 3 defines it for model choice. Bounded work stays on Sonnet 5.5 above; broad multi-file execution is IMPLEMENT-LARGE."
+      "why": "Opus 5.5 at high effort is the Opus-biased route for substantive implementation - \"substantive\" as primary-policy.md section 3 defines it for model choice. GPT-6.1 Sol at the same high effort on OMP is this rule's GPT alternative, listed after Opus 5.5 in the same use array for FirstMate's quota-array procedure. Bounded work stays on Sonnet 5.5 above; broad multi-file execution is IMPLEMENT-LARGE."
     },
     {
       "category": "IMPLEMENT-LARGE",
@@ -234,9 +244,14 @@
           "harness": "omp",
           "model": "anthropic/claude-opus-5-5",
           "effort": "high"
+        },
+        {
+          "harness": "omp",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "high"
         }
       ],
-      "why": "Opus 5.5 at high effort is the default for broad, mostly-settled execution: difficult execution, not difficult reasoning - that is what separates IMPLEMENT-LARGE from DEEP. Reasoning-heavy execution is the separate xhigh rule below."
+      "why": "Opus 5.5 at high effort is the default for broad, mostly-settled execution: difficult execution, not difficult reasoning - that is what separates IMPLEMENT-LARGE from DEEP. GPT-6.1 Sol at the same high effort on OMP is this rule's GPT alternative, listed after Opus 5.5 in the same use array for FirstMate's quota-array procedure. Reasoning-heavy execution is the separate xhigh rule below."
     },
     {
       "category": "IMPLEMENT-LARGE",
@@ -246,9 +261,14 @@
           "harness": "omp",
           "model": "anthropic/claude-opus-5-5",
           "effort": "xhigh"
+        },
+        {
+          "harness": "omp",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "xhigh"
         }
       ],
-      "why": "Opus 5.5 at xhigh is reserved for large execution where per-step reasoning, not throughput, is the limiting factor; ordinary broad execution stays at high effort above."
+      "why": "Opus 5.5 at xhigh is reserved for large execution where per-step reasoning, not throughput, is the limiting factor; ordinary broad execution stays at high effort above. GPT-6.1 Sol at the same xhigh effort on OMP is this rule's GPT alternative, listed after Opus 5.5 in the same use array for FirstMate's quota-array procedure; Astra stays out of this rule."
     },
     {
       "category": "DEEP",

@@ -294,7 +294,7 @@ chmod +x "$LAUNCHER_OTHER/fm"
 
 # Every model this repository's crew-dispatch.json and captain-startup-models
 # reference, so the fully-healthy scenario has nothing left UNAVAILABLE.
-HEALTHY_AVAILABLE="openai-codex/gpt-6.1-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-6-luna"
+HEALTHY_AVAILABLE="xai/grok-4.7,openai-codex/gpt-6.1-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-6-luna"
 
 # A fully hermetic system PATH: symlink only the exact utilities fm-doctor
 # needs, never a whole real bin directory. On macOS, /usr/bin itself ships a
@@ -359,7 +359,7 @@ out=$(run_doctor); code=$?
 check 'healthy: exit code is 0' 0 "$code"
 contains 'healthy: overall status is UNKNOWN (only commit_compat is unproven offline)' "$out" 'DOCTOR UNKNOWN exit=0'
 contains 'healthy: launcher resolves ours first' "$out" "PASS          launcher.resolution"
-contains 'healthy: captain selects the preferred candidate' "$out" 'selected preferred candidate openai-codex/gpt-6.1-sol'
+contains 'healthy: captain selects the preferred candidate' "$out" 'selected preferred candidate xai/grok-4.7'
 contains 'healthy: herdr server reported running' "$out" 'PASS          runtime.herdr_server'
 contains 'healthy: FM_HOME is explicitly reported' "$out" "FM_HOME=$FAKE_FM_HOME"
 contains 'healthy: an explicit heartbeat check is reported' "$out" 'runtime.heartbeat'
@@ -610,7 +610,7 @@ if [ -n "$SYS_JQ" ]; then
   unset RUN_PATH
   check 'jq tier: exit code is 0' 0 "$code"
   contains 'jq tier: crew-dispatch reports it was parsed via jq' "$out" 'parsed via jq'
-  contains 'jq tier: the real crew-dispatch.json has 30 lanes' "$out" '30 lane(s)'
+  contains 'jq tier: the real crew-dispatch.json has 34 lanes' "$out" '34 lane(s)'
 else
   pass 'jq tier: skipped (no jq installed on the test runner)'
 fi
@@ -842,16 +842,18 @@ out20a=$(run_doctor); code20a=$?
 json20a=$(run_doctor --json)
 status_exit_agree '20a healthy' "$out20a" "$json20a" "$code20a"
 
-# 20b. Optional-unavailable (the reported bug): active harness is OMP
-# (fm-doctor's default), Sol and Astra are available in OMP's native
-# catalog, but the Pi-only Sonnet provider is not - exactly the shape
-# README.md documents as expected on OMP. Selection still succeeds via Sol.
+# 20b. Optional-unavailable (the reported bug): explicitly selected harness is
+# OMP, Sol and Astra are available in OMP's native
+# catalog, but the first-preference Grok and the Pi-only Sonnet provider
+# are not - the Pi-only shape README.md documents as expected on OMP.
+# Selection still succeeds via Sol.
 FM_TEST_OMP_AVAILABLE='openai-codex/gpt-6.1-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-6-luna'
-out20b=$(run_doctor); code20b=$?
-json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-6.1-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-6-luna' run_doctor --json)
+out20b=$(run_doctor --harness omp); code20b=$?
+json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-6.1-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-6-luna' run_doctor --harness omp --json)
 unset FM_TEST_OMP_AVAILABLE
 check '20b optional-unavailable: exit code stays 0' 0 "$code20b"
-contains '20b optional-unavailable: Sol is selected as preferred' "$out20b" 'selected preferred candidate openai-codex/gpt-6.1-sol'
+contains '20b optional-unavailable: Sol is selected after the absent Grok' "$out20b" 'selected openai-codex/gpt-6.1-sol'
+not_contains '20b optional-unavailable: the absent Grok first preference is never reported FAIL' "$out20b" 'FAIL          captain.model.xai/grok-4.7'
 not_contains '20b optional-unavailable: the absent Pi-only candidate is never reported FAIL' "$out20b" 'FAIL          captain.model.pi-claude-code-provider/sonnet'
 status_exit_agree '20b optional-unavailable' "$out20b" "$json20b" "$code20b"
 
@@ -900,15 +902,15 @@ contains '21 missing official FirstMate JSON: exit_code is 1' "$json" '"exit_cod
 #     Neither had any test reference anywhere in this repository. Each
 #     sub-scenario changes only the one fixture input under test.
 # =============================================================================
-# 22a. The selected (default omp) Captain executable is missing from PATH.
+# 22a. The selected (explicit omp) Captain executable is missing from PATH.
 FAKE_BIN_NO_OMP="$TMP_ROOT/bin-no-omp"
 mkdir -p "$FAKE_BIN_NO_OMP"
 ln -s "$FAKE_BIN/pi" "$FAKE_BIN_NO_OMP/pi"
 ln -s "$FAKE_BIN/claude" "$FAKE_BIN_NO_OMP/claude"
 ln -s "$FAKE_BIN/herdr" "$FAKE_BIN_NO_OMP/herdr"
 RUN_PATH="$LAUNCHER_OK:$FAKE_BIN_NO_OMP:$SYS_PATH"
-out=$(run_doctor); code=$?
-json=$(run_doctor --json)
+out=$(run_doctor --harness omp); code=$?
+json=$(run_doctor --harness omp --json)
 unset RUN_PATH
 if [ "$code" -eq 0 ]; then fail "22a missing selected captain executable: expected nonzero exit (mandatory), got 0"; else pass '22a missing selected captain executable: exit code is nonzero (mandatory)'; fi
 contains '22a missing selected captain executable: captain.harness reports FAIL' "$out" 'FAIL          captain.harness'
@@ -916,14 +918,14 @@ contains '22a missing selected captain executable: names the missing executable'
 contains '22a missing selected captain executable: overall exit is reported nonzero' "$out" 'exit=1'
 contains '22a missing selected captain executable JSON: exit_code is 1' "$json" '"exit_code":1'
 
-# 22b. The selected (default omp) Captain's own primary extension file is
+# 22b. The selected (explicit omp) Captain's own primary extension file is
 #      missing, while its executable and every other fixture stays healthy.
 FAKE_FIRSTMATE_NOEXT="$TMP_ROOT/firstmate-no-omp-ext"
 cp -R "$FAKE_FIRSTMATE" "$FAKE_FIRSTMATE_NOEXT"
 rm -f "$FAKE_FIRSTMATE_NOEXT/.omp/extensions/fm-primary-omp-watch.ts"
 RUN_FIRSTMATE_ROOT="$FAKE_FIRSTMATE_NOEXT"
-out=$(run_doctor); code=$?
-json=$(run_doctor --json)
+out=$(run_doctor --harness omp); code=$?
+json=$(run_doctor --harness omp --json)
 unset RUN_FIRSTMATE_ROOT
 if [ "$code" -eq 0 ]; then fail "22b missing selected captain extension: expected nonzero exit (mandatory), got 0"; else pass '22b missing selected captain extension: exit code is nonzero (mandatory)'; fi
 contains '22b missing selected captain extension: captain.extensions reports FAIL' "$out" 'FAIL          captain.extensions'
@@ -935,7 +937,7 @@ contains '22b missing selected captain extension JSON: exit_code is 1' "$json" '
 # 23. Neither harness executable is on PATH at all -> harnesses.pi and
 #     harnesses.omp both report their own bare binary-presence FAIL
 #     (bin/fm-doctor:579-611), and - since the default selected harness is
-#     omp - captain.harness FAILs on exactly the same missing binary,
+#     pi - captain.harness FAILs on exactly the same missing binary,
 #     genuinely gating the mandatory exit code
 #     (NO_USABLE_CAPTAIN -> MANDATORY_FAIL, bin/fm-doctor:412-413,1113). No
 #     prior scenario ever removed both harness executables from PATH at
@@ -952,7 +954,7 @@ unset RUN_PATH
 if [ "$code" -eq 0 ]; then fail "23 neither harness executable on PATH: expected nonzero exit (mandatory), got 0"; else pass '23 neither harness executable on PATH: exit code is nonzero (mandatory)'; fi
 contains '23 neither harness executable on PATH: harnesses.pi reports FAIL' "$out" 'FAIL          harnesses.pi '
 contains '23 neither harness executable on PATH: harnesses.omp reports FAIL' "$out" 'FAIL          harnesses.omp '
-contains '23 neither harness executable on PATH: the selected (omp) captain.harness also FAILs' "$out" 'FAIL          captain.harness'
+contains '23 neither harness executable on PATH: the selected (default pi) captain.harness also FAILs' "$out" 'FAIL          captain.harness'
 contains '23 neither harness executable on PATH: overall exit is reported nonzero' "$out" 'exit=1'
 contains '23 neither harness executable on PATH JSON: exit_code is 1' "$json" '"exit_code":1'
 

@@ -15,7 +15,7 @@
 
 <h2 id="stack">The stack</h2>
 <pre data-nocopy data-label="layers"><code>fm
- └─ OMP Captain
+ └─ Pi Captain (default) or OMP Captain
      └─ FirstMate
          └─ Herdr
              ├─ Pi workers
@@ -32,10 +32,10 @@
 </table>
 
 <h2 id="harness">Choosing the Captain harness</h2>
-<p>OMP is the default. Pi is an explicit fallback and is never selected automatically:</p>
-<pre data-label="shell"><code>fm                  # OMP Captain
-fm --harness omp    # same, spelled out
-fm --harness pi     # Pi Captain
+<p>Pi is the default, preferring Grok 4.7 at high effort. OMP is selected only explicitly:</p>
+<pre data-label="shell"><code>fm                  # Pi Captain
+fm --harness pi     # same, spelled out
+fm --harness omp    # OMP Captain
 fm --harness pi doctor</code></pre>
 <p><code>--harness</code> goes before the subcommand and applies to <code>doctor</code> and <code>version</code> as well. Any other value is rejected with <code>expected omp or pi</code>.
 Overriding the harness executable is done with <code>FM_OMP_BIN</code> or <code>FM_PI_BIN</code>.</p>
@@ -63,13 +63,14 @@ Captain that never loaded it would not be a FirstMate Captain. Two consequences:
 <table>
 <thead><tr><th>#</th><th>Model</th><th>Effort</th><th>Harness</th></tr></thead>
 <tbody>
-<tr><td>1</td><td><code>openai-codex/gpt-6.1-sol</code></td><td>medium</td><td>both</td></tr>
-<tr><td>2</td><td><code>anthropic/claude-sonnet-5-5</code></td><td>high</td><td>OMP only</td></tr>
-<tr><td>2</td><td><code>pi-claude-code-provider/sonnet</code></td><td>high</td><td>Pi only</td></tr>
-<tr><td>3</td><td><code>openai-codex/gpt-6-astra</code></td><td>xhigh</td><td>both</td></tr>
+<tr><td>1</td><td><code>xai/grok-4.7</code></td><td>high</td><td>both</td></tr>
+<tr><td>2</td><td><code>openai-codex/gpt-6.1-sol</code></td><td>medium</td><td>both</td></tr>
+<tr><td>3</td><td><code>anthropic/claude-sonnet-5-5</code></td><td>high</td><td>OMP only</td></tr>
+<tr><td>3</td><td><code>pi-claude-code-provider/sonnet</code></td><td>high</td><td>Pi only</td></tr>
+<tr><td>4</td><td><code>openai-codex/gpt-6-astra</code></td><td>xhigh</td><td>both</td></tr>
 </tbody>
 </table>
-<p>So an OMP Captain tries Sol 6.1, then Claude Sonnet 5.5, then Astra; a Pi Captain tries Sol 6.1, then the Claude Code provider's Sonnet alias, then Astra.</p>
+<p>So an OMP Captain tries Grok 4.7, then Sol 6.1, then Claude Sonnet 5.5, then Astra; a Pi Captain tries Grok 4.7, then Sol 6.1, then the Claude Code provider's Sonnet alias, then Astra. Grok 4.7 at high is the manually configured first preference; a harness that reports it unavailable falls back to the next row.</p>
 <ul>
 <li>A row whose harness column does not match the active Captain harness is skipped entirely - never probed, never selected. An OMP Captain can never be launched with a Pi-only provider id.</li>
 <li>Probing is non-billable. Only an authoritative <code>UNAVAILABLE</code> skips a candidate; <code>AVAILABLE</code> and <code>UNKNOWN</code> both stay eligible.</li>
@@ -94,16 +95,17 @@ Captain that never loaded it would not be a FirstMate Captain. Two consequences:
 
 <h3 id="model-override">Choosing a model for one launch</h3>
 <pre data-label="shell"><code>fm --model claude
-fm --model claude --harness pi</code></pre>
-<p><code>--model</code>, before or after <code>--harness</code>, takes one of two presets. Each resolves to the selected harness's own id for that model, with a fixed effort:</p>
+fm --model grok --harness pi</code></pre>
+<p><code>--model</code>, before or after <code>--harness</code>, takes one of three presets. Each resolves to the selected harness's own id for that model, with a fixed effort:</p>
 <table>
 <thead><tr><th>Preset</th><th>OMP</th><th>Pi</th><th>Effort</th></tr></thead>
 <tbody>
 <tr><td><code>codex</code></td><td><code>openai-codex/gpt-6.1-sol</code></td><td><code>openai-codex/gpt-6.1-sol</code></td><td>medium</td></tr>
 <tr><td><code>claude</code></td><td><code>anthropic/claude-sonnet-5-5</code></td><td><code>anthropic/claude-sonnet-5-5</code></td><td>high</td></tr>
+<tr><td><code>grok</code></td><td><code>xai/grok-4.7</code></td><td><code>xai/grok-4.7</code></td><td>high</td></tr>
 </tbody>
 </table>
-<p>Both ids are exact, version-pinned entries in OMP's native catalog and in Pi's built-in registry. Pi's <code>pi-claude-code-provider/sonnet</code> is an unversioned Claude Code alias and is never used for <code>claude</code>, so a Pi Captain needs Anthropic credentials configured in Pi for this preset.</p>
+<p>The <code>codex</code> and <code>claude</code> ids are exact, version-pinned entries in OMP's native catalog and in Pi's built-in registry; <code>xai/grok-4.7</code> is the exact id Pi's registry lists and is checked on OMP through the same native catalog. Pi's <code>pi-claude-code-provider/sonnet</code> is an unversioned Claude Code alias and is never used for <code>claude</code>, so a Pi Captain needs Anthropic credentials configured in Pi for this preset.</p>
 <p>The preset is checked by the same probe as the chain and used only when its exact model and effort are <code>AVAILABLE</code>. Any other value, an unavailable model, an unsupported effort, or an unverifiable catalog prints <code>fm: warning: requested model ...</code>, and the launcher walks the unchanged chain - default model and effort - on the same harness. A raw model id is never passed through, and nothing is persisted. A missing harness, Herdr, or an empty chain still stops the launch.</p>
 
 <h2 id="extensions">Extensions</h2>

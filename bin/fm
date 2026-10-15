@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm - start the FirstMate Captain from anywhere, on OMP by default, over Herdr.
+# fm - start the FirstMate Captain from anywhere, on Pi by default, over Herdr.
 #
 #   cd ANY_DIRECTORY
 #   fm
@@ -23,15 +23,16 @@
 #                   state can land in tracked source.
 #   FM_BACKEND      herdr, which is first in upstream's backend precedence
 #                   (FM_BACKEND, then config/backend, then autodetect).
-#   harness         OMP by default; --harness pi selects explicit Pi fallback.
+#   harness         Pi by default; --harness omp selects OMP explicitly.
 #   model chain     firstmate/captain-startup-models.tsv, applied only to this
 #                   Captain launch with availability-only fallback.
-#   --model PRESET  codex (openai-codex/gpt-6.1-sol, medium) or claude
-#                   (anthropic/claude-sonnet-5-5, high) for this launch only,
-#                   used only when the selected harness reports that exact
-#                   model and effort AVAILABLE. Any other value, or an
-#                   unavailable or unverifiable preset, warns and uses the
-#                   unchanged model chain on the same harness.
+#   --model PRESET  codex (openai-codex/gpt-6.1-sol, medium), claude
+#                   (anthropic/claude-sonnet-5-5, high), or grok
+#                   (xai/grok-4.7, high) for this launch only, used only
+#                   when the selected harness reports that exact model and
+#                   effort AVAILABLE. Any other value, or an unavailable or
+#                   unverifiable preset, warns and uses the unchanged model
+#                   chain on the same harness.
 #   extensions      OMP discovers .omp/extensions from the official cwd.
 #                   Never pass duplicate -e flags or the worker posture overlay.
 #                   Pi retains its trust-aware explicit/discover mode.
@@ -50,10 +51,10 @@
 # hint sits inside; nothing here resolves a project on the captain's behalf.
 #
 # Usage:
-#   fm                    launch the Captain on OMP
-#   fm --harness omp      explicitly select OMP
-#   fm --harness pi       explicitly select Pi (also before check/doctor/version)
-#   fm --model codex|claude
+#   fm                    launch the Captain on Pi
+#   fm --harness pi       explicitly select Pi
+#   fm --harness omp      explicitly select OMP (also before check/doctor/version)
+#   fm --model codex|claude|grok
 #                         launch on a model preset instead of the model chain;
 #                         combines with --harness in either order and with
 #                         --check or --print-command, never with a subcommand
@@ -146,7 +147,7 @@ while :; do
       ;;
     --model)
       [ -z "$REQUESTED_MODEL" ] || break
-      [ "$#" -ge 2 ] && [ -n "$2" ] && [ "${2#-}" = "$2" ] || die "--model requires codex or claude"
+      [ "$#" -ge 2 ] && [ -n "$2" ] && [ "${2#-}" = "$2" ] || die "--model requires codex, claude, or grok"
       REQUESTED_MODEL=$2
       ;;
     *) break ;;
@@ -205,21 +206,24 @@ resolve_model_chain() {
   [ "$SELECTED_MODEL" = "$PREFERRED_MODEL" ] || FALLBACK_REASON=$(IFS='; '; printf '%s' "${reasons[*]}")
 }
 
-# --model replaces the chain for this launch only. Both presets are exact,
+# --model replaces the chain for this launch only. codex and claude are exact,
 # version-pinned ids that OMP's native catalog and Pi's built-in registry each
-# define; Pi's pi-claude-code-provider/sonnet is an unversioned Claude Code
-# alias, so it never stands in for Sonnet 5.5. The pair is used only when the
-# harness's availability owner reports that exact model and effort AVAILABLE.
-# Anything else warns and resolves the unchanged chain.
+# define; grok's xai/grok-4.7 is the exact id Pi's registry lists, checked on
+# OMP through the same native catalog. Pi's pi-claude-code-provider/sonnet is
+# an unversioned Claude Code alias, so it never stands in for Sonnet 5.5. The
+# pair is used only when the harness's availability owner reports that exact
+# model and effort AVAILABLE. Anything else warns and resolves the unchanged
+# chain.
 resolve_startup_model() {
   local model='' effort='' result state reason
   [ -n "$REQUESTED_MODEL" ] || { resolve_model_chain; return; }
   case $REQUESTED_MODEL in
     codex) model=openai-codex/gpt-6.1-sol effort=medium ;;
     claude) model=anthropic/claude-sonnet-5-5 effort=high ;;
+    grok) model=xai/grok-4.7 effort=high ;;
   esac
   if [ -z "$model" ]; then
-    REQUESTED_MODEL_FALLBACK="is not a preset (expected codex or claude)"
+    REQUESTED_MODEL_FALLBACK="is not a preset (expected codex, claude, or grok)"
   else
     result=$(captain_model_availability "$model" "$effort")
     state=${result%%$'\t'*}
