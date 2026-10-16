@@ -45,6 +45,27 @@ two-method/one-reference budget, including defaults and mandatory companions;
 a workflow is not a skill bundle or authority for a transitive method cascade.
 Keep SELECTED, READ, APPLIED and VERIFIED distinct under primary policy.
 
+When authorized work assesses a claim, begin with the original question and
+constraints, then inspect the artifact/evidence before reconciling the author's
+attributed account. State the decisive observation or uncertainty in existing
+reasoning/reporting and retain material initial disagreement. If prior
+conclusions were seen, acknowledge that when relevant; do not hide rationale
+or safety inputs to simulate blindness or claim independent discovery. This
+orders existing reasoning, not permission for another assessor or stage.
+
+When findings exist, the technical owner consolidates evidence-backed
+dispositions in the existing report or selected path's record: fixed, refuted,
+unresolved, or expressly waived by the authorized owner, linked to the original
+finding, corrected artifact/delta, proof and remaining limit. Authorized closure
+uses original findings, the corrected delta, relevant base context and current
+inputs/proof; focus on substance and plausible regressions, not a fresh audit
+for an unchanged objection without new evidence or requirements. Consider
+material new defects, evidence and user requirements; send precise unresolved
+issues to their existing owner. The selected path's required rounds and
+existing severity/waiver authority win: assertion does not close a BLOCKER,
+and implementers cannot self-waive IMPORTANT findings. No findings means no
+closure record to invent; add no assessor, parallel ledger or fixed round cap.
+
 All recipes retain project checks and proportionate real CLI/API/client
 proof. They add no independent reviewer, manual clean gate, no-mistakes run,
 helper permission or model spend. The selected official delivery path alone
