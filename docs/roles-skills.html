@@ -41,14 +41,14 @@
 </table>
 
 <h2 id="roles">Roles</h2>
-<p>A role describes <em>how to work</em> and never outranks the project. There are nine, at <code>roles/&lt;name&gt;/ROLE.md</code>. Each file opens with OMP task-agent frontmatter - <code>name: fm-&lt;name&gt;</code>, a <code>description</code>, and optional <code>autoloadSkills</code>, <code>tools</code>, and <code>model</code> - so the same file is the role a brief points at and an OMP agent. <code>install.sh</code> links each one into <code>~/.omp/agent/agents/fm-&lt;name&gt;.md</code>, so every OMP session can spawn <code>fm-&lt;name&gt;</code>; an entry there that it did not create is left alone.</p>
+<p>A role describes <em>how to work</em> and never outranks the project. There are eleven, at <code>roles/&lt;name&gt;/ROLE.md</code>. Each file opens with OMP task-agent frontmatter - <code>name: fm-&lt;name&gt;</code>, a <code>description</code>, and optional <code>autoloadSkills</code>, <code>tools</code>, and <code>model</code> - so the same file is the role a brief points at and an OMP agent definition. <code>install.sh</code> links each into <code>~/.omp/agent/agents/fm-&lt;name&gt;.md</code> without replacing a foreign entry. A role pointer or tool list is not proof of native adoption or a runtime access restriction.</p>
 <h3>Core roles</h3>
 <table>
 <thead><tr><th>Role</th><th>Used for</th><th>Character</th></tr></thead>
 <tbody>
-<tr><td><code>senior-fullstack</code></td><td class="wrap">The default in every category except the two below.</td><td class="wrap">Read before writing, make the smallest change that solves the problem, cut over cleanly, demonstrate the behavior by running it.</td></tr>
-<tr><td><code>architecture</code></td><td class="wrap">The ARCHITECTURE category only.</td><td class="wrap">Starts from constraints, offers at most three ranked options, prefers structure that is easy to delete, refuses speculative layers.</td></tr>
-<tr><td><code>tenth-man</code></td><td class="wrap">The TENTH-MAN category only.</td><td class="wrap">Attacks the claim, not the author; steelmans first; ranks failures by consequence. "No material objection" is a valid answer.</td></tr>
+<tr><td><code>senior-fullstack</code></td><td class="wrap">Coherent mixed delivery or no narrower compatible specialist, with a task-specific reason.</td><td class="wrap">Read before writing, make the smallest complete change, cut over cleanly, demonstrate behavior by running it.</td></tr>
+<tr><td><code>architecture</code></td><td class="wrap">The ARCHITECTURE category only.</td><td class="wrap">At most three ranked options and one recommendation; downstream scope, versions, consumers, contract, dependencies and acceptance/proof handoff. Default: <code>architecture-review</code>.</td></tr>
+<tr><td><code>tenth-man</code></td><td class="wrap">The TENTH-MAN category only; never routine.</td><td class="wrap">Steelmans the proposition, ranks evidenced failures, preserves category/family constraints. Default: <code>tenth-man</code>. No material objection is valid.</td></tr>
 </tbody>
 </table>
 <h3>Specialist roles</h3>
@@ -60,15 +60,17 @@
 <tr><td><code>code-reviewer</code></td><td class="wrap">Read-only review of a handed diff with BLOCKER, IMPORTANT, and OPTIONAL findings, including a review you explicitly request.</td><td class="wrap"><code>code-review-and-quality</code></td></tr>
 <tr><td><code>refactorist</code></td><td class="wrap">One small, behavior-preserving improvement per task, proven by tests before and after.</td><td class="wrap"><code>code-simplification</code>, <code>verification-before-completion</code></td></tr>
 <tr><td><code>django-pro</code></td><td class="wrap">Django and Django REST Framework backend work against a fixed API contract.</td><td class="wrap"><code>django-backend</code>, <code>verification-before-completion</code></td></tr>
-<tr><td><code>frontend-master</code></td><td class="wrap">Web UI against a fixed API contract, verified through the real client.</td><td class="wrap"><code>frontend-ui-engineering</code>, <code>browser-testing-with-devtools</code></td></tr>
+<tr><td><code>frontend-master</code></td><td class="wrap">Fixed-contract UI in the project's actual framework/version and execution context; real-client proof.</td><td class="wrap"><code>frontend-ui-engineering</code>, <code>browser-verification</code></td></tr>
 <tr><td><code>scout</code></td><td class="wrap">Read-only fact gathering over a codebase or a handed PR, reported with evidence and limits; never reviews, judges, or changes anything. As a bot, report-only (<a href="bots.html#levels">local-proposal</a>).</td><td class="wrap">none</td></tr>
+<tr><td><code>debugger</code></td><td class="wrap">Source-read-only causal diagnosis; only explicitly permitted local/test reproductions. No tracked source/test edits or fixes.</td><td class="wrap"><code>systematic-debugging</code>, investigation phases only</td></tr>
+<tr><td><code>technical-writer</code></td><td class="wrap">Scoped documentation of settled behavior/decisions. No code/config or behavior-policy authority from a Markdown extension.</td><td class="wrap"><code>documentation-and-adrs</code>, scoped to the assigned artifact</td></tr>
 </tbody>
 </table>
-<p>The dispatch category picks harness, model, and effort. It never picks a role, and a strong model never implies a special role. Outside ARCHITECTURE and TENTH-MAN a task may use a specialist role when its work shape matches; the category and rule are chosen first and never change because of it.</p>
-<p>A role's <code>autoloadSkills</code> are its default skill selection, still inside the per-task budget below and still displaced by a project-local skill on the same ground. OMP injects them before a spawned agent's first prompt. <code>fm doctor</code> reports a default skill this repository does not manage and a role file whose frontmatter OMP would reject.</p>
+<p>The dispatch category picks harness, model, and effort independently. Outside the two fixed category/role bindings, FirstMate inspects available role contracts and automatically chooses the narrowest fit for the whole authorized deliverable, including mutation and validation. Explicit compatible task choices win. No specialist-versus-normal question, automatic split or model change follows from selecting a role.</p>
+<p>A role's <code>autoloadSkills</code> are default selections within the task budget and displaced by same-ground project-local skills. Native OMP agent use supports autoloading; FirstMate macro workers still need the explicit role/context/skill handoff below. Neither frontmatter nor fixture success proves genuine native defaults were applied. <code>fm doctor</code> checks managed defaults and frontmatter compatibility.</p>
 
 <h2 id="shipped-skills">Shared skills that ship</h2>
-<p>Nineteen skills are installed under <code>~/.agents/skills</code>. Four live in this repository; fifteen are pinned by commit from three upstream repositories (all MIT-licensed, none vendored).</p>
+<p>Twenty-one managed skills: five owned directories and sixteen lock entries from three pinned upstream repositories (MIT, none vendored). Installed-but-unmanaged skills and official FirstMate internal skills are separate populations.</p>
 <table>
 <thead><tr><th>Skill</th><th>Source</th><th>Use it when</th></tr></thead>
 <tbody>
@@ -76,6 +78,7 @@
 <tr><td><code>tenth-man</code></td><td class="wrap">this repo</td><td class="wrap">An expensive or hard-to-reverse commitment, quick consensus, or a completion claim with no evidence.</td></tr>
 <tr><td><code>django-backend</code></td><td class="wrap">this repo</td><td class="wrap">Building or reviewing Django and Django REST Framework backends: models, migrations, querysets, serializers, views, permissions, tests.</td></tr>
 <tr><td><code>bot-builder</code></td><td class="wrap">this repo</td><td class="wrap">Creating, inspecting, pausing, resuming, or removing a bot; see <a href="bots.html">Bots</a>.</td></tr>
+<tr><td><code>browser-verification</code></td><td class="wrap">this repo</td><td class="wrap">Task-scoped actual interactions and error paths through an existing approved capability, dedicated synthetic context, relevant console/network/focus evidence and explicit limits; no transport/install assumption or access grant.</td></tr>
 <tr><td><code>systematic-debugging</code></td><td class="wrap">obra/superpowers</td><td class="wrap">Any bug, test failure, or unexpected behavior, before proposing a fix.</td></tr>
 <tr><td><code>test-driven-development</code></td><td class="wrap">obra/superpowers</td><td class="wrap">Implementing a feature or bugfix, before writing the implementation.</td></tr>
 <tr><td><code>verification-before-completion</code></td><td class="wrap">obra/superpowers</td><td class="wrap">Before claiming work is complete, fixed, or passing.</td></tr>
@@ -90,10 +93,19 @@
 <tr><td><code>code-review-and-quality</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Reviewing any change before it merges.</td></tr>
 <tr><td><code>code-simplification</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Refactoring for clarity without changing behavior.</td></tr>
 <tr><td><code>frontend-ui-engineering</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Building or changing accessible, responsive user interfaces.</td></tr>
-<tr><td><code>browser-testing-with-devtools</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Building or debugging anything that runs in a browser, verified in a real one.</td></tr>
+<tr><td><code>browser-testing-with-devtools</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Conditional MCP-specific material for an already approved compatible setup; not the universal frontend default, an alias, or authority to install MCP or clear unrelated warnings.</td></tr>
+<tr><td><code>documentation-and-adrs</code></td><td class="wrap">addyosmani/agent-skills</td><td class="wrap">Documenting settled behavior and decisions using existing conventions. The broad checklist is scoped to the artifact, not authority to create rules/ADRs/tooling everywhere.</td></tr>
 </tbody>
 </table>
 <p>Skills are installed as symlinks. The pinned repositories are cloned once into a machine-local cache, and the addyosmani skills' relative links to shared references are satisfied by an extra <code>~/.agents/references</code> link.</p>
+<p>The documentation skill uses the existing exact addy pin in <code>skills/external.lock</code>, without a repository/schema/version bump. Its retained checkout carries the MIT copyright and permission notice; copies or substantial portions must preserve those obligations.</p>
+
+<h2 id="workflows">Adaptive workflows</h2>
+<p><a href="https://github.com/inkayat/firstmate-config/blob/main/firstmate/workflows.md">The workflow catalogue</a> is the single declarative owner of <code>focused-delivery</code>, <code>evidence-first</code>, <code>design-then-deliver</code>, <code>coordinated-delivery</code> and <code>scoped-assessment</code>. <code>primary-policy.md</code> contains only the compact selection hook. FirstMate selects the smallest fit by the current blocking condition, ambiguity, mutation/deliverable scope and true dependencies, then names the workflow and fit in the existing brief.</p>
+<p>These are alternatives, not a mandatory menu or all-stages pipeline. A handed diagnosis does not need another investigation; a known fix stays with its implementer. Separate domain work needs useful independent deliverables and one integration owner, not merely many files. A coherent mixed result can use focused-delivery and senior-fullstack with a reason. A knowledge-only request ends at knowledge; an explicitly requested assessment grants no fixes.</p>
+<p>For authorized design-and-implementation work, the catalogue's sequence is design &rarr; authorized implementation &rarr; the implementer's actual tests/verification &rarr; independent review supplied by the selected delivery path &rarr; authorized fixes for findings and repeated verification/re-review under that same owner. Relevant domain checks prove owned behavior; cross-component/real-flow checks prove affected boundaries, following project requirements rather than prescribing every suite for every task. If the path supplies no independent review, report that honestly. FirstMate orchestrates; workers do not self-dispatch, and the sequence adds no duplicate reviewer/manual gate, delivery-mode switch or publication authority. An explicit uncommitted inspection stop still wins.</p>
+<p>The existing FirstMate owners carry dependencies and handoffs; no parser, scheduler, task database, new trace format or coordinator is introduced. Workflows add no reviewer, manual clean gate, no-mistakes run, helper permission or model spend. Project precedence, route tuples, explicit task overrides and the selected delivery path's authority remain unchanged.</p>
+<p>This is instruction-level behavior, not enforced adoption, sandboxing or semantic reliability. Future adoption uses the existing <a href="update.html">update/reconcile and reopen-session path</a>; a task-worktree candidate is not global activation.</p>
 
 <h2 id="selection">How skills are selected</h2>
 <p>Skills load on demand and are selected, not dumped. Per task the Captain picks at most two workflow or methodology skills and at most one reference skill, fewer by preference, and none when the task does not need one.</p>
@@ -102,6 +114,7 @@
 <li>Choosing no skill requires a task-specific reason, not a generic "none needed".</li>
 <li>A project-local skill always wins over a shared one on the same ground.</li>
 </ul>
+<p>Defaults, transitive methods and mandatory companions are not hidden outside this budget. For example, TDD replaces an optional verification/UI method rather than adding a third; <code>writing-good-tests.md</code> takes the one reference slot when required. Verification and real-client obligations still hold when their skill is not selected. Conditional accessibility/security/performance companions compete for that same reference slot; name any unmet companion under primary policy and keep usage unproven.</p>
 
 <h2 id="handoff">What a worker is told</h2>
 <p>"The harness discovers project instructions natively" is not enough: Pi and OMP differ in their search roots, override support, and skill precedence. So each delegated task carries an explicit, compact handoff, resolved against the worker's <em>own</em> isolated worktree:</p>
@@ -112,6 +125,7 @@
 <li>Each selected shared skill by name, with a read-and-apply requirement - never a pasted body.</li>
 <li>A pre-work check that <code>pwd -P</code> equals <code>git rev-parse --show-toplevel</code>, then reading every named path and reporting any that is missing or conflicting. Each selected skill, and any companion file it makes mandatory for the task (named by its absolute or <code>~/</code> path as its own entry), is read in full with the harness's own read tool before the first edit and before any shell work, continuing truncated output, so the session record holds the receipt.</li>
 <li>A reminder to repeat steps 1-4 when the work moves into a new subtree.</li>
+<li>The selected workflow and one-line fit, stage/input artifact, scope/mutation/validation boundaries, real dependencies and delivery/stop rule.</li>
 </ol>
 <div class="callout warn"><span class="t">Guidance, not a gate</span>
 <p>This is a handoff contract. It does not prove read order, skill application, or completion, and no configured runner enforces it. Worker reports can describe discovery; they cannot independently prove it.</p></div>

@@ -1,6 +1,8 @@
 ---
 name: fm-tenth-man
 description: "Deliberate adversarial challenge of a plan, design, diagnosis, or completion claim; risk-triggered or explicitly requested."
+autoloadSkills:
+  - tenth-man
 ---
 # Role: tenth-man
 

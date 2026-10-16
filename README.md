@@ -52,9 +52,12 @@ policy chooses worker harness, model, effort, and role by task semantics.
 - Role files that double as OMP agent definitions and load their own default
   skills (`autoloadSkills`) - core roles and an open set of specialists
   (`security-engineer`, `code-reviewer`, `refactorist`, `django-pro`,
-  `frontend-master`, `scout`). `install.sh` links every role file into OMP's user
-  agent root as `fm-<role>` (`firstmate/primary-policy.md` sections 4-5)
+  `frontend-master`, `scout`, `debugger`, `technical-writer`). `install.sh` links
+  every role file into OMP's user agent root as `fm-<role>`
+  (`firstmate/primary-policy.md` sections 4-5)
 - Reproducibly installed shared worker skills and external pins
+- Five declarative adaptive workflows, selected by the current blocking
+  condition rather than a mandatory specialist pipeline
 - Browser/manual validation policy for user-visible work
 - Review authority stays with the selected official FirstMate delivery path;
   an explicitly requested separate review is a scoped, read-only knowledge
@@ -163,6 +166,51 @@ Official FirstMate internal skills remain separate and are not installed as
 shared worker skills. Context and skill selection are policy and handoff
 mechanisms; they are not a formal proof of read order, compliance, or task
 completion.
+
+### Adaptive workflows and role selection
+
+[`firstmate/workflows.md`](firstmate/workflows.md) owns five alternative
+recipes: `focused-delivery` (including coherent mixed/generalist fallback),
+`evidence-first`, `design-then-deliver`, `coordinated-delivery`, and
+`scoped-assessment`. The compact hook in primary policy tells FirstMate to
+select automatically by actual deliverable, mutation authority, ambiguity
+and true dependencies, naming the workflow and fit in the brief. It does
+not ask for a specialist-versus-normal menu or dispatch every stage.
+
+For authorized design-and-implementation work, `design-then-deliver` makes
+the handoff sequence explicit: design, authorized implementation, the
+implementer's tests/verification, independent review supplied by the selected
+delivery path, then authorized fixes and repeated verification/re-review under
+that same owner. If the path supplies no independent review, disclose that
+instead of inventing one. FirstMate orchestrates; no duplicate reviewer,
+manual gate, delivery-mode switch or publication permission follows. Domain
+checks and cross-component proof match the change and project requirements,
+not a mandatory suite for every task.
+
+Category/rule still independently selects harness/model/effort.
+`architecture` and `tenth-man` retain their fixed categories; elsewhere
+FirstMate inspects role contracts and chooses the narrowest compatible
+whole-task fit. Mixed code/config/docs work can stay with senior-fullstack,
+with a task-specific reason; file count alone does not justify splitting.
+Debugger diagnoses with explicitly permitted local/test execution, never
+source fixes. Technical-writer documents settled behavior, not agent-behavior
+policy or code/config merely because its extension is Markdown.
+
+Frontend defaults to `frontend-ui-engineering` plus the owned transport-neutral
+`browser-verification`; the managed MCP-specific `browser-testing-with-devtools`
+remains conditional on an approved compatible capability. Technical-writer
+defaults to the same-pin external `documentation-and-adrs`, scoped to the
+assigned artifact, and tenth-man defaults to its existing owned method.
+All defaults/companions stay within two methods and one reference, subject
+to project-local precedence and explicit task overrides.
+
+These are instruction-level contracts, not an enforced selector, native
+role-adoption guarantee, sandbox or semantic certification. Workflow choice
+adds no review gate, helper, task/model spend or publication authority;
+the selected official delivery path still owns rigor. See the
+[role/skill guide](docs/roles-skills.html#workflows) for the handoff and limits.
+Adoption follows the existing [update and reopen-session path](#updating);
+editing an isolated candidate does not install or activate it globally.
 
 ## Captain startup model
 
@@ -361,7 +409,6 @@ current runtime behavior.
 
 ### Later (exploratory)
 
-- richer agentic recipes
 - independent compliance and review specialists within a broader agentic system
 - routing and decision observability
 - a local Qwen lane when the 4090 environment is available and worth enabling

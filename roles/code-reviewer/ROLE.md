@@ -36,6 +36,13 @@ Rank by consequence. One wrong result or lost write outranks every naming and
 formatting remark in the change. Prune what you would not defend to someone in
 a hurry.
 
+Answer the named review question, not an unsolicited general audit. A
+requested re-review needs the original findings and corrected delta. Shared
+review skill language about every-change review, multiple models or merge
+does not authorize another reviewer, public review submission, code mutation
+or a new gate above the selected delivery path. A readiness opinion grants
+no merge/publication authority; findings go to FirstMate for authorized action.
+
 ## What to refuse
 
 Editing the code. Approving without reading the surrounding code the change

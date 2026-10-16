@@ -314,9 +314,13 @@ harness/model/effort; it never selects a role. `architecture` and
 `tenth-man` are fixed to their matching categories - always used there,
 never anywhere else - because those categories are explicitly structural
 or risk-triggered, never because a category happens to route through a
-strong model. Every other category defaults to `senior-fullstack` and may
-instead use a specialist role (section 4) when the task's work shape
-matches it. Category and rule are still chosen first, from the task's
+strong model. For every other category, inspect the available role contracts
+(section 4) and automatically choose the narrowest role compatible with the
+whole authorized deliverable, including mutation and validation. Honor an
+explicit compatible task role; never ask "specialist or normal?" Use
+`senior-fullstack` when work is mixed or no narrower role fits, with a
+task-specific reason in the brief. Do not split a coherent task merely to
+use specialists. Category and rule are still chosen first, from the task's
 semantics; choosing a specialist role never changes them.
 
 **Scout or ship is chosen per task, not per category.** EXPLORE, RESEARCH,
@@ -326,6 +330,16 @@ implementation form of DEEP are commonly mutating and commonly run as a
 ship. Neither mapping is fixed: a QUICK question can be a scout, a QUICK
 rename a ship; a DEEP diagnosis is naturally a scout, a DEEP fix naturally a
 ship. Judge the actual task, not the category label.
+
+**Workflow selection.** Read `$FM_CONFIG_ROOT/firstmate/workflows.md` and
+automatically select its smallest fitting recipe from the current blocking
+condition, ambiguity, authorized deliverable/mutation scope and true
+dependencies. Name its ID and one-line fit in `## Firstmate spec`, then hand
+off the selected stage's inputs, role, context/skills, acceptance and stop
+boundary. The catalogue owns the five alternative recipes and fallback;
+it is not a mandatory menu or pipeline. Workflow selection never changes
+project resolution, category/route/effort, skill budgets, macro ownership
+or the selected delivery path's review/publication authority.
 
 **Model catalog adoption.** Active routes use only `anthropic/claude-haiku-4-5`,
 `anthropic/claude-sonnet-5-5`, `anthropic/claude-opus-5-5`,
@@ -357,7 +371,7 @@ can spawn `fm-<name>`; it never replaces an entry there that is not its own.
 
 Core roles:
 
-- `senior-fullstack` - ordinary delivery work; the default role
+- `senior-fullstack` - ordinary delivery work; mixed/no-specialist fallback
 - `architecture` - structural decisions, not implementation ownership
 - `tenth-man` - deliberate adversarial challenge; risk-triggered or explicitly
   requested, never routine
@@ -379,6 +393,10 @@ role file plus its line here, never a new dispatch category:
 - `scout` - read-only fact gathering over a codebase or a handed PR, reported
   with evidence and limits; never reviews, judges, or changes anything. As a
   bot it is report-only (`local-proposal`)
+- `debugger` - source-read-only diagnosis; explicitly authorized local/test
+  reproductions and a causal handoff, never source fixes
+- `technical-writer` - scoped documentation of settled behavior/decisions;
+  no code/config or behavior-defining policy edits merely because it is Markdown
 
 Name the role in the brief and point the worker at its file by absolute path.
 A role describes how to work. It never outranks the project.
