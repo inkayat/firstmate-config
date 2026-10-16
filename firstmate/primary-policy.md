@@ -314,10 +314,30 @@ harness/model/effort; it never selects a role. `architecture` and
 `tenth-man` are fixed to their matching categories - always used there,
 never anywhere else - because those categories are explicitly structural
 or risk-triggered, never because a category happens to route through a
-strong model. Every other category defaults to `senior-fullstack` and may
-instead use a specialist role (section 4) when the task's work shape
-matches it. Category and rule are still chosen first, from the task's
+strong model. Category and rule are still chosen first, from the task's
 semantics; choosing a specialist role never changes them.
+
+**Automatic best-fit role selection.** For every authorized FirstMate task,
+evaluate the actual deliverable, scope, mutation authority, and required
+validation against the existing role files (section 4). Outside the two
+fixed category bindings above, select the compatible best-fit specialist
+automatically; the user never needs a separate "specialist versus normal"
+command. Honor explicit per-task user role choices within project
+instruction precedence and role/category boundaries.
+
+When no narrower role fits the whole task, including genuinely mixed
+delivery, use `senior-fullstack` with a concise task-specific reason.
+Never select a misleading specialist just to avoid this fallback, assign
+implementation to a report-only security/review/scout role, or require a
+role to perform validation its contract forbids. Role selection authorizes
+no extra reviews, helpers, or tasks and changes no review or merge
+authority (section 7).
+
+Put the role's fit or fallback reason in the existing `Routing:` line's
+`why` explanation (section 0), not a new trace field or verifier. Harness,
+model, effort, and skills remain independently resolved, with existing
+role skill defaults and budgets unchanged. This is policy guidance, not
+a mechanical guarantee of semantic role correctness in future sessions.
 
 **Scout or ship is chosen per task, not per category.** EXPLORE, RESEARCH,
 REVIEW, ARCHITECTURE, and TENTH-MAN are commonly read-only and commonly run
@@ -357,7 +377,7 @@ can spawn `fm-<name>`; it never replaces an entry there that is not its own.
 
 Core roles:
 
-- `senior-fullstack` - ordinary delivery work; the default role
+- `senior-fullstack` - ordinary delivery work; fallback when no narrower role fits
 - `architecture` - structural decisions, not implementation ownership
 - `tenth-man` - deliberate adversarial challenge; risk-triggered or explicitly
   requested, never routine

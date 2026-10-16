@@ -116,6 +116,19 @@ Routing philosophy:
 The complete conditions live in the tracked routing file and
 [`firstmate/primary-policy.md`](firstmate/primary-policy.md).
 
+For every authorized task, the Captain evaluates the actual work against
+the existing role contracts and automatically selects a compatible best-fit
+specialist; no "specialist versus normal" command is needed. When no
+narrower role fits the whole task, including mixed delivery, it uses
+`senior-fullstack` with a concise task-specific reason in the existing
+`Routing:` explanation. Explicit per-task user role choices are preserved
+within project instruction precedence and role/category boundaries.
+`architecture` and `tenth-man` remain fixed to their matching categories;
+report-only roles never become implementers. This selects a role for
+already authorized work, not extra reviews, helpers, or tasks, and changes
+no category/model/effort/skill resolution or review/merge authority. It is
+policy guidance, not a runtime guard or a guarantee of future model behavior.
+
 During the debugging period the Captain prints a short `Routing:` /
 `Skills:` block before each delegation and a `Skill evidence:` block after
 each worker finishes (primary-policy.md section 0). Skill evidence keeps
@@ -303,6 +316,15 @@ fm update
    `git merge --ff-only`.
 3. Fast-forward the `firstmate-config` checkout to its remote tip.
 4. Run that checkout's own `./install.sh`, then `./install.sh --verify`.
+
+The automatic role-selection change is PR-first: review the candidate PR
+before any main landing. Only a later explicitly authorized merge puts
+the policy on tracked `origin/main`. After that merge, each compatible
+configured machine receives it through its existing `fm update` path,
+including the official FirstMate update and installation reconcile/verify
+above. Running primary sessions are not notified or reloaded; a newly
+opened `fm` session loads the changed policy. Opening the PR alone does
+not roll it out or update any machine.
 
 It refuses in step 1, changing neither working tree, when:
 

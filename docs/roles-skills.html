@@ -46,7 +46,7 @@
 <table>
 <thead><tr><th>Role</th><th>Used for</th><th>Character</th></tr></thead>
 <tbody>
-<tr><td><code>senior-fullstack</code></td><td class="wrap">The default in every category except the two below.</td><td class="wrap">Read before writing, make the smallest change that solves the problem, cut over cleanly, demonstrate the behavior by running it.</td></tr>
+<tr><td><code>senior-fullstack</code></td><td class="wrap">Fallback when no narrower role fits the whole task, including mixed delivery; give a task-specific reason.</td><td class="wrap">Read before writing, make the smallest change that solves the problem, cut over cleanly, demonstrate the behavior by running it.</td></tr>
 <tr><td><code>architecture</code></td><td class="wrap">The ARCHITECTURE category only.</td><td class="wrap">Starts from constraints, offers at most three ranked options, prefers structure that is easy to delete, refuses speculative layers.</td></tr>
 <tr><td><code>tenth-man</code></td><td class="wrap">The TENTH-MAN category only.</td><td class="wrap">Attacks the claim, not the author; steelmans first; ranks failures by consequence. "No material objection" is a valid answer.</td></tr>
 </tbody>
@@ -64,7 +64,7 @@
 <tr><td><code>scout</code></td><td class="wrap">Read-only fact gathering over a codebase or a handed PR, reported with evidence and limits; never reviews, judges, or changes anything. As a bot, report-only (<a href="bots.html#levels">local-proposal</a>).</td><td class="wrap">none</td></tr>
 </tbody>
 </table>
-<p>The dispatch category picks harness, model, and effort. It never picks a role, and a strong model never implies a special role. Outside ARCHITECTURE and TENTH-MAN a task may use a specialist role when its work shape matches; the category and rule are chosen first and never change because of it.</p>
+<p>The dispatch category picks harness, model, and effort. It never picks a role, and a strong model never implies a special role. For every authorized task, evaluate the actual work against existing role contracts. Outside the fixed ARCHITECTURE and TENTH-MAN bindings, automatically select a compatible best-fit specialist, without a separate specialist-versus-normal command. When no narrower role fits the whole task, use <code>senior-fullstack</code> and give a concise task-specific reason in the existing <code>Routing:</code> explanation. Honor explicit per-task user role choices within project instruction precedence and role/category boundaries. Never force a report-only role to implement or choose a misleading specialist to avoid fallback. Category, model, effort, skill defaults and budgets, and review/merge authority stay unchanged; this authorizes no extra reviews, helpers, or tasks. It is policy guidance, not a runtime guarantee of semantic role correctness.</p>
 <p>A role's <code>autoloadSkills</code> are its default skill selection, still inside the per-task budget below and still displaced by a project-local skill on the same ground. OMP injects them before a spawned agent's first prompt. <code>fm doctor</code> reports a default skill this repository does not manage and a role file whose frontmatter OMP would reject.</p>
 
 <h2 id="shipped-skills">Shared skills that ship</h2>
