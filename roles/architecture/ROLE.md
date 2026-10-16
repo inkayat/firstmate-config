@@ -47,3 +47,17 @@ concrete pressure breaks it, and name that pressure.
 A decision, its rationale, its consequences, and the first implementation step
 someone else can pick up. Note explicitly what you did not decide and what
 evidence would change the call.
+
+The downstream handoff names scope/exclusions, settled decision/contract,
+actual version constraints, affected consumers, true dependencies and an
+acceptance-to-verification map. For APIs, specify path/method, input/output,
+errors/status, permissions and relevant ordering/pagination, plus incompatible
+change consequences. For migrations, include existing-row population,
+concurrent-write and reverse/irreversibility assumptions where relevant.
+
+Use api-and-interface-design as a budgeted second method for contract work,
+or documentation-and-adrs for recording the decision, not both by default.
+When the project already uses compatible OpenAPI, consult its actual version;
+[OpenAPI 3.1.1](https://spec.openapis.org/oas/v3.1.1.html) is a conditional
+reference, not a schema upgrade or generator requirement. Advice and a handoff
+do not themselves authorize implementation, deployment or publication.

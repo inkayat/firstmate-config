@@ -20,12 +20,16 @@
 <tbody>
 <tr><td>Category</td><td class="wrap">Semantic fit, read from each rule's <code>when</code> text.</td></tr>
 <tr><td>Harness, model, effort</td><td class="wrap">The matched rule's <code>use</code> candidate.</td></tr>
-<tr><td>Role</td><td class="wrap"><code>architecture</code> and <code>tenth-man</code> only for their matching categories; elsewhere <code>senior-fullstack</code> by default, or a specialist role when the work shape matches it. See <a href="roles-skills.html#roles">Roles</a>.</td></tr>
+<tr><td>Role</td><td class="wrap"><code>architecture</code> and <code>tenth-man</code> retain their matching categories. Elsewhere inspect role contracts and automatically choose the narrowest fit for the whole authorized task, honoring explicit compatible choices; use <code>senior-fullstack</code> for mixed/no-specialist fallback with a task-specific reason. See <a href="roles-skills.html#roles">Roles</a>.</td></tr>
 <tr><td>Skills</td><td class="wrap">Selected per task; see <a href="roles-skills.html#selection">Roles and skills</a>.</td></tr>
 <tr><td>Scout or ship</td><td class="wrap">Judged per task. EXPLORE, RESEARCH, REVIEW, ARCHITECTURE, and TENTH-MAN are usually read-only; the rest usually mutate. Neither mapping is fixed.</td></tr>
 </tbody>
 </table>
 <p>An explicit choice from you always wins over the table. The trace line then says <code>captain override</code>.</p>
+
+<h2 id="workflows">Workflow is not a route</h2>
+<p><a href="https://github.com/inkayat/firstmate-config/blob/main/firstmate/workflows.md"><code>firstmate/workflows.md</code></a> owns five alternative recipes. The compact primary-policy hook selects the smallest fit from the current blocking condition, ambiguity, deliverable/mutation scope and true dependencies, and names the workflow plus fit in the existing brief. The <a href="roles-skills.html#workflows">workflow guide</a> explains selection and fallback.</p>
+<p>Workflow choice does not add a dispatch category, change any candidate tuple, weaken fixed category/family constraints or override an explicit compatible task choice. Focused mixed delivery can remain one generalist task; coordination needs a useful separable result, not a specialist demonstration. No menu, mandatory pipeline, automatic reviewer, extra model spend or publication authority follows. These are instruction-level handoffs, not an enforced classifier or native-isolation guarantee; adoption uses the existing <a href="update.html">update and reopen-session path</a>.</p>
 
 <h2 id="categories">Categories</h2>
 <p>There are 27 rules in ten categories, plus the untagged <code>default</code> for DEFAULT. Routes below are shown as <em>harness · model effort</em>.</p>
