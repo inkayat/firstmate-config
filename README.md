@@ -310,7 +310,7 @@ Read-only drift check:
 | `fm version` | Print compact stack identity and version information |
 | `fm update` | Fast-forward the official FirstMate checkout (`FIRSTMATE_ROOT`), then the `firstmate-config` checkout, then reconcile and verify this machine via its own `install.sh`; check both checkouts before changing either, refuse anything that is not a clean, plain fast-forward, and report a failure after the official stage as a partial update |
 | `fm board` / `fm board --lavish` | Open the persistent Kanban board (terminal-browser by default, Lavish with `--lavish`); render a deterministically refreshed, LLM-free data projection with the same static template, keep re-rendering it while the viewer is open, and let the page re-read it every few seconds so transitions appear without a manual refresh |
-| `fm bot ...` | Create, list, show, pause, resume, or remove home-local bot specs, dry-run which are due, and file today's due id with its dispatch plan; never dispatches (`bin/fm-bot --help`) |
+| `fm bot ...` | Manage home-local bot specs, evaluate daily/interval/remote occurrences, and file a due id with its dispatch plan; never dispatches (`bin/fm-bot --help`) |
 | `ponytail-update` | Prepare and validate a local Ponytail pin update without committing or pushing |
 
 `fm doctor --json` and `fm version --json` provide machine-readable output.
@@ -321,7 +321,46 @@ Every card has a keyboard-reachable **Details** link (`board.html#task/<id>`) to
 
 Board columns follow FirstMate's structured state, never hold prose: **Todo** is queued or deferred work (plain queued rows, dated or aged captain deferrals, non-captain holds); **In Progress** is a live child that is working; **Waiting Review** is a finished worker awaiting review or landing, a no-mistakes gate or needs-decision (`parked`), or a live captain call (`captain_actionable`); **Blocked** is an unresolved dependency or a child that is `blocked`/`paused`/`failed`/unknown; **Completed** is only a landed backlog row. Rows FirstMate stops publishing are retired whenever its summary surfaces are provably complete, including while one local-only task awaits approval (`terminal_in_flight`); `bin/fm-board`'s `CREW_STATE_TO_BOARD`, `_queued_state`, and `_retirement_protected` own the exact rules.
 
+**Daily bots (unchanged):**
+
 `bin/fm-bot` owns bot specs at `$FM_HOME/data/bots/<name>.md` (machine-local, never tracked) and their dry `due` evaluation. A bot is a spec plus one watcher check, never a process: `fm-bot check-install` writes `$FM_HOME/state/bots.check.sh` and binds it with the official `bin/fm-check-register.sh bots`, and that check prints `bot due: <name>-<YYYYMMDD> spec=… level=…` while a bot is inside its Europe/Stockholm window and its dated task id is not yet in the backlog, so filing that id silences it for the day; each filing is also kept in a durable `$FM_HOME/data/bots/.filed/<name>` marker, because the backlog prunes done rows into an archive `fm-tasks-axi.sh show` does not search, so a task finished and pruned the same day stays silent. The dispatch seam, `fm bot file <name>-<YYYYMMDD>`, records that marker at filing time, before anything is dispatched, so a task filed, finished, and pruned between two watcher polls still cannot re-fire; a dated id filed any other way (a raw `fm-tasks-axi.sh add`) is only seen at the next poll and keeps that gap. `file` refuses anything but today's due id, stores the dispatch plan for the effective level (kind, delivery, role file, route, the routine fields, and the stop rule) in the backlog row and prints it, prints it again only for a filing interrupted before it was printed while the row is still queued, files and holds an invalid bot (a symlinked, directory, or FIFO spec included, never followed) for the captain through the official `fm-captain-hold.sh` instead, and never spawns; `firstmate/primary-policy.md` section 8 is the Captain's instruction to use it. A missed window is never filed later, the same day or the next - the bot waits for its next scheduled occurrence - while recovering an id that was already filed is not a backfill; 02:xx times are refused because of DST; a `due --now` query writes nothing. Each spec stores and validates its routine - role, project, route, schedule, scope, access (`none` or a `secret:<ref>` name, never a secret), notify, wall-clock and optional candidate/file/line limits, excluded paths - for the Captain and workers to apply; fm-bot itself enforces only the schedule and the level gate. A spec's `level` (`local-proposal` < `local-commit` < `push`) is only an upper bound, never an authorization. `local-proposal`, the default, needs only an active, well-formed spec. `local-commit` and `push` need captain authorization words with their own scope, an authorized-on date and an unexpired `expires`, file and line limits, and a registered project whose posture allows the level (`local-only` at most `local-commit`); `push` also needs excluded paths, one remote, a branch prefix, one push per run, a non-`+yolo` project, and a dedicated `bot-authorization: <words>` line in `$FM_HOME/data/captain.md` holding exactly the authorization, which names the bot and project as whole words. The report-only `scout` role is never above `local-proposal`: `create` refuses it (`role-report-only`), and a scout spec that claims more later is invalid at `due` and `file`, held for the captain with no plan. Windows are at least ten minutes, and a bot records its route rule (`route_use`) so a changed rule, or a spec without one, is refused, never silently re-targeted. `create` refuses any gate failure; `due` re-checks the gate every time and runs an elevated bot whose gate fails that day at `local-proposal` with the reason. `fm bot list` shows each bot's last run, the newest `<name>-<YYYYMMDD>` id the backlog lists or the marker holds. Commits and pushes stay gated by FirstMate's own per-action captain approval.
+
+**Opt-in intervals and selected remote branches:** `--every-hours N` supports
+whole hours, minimum two (`--every-hours 3` for every three hours).
+`--on-remote NAME --on-branch BRANCH` watches an existing project's configured
+remote and exact branch. Both use the existing check → `fm bot file <id>` →
+ordinary FirstMate dispatch path, with unchanged role/route/permission gates.
+The requested `--wall-clock-min 1..60` is **advisory**, not a hard one-hour
+execution cap or provider-cancellation mechanism.
+
+New modes share one atomic admission guard. A queued, held, busy or uncertain
+previous job **permanently skips** the current occurrence; finishing later
+does not replay it. Positive completion needs the matching unheld native
+backlog done row and stored plan, with either matching generation-bound native
+idle ownership or normal retirement of metadata, busy and pending-close records.
+Another job also waits
+at least two hours after that finish was first observed, measured by both UTC
+and monotonic clocks: a conservative spacing bound, not a native start receipt.
+A saved positive finish survives normal cleanup and later backlog pruning.
+A row pruned before any positive observation stays unknown: current native
+show/list does not query archives. Missing/corrupt continuity fails closed;
+no controller or forced stop is added.
+Intervals keep a UTC-seconds creation anchor, select only the latest elapsed
+boundary, survive restart/pause/DST, and never launch a missed-slot backlog.
+
+Remote first observation establishes a baseline. Only a changed observed tip
+creates an event; repeated/restarted checks cannot duplicate it. Rapid changes
+coalesce to the latest observed tip, while skipped events stay skipped.
+Inspection never changes project refs. Eligible filing verifies and fetches
+the exact observed commit into a private depth-two bare artifact, and carries
+that artifact, branch and OID in the plan; it never substitutes a default branch
+or claims those bytes were reviewed. Workers must use that pinned source;
+automatic native-worker checkout at an arbitrary OID is not provided.
+Errors preserve observations and do not mark work successful.
+See [Bots](docs/bots.html#triggers) for exact timing, skip/recovery and Git limits.
+`python3 -B tests/bot-triggers.py` exercises real CLI/native backlog, busy/status
+and close/retain/replay record owners with local bare Git fixtures. It never
+launches workers or proves backend teardown/provider cancellation.
 
 `skills/bot-builder` is the Captain's guide for "bot oluştur" / "create a bot": it collects the routine and level, refuses missing pieces (an elevated level without the captain's exact words, scope, and expiry; a mapped role with no `roles/<role>/ROLE.md`), and writes the spec only through `fm bot create`; it never activates the watcher check or dispatches. `commands/bots.md` is the read-only `/bots` prompt over `fm bot list`/`show`. `install.sh` step 7 links every `commands/*.md` into `~/.agents/commands` (OMP turns each into a slash command) the same way it links `skills/*` into `~/.agents/skills`, so both reach a primary Captain session only once they land on main and the primary checkout's `install.sh` runs; until then a primary Captain session cannot load `/bots` or `bot-builder`. `tests/bot-builder-trial.sh` (opt-in, `FM_LIVE_BOT_TRIAL=1`, real billable `omp` sessions) is evidence for the skill and command interaction only: it copies both into a disposable sandbox project's own `.agents/skills` and `.agents/commands` and runs a plain OMP session there against a disposable trial home, not a primary Captain session.
 

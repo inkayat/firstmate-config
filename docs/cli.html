@@ -21,7 +21,7 @@
 <tr><td><a href="#version"><code>fm version</code></a></td><td class="wrap">Compact stack identity.</td><td>No</td></tr>
 <tr><td><a href="#update"><code>fm update</code></a></td><td class="wrap">Fast-forward both checkouts, then reconcile.</td><td class="wrap">Yes: fast-forwards and runs <code>install.sh</code>.</td></tr>
 <tr><td><a href="#board"><code>fm board</code></a></td><td class="wrap">Open the Kanban board.</td><td class="wrap">Writes board data under <code>$FM_HOME/data/board/</code>.</td></tr>
-<tr><td><a href="#bot"><code>fm bot</code></a></td><td class="wrap">Manage bot specs; evaluate and file due bots.</td><td class="wrap"><code>create</code>, <code>pause</code>, <code>resume</code>, <code>remove</code> write specs under <code>$FM_HOME/data/bots/</code>; <code>file</code> adds a backlog row; <code>check-install</code> registers the watcher check. An evaluation only records an already-filed id in the bot's filed marker.</td></tr>
+<tr><td><a href="#bot"><code>fm bot</code></a></td><td class="wrap">Manage bot specs; evaluate and file daily, interval or selected remote-branch occurrences.</td><td class="wrap">Spec commands write <code>$FM_HOME/data/bots/</code>; <code>file</code> adds an eligible native backlog row and prints its plan. Real-clock evaluation can persist observations, completion evidence, skips and daily markers. Remote filing captures a private exact-commit artifact, never mutates project refs. <code>check-install</code> separately registers the watcher check.</td></tr>
 <tr><td><a href="#ponytail-update"><code>ponytail-update</code></a></td><td class="wrap">Prepare a Ponytail pin update.</td><td class="wrap">Edits <code>skills/external.lock</code>; never commits.</td></tr>
 <tr><td><a href="#install"><code>./install.sh</code></a></td><td class="wrap">Reconcile this machine.</td><td class="wrap">Yes, unless <code>--verify</code>.</td></tr>
 </tbody>
@@ -114,9 +114,9 @@ fm board --lavish</code></pre>
 fm bot list | show NAME
 fm bot pause NAME | resume NAME | remove NAME
 fm bot due [--check]
-fm bot file NAME-YYYYMMDD
+fm bot file OCCURRENCE-ID
 fm bot check-install</code></pre>
-<p>Shorthand for <code>bin/fm-bot</code>. It never spawns a worker or calls a model: <code>due</code> is a dry evaluation, and <code>file</code> files today's due id and prints the dispatch plan for the Captain. <code>check-install</code> activates the watcher check and is a separate, explicit step. Full options, levels, and the daily flow are on <a href="bots.html">Bots</a>.</p>
+<p>Shorthand for <code>bin/fm-bot</code>. It never spawns a worker or calls a model: <code>due</code> evaluates specs and <code>file</code> records an eligible occurrence and prints its ordinary dispatch plan. Opt-in <code>--every-hours N</code> (whole hours, minimum two) and <code>--on-remote NAME --on-branch BRANCH</code> share atomic skip-if-unfinished admission and a conservative two-hour wait after positively observed finish. Skipped occurrences do not replay. New-mode <code>wall_clock_min</code> is advisory, not a hard one-hour cap. Remote inspection is bounded; eligible filing captures the exact observed commit in a private artifact, without retargeting the native worker checkout or claiming reviewed bytes. <code>check-install</code> is separate explicit activation. See <a href="bots.html#triggers">trigger semantics and limits</a>; existing daily behavior is unchanged.</p>
 <p>Like every <code>fm</code> subcommand, <code>fm bot</code> acts on the env file's <code>FM_HOME</code>, not one exported in your shell (<a href="config.html">Configuration</a>). For a lab or other home, either run <code>fm bot</code> with <code>FM_CONFIG_ENV</code> pointing at that home's env file, or call <code>bin/fm-bot</code> directly with <code>FM_HOME</code> and <code>FIRSTMATE_ROOT</code> exported. <code>bin/fm-bot</code> never reads <code>FM_CONFIG_ENV</code>: with <code>FM_HOME</code> unset it uses <code>~/.firstmate</code>, and with <code>FIRSTMATE_ROOT</code> unset it uses <code>~/Developer/tools/firstmate</code>.</p>
 
 <h2 id="ponytail-update">ponytail-update</h2>
