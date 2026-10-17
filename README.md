@@ -121,23 +121,34 @@ The complete conditions live in the tracked routing file and
 
 During the debugging period the Captain prints a short `Routing:` /
 `Agent:` / `Workflow:` / `Skills:` block for each actually assigned worker
-and stage (primary-policy.md section 0). `Agent` distinguishes the role contract and
-absolute path, native agent identifier (or `UNPROVEN`), and actual worker
-identity; selecting a role does not prove native adoption. `Workflow` names
-the selected recipe, current stage, source path and task-specific fit.
-Do not spawn actors merely to display every recipe stage. Selecting an
-instruction or skill does not prove it was read or applied; workers still
+and stage (primary-policy.md section 0). Selection lines contain names only:
+
+```text
+Agent: senior-fullstack
+Workflow: focused-delivery
+Skills: ponytail, test-driven-development, writing-good-tests
+```
+
+Use only actual selected names; `Skills: none` stands alone when appropriate.
+Routing stays unchanged. Full source paths, worker/native identity, current
+stage, authority and task-specific reasons remain inside the instructions/
+handoff, not these selection lines. Agent names the assigned role, not proof
+of native adoption. Do not spawn actors merely to display every recipe stage.
+Selecting an instruction or skill does not prove it was read or applied; workers still
 read and apply their assigned context and methods, run actual checks, and
 report observed outcomes and limits under the ordinary handoff/completion
 policy.
 `tests/routing-trace.sh check` compares a captured block with the real
 spawn axes, the matched rule's route (`#n`), and the brief's selected skills.
-Optional trailing `--brief <delivered-brief>` also compares `Agent` and
-`Workflow` with the brief's explicit worker/role/path/native-agent/workflow/
-stage fields. Missing or contradictory fields fail agreement, never become
-successful adoption. Legacy captures remain supported with assignment
-agreement `UNPROVEN`. The diagnostic cannot certify instruction/skill
-application, stage semantics, outcome correctness, or category/rule choice.
+Agent must agree with Routing's role; Workflow must name a catalogue recipe.
+Optional trailing `--brief <delivered-brief>` compares only the `Agent` name
+with `Assigned role:` and the `Workflow` name with `Workflow ID:`.
+Missing or contradictory names fail agreement; without a brief, assignment
+names are not compared. Selected skill/companion paths normalize to short
+names, so same-named local/shared sources cannot be distinguished.
+The diagnostic cannot compare hidden paths, worker/native identity or stage,
+or certify native adoption, instruction/skill application, outcome
+correctness, or category/rule choice.
 The Captain ends debugging by removing section 0's temporary trace/diagnostic
 and matching guide references, retaining ordinary role/workflow and useful
 stage/handoff policy. No flag, telemetry service, selector, new evidence

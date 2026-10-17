@@ -17,9 +17,9 @@ Before each delegation, one block per actually assigned worker and stage
 a recipe or print prospective stages as if already dispatched:
 
     Routing: <CATEGORY> [#n] | role <role> | <harness> | <provider/model> | <effort> | why: <short reason>
-    Agent: worker <task/worker identity|UNPROVEN> | role <role> | path <absolute ROLE.md path|UNPROVEN> | native <actual native agent identifier|UNPROVEN> | why: <short task-specific role fit>
-    Workflow: <workflow ID|UNPROVEN> | stage <current assigned stage|UNPROVEN> | path <absolute workflows.md path|UNPROVEN> | why: <short task-specific workflow fit>
-    Skills: <skill> - <short reason>; <skill> - <short reason>
+    Agent: <assigned role name>
+    Workflow: <workflow ID>
+    Skills: <selected name>, <selected name>
 
 - `#n` is the matched rule's position within its category in
   `config/crew-dispatch.json` (1-based; required when the category has
@@ -30,38 +30,29 @@ a recipe or print prospective stages as if already dispatched:
   `fm-spawn` for that worker - that rule's resolved candidate. An explicit
   captain choice outside the rule says `captain override` in `why`.
 - `Skills` names exactly the project-local and shared worker skills
-  selected in that brief (section 2 steps 3-4): project-local ones by
-  their worktree-relative path, shared ones by name, and a companion file
-  the selected skill makes mandatory for this task by its absolute or `~/`
-  path as its own entry. Nothing else - no installed-but-unselected skill,
-  no official FirstMate internal skill.
-  Entries are separated by `;`, so a reason never contains one; use commas
-  or words inside a reason. `Skills: none` remains verbatim when no skill
-  is selected. Add a `No skill: <task-specific reason>` line immediately
-  after it. Before choosing none, inspect applicable project-local and
-  shared worker skills under section 5; explain why neither applies, never
-  use a generic "none needed", and select a fitting skill instead of
-  rationalizing an omission.
-- `Agent` distinguishes the assigned **role contract** (for example
-  `django-pro` at its exact `ROLE.md`), a **native agent identifier**
-  (`fm-django-pro` only when actually selected by a native mechanism), and
-  the **spawned worker identity** (FirstMate task/worker id or native helper
-  id). A role in an fm-spawn brief does not establish native agent selection
-  or adoption; never derive the native field from `fm-<role>` availability.
-- `Workflow` names the catalogue ID and the worker's current assigned stage,
-  not a new dispatch category, automatic sequence or success label. Keep
-  task-specific fit, input/output handoff, dependencies, scope and stop
-  boundary consistent with `## Firstmate spec`. For several assigned workers
-  or stages print each real assignment; deferred stages stay deferred. A
-  stage change reports the changed assignment, not fictional new workers.
-- For optional diagnostic comparison, the brief's existing compact spec uses
-  these explicit labels, one nonempty value each: `Worker identity:`,
-  `Assigned role:`, `Role path:`, `Native agent:`, `Workflow ID:`,
-  `Workflow stage:`, `Workflow path:`. Role/workflow paths are absolute;
-  name the actual assigned paths, not another checkout's substitute.
-  Other handoff content stays ordinary prose; never copy the chat trace
-  into the brief. Missing/unobserved values say `UNPROVEN`; conflicting
-  values stay visibly unresolved, never default to generalist/focused success.
+  selected in that brief (section 2 steps 3-4), plus required companions,
+  by short name only. Use the skill directory name for a selected
+  `SKILL.md`, and the filename without `.md` for a required companion
+  (for example `writing-good-tests`). Entries are comma-separated.
+  Nothing else - no installed-but-unselected skill, no official FirstMate
+  internal skill. `Skills: none` stands alone when no skill is selected,
+  with no `No skill:` line. Before choosing none, inspect applicable
+  project-local and shared worker skills under section 5; explain why
+  neither applies in the brief, never use a generic "none needed", and
+  select a fitting skill instead of rationalizing an omission.
+- `Agent` names only the assigned role, for example `senior-fullstack`.
+  It is not a native agent identifier or proof of native adoption.
+- `Workflow` names only the selected catalogue ID, for example
+  `focused-delivery`, not a stage, dispatch category or success label.
+  For several assigned workers or stages print each real assignment;
+  deferred stages stay deferred. A stage change reports the changed
+  assignment, not fictional new workers.
+- Keep Agent/Workflow/Skills lines names-only: no file paths, worker
+  identity, native/adoption columns, stage or why/reason suffixes.
+  Full absolute instruction/role/skill/workflow paths, actual worker
+  identity distinct from native selection, current stage, authority,
+  task-specific fit/reasons, input/output handoff, dependencies, scope
+  and stop boundary stay inside the task instructions/handoff.
 
 End-of-period removal: when the captain ends debugging, remove this section
 0's temporary trace/diagnostic, fixtures and guide references. Retain ordinary
@@ -76,14 +67,17 @@ A separately requested review stays separate from any automated pipeline:
 
 `tests/routing-trace.sh check` compares one captured block against the real
 spawn axes, the matched rule's route, and the brief's selected skills.
-Optional trailing `--brief <delivered-brief>` compares `Agent`/`Workflow`
-with that brief's explicit assignment fields; old Routing/Skills-only
-captures remain supported with assignment agreement explicitly UNPROVEN.
-A missing or contradictory field fails agreement. Its offline suite also
-drives the real `fm-spawn.sh` seam with a fixture worker. The checker cannot
-prove native agent adoption, instruction/skill application, stage semantics,
-outcome correctness, or that the category/rule was chosen correctly. It is a
-diagnostic, never a gate.
+Agent must agree with Routing's role; Workflow must name a catalogue recipe.
+Optional trailing `--brief <delivered-brief>` compares only the `Agent`
+name with `Assigned role:` and the `Workflow` name with `Workflow ID:`.
+Missing or contradictory names fail agreement. Without a brief, assignment
+names are not compared. Selected skill paths normalize to short names;
+same-named local/shared sources are indistinguishable in this display.
+The offline suite also has a real `fm-spawn.sh` seam with a fixture worker.
+The checker cannot compare hidden paths, worker/native identity or stage,
+prove native adoption, instruction/skill application, outcome correctness,
+or that the category/rule was chosen correctly. It is a diagnostic, never
+a gate.
 
 ## 1. Authority
 
@@ -384,8 +378,8 @@ A role file's frontmatter `autoloadSkills` lists the shared worker skills
 that role works with. When that role is used they are the default selection
 - still named by exact path under section 2, still inside this budget,
 still displaced by a project-local skill covering the same ground. Dropping
-one or adding another takes the same one-line reason the `Skills:` trace
-already carries. A default skill must be a shared skill this repository
+one or adding another takes a one-line reason in the brief, not in the
+`Skills:` trace. A default skill must be a shared skill this repository
 manages (`skills/` or `skills/external.lock`); `fm doctor` reports one that
 is not, and a role file whose frontmatter OMP would reject.
 
@@ -396,8 +390,8 @@ they are Captain/FirstMate-only, per section 2.
 Selecting a skill is not reading or applying it, including a role default.
 A mandatory companion named under section 2 step 4 is the task's one
 reference skill, not an extra method. When it does not fit this budget it
-is not listed in `Skills:`; instead an
-`Unmet companion: <path> - <reason>` line follows the `Skills:` line.
+is not listed in `Skills:`; instead name its full path and the reason in
+the task instructions/handoff, not in a companion chat line.
 Do not claim the full method was applied when its required companion
 was not read and applied.
 
