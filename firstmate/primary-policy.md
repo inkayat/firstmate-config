@@ -5,17 +5,20 @@ captain works; it never overrides `AGENTS.md`, and it never overrides a
 project's own instructions. It is longer than one default read: page
 through to the end.
 
-## 0. Routing and skill trace (temporary, debugging period)
+## 0. Routing, agent, workflow and skill trace (temporary, debugging period)
 
 Until the captain ends this debugging period, print a short trace in the
-Captain chat. It discloses decisions sections 3 and 5 already made - never
-reasoning or chain-of-thought, never pasted into the brief, never written
-to a file, board, or monitor.
+Captain chat. It discloses decisions sections 3-5 and the workflow catalogue
+already made - never reasoning or chain-of-thought, never pasted into the
+brief, never written to a file, board, or monitor.
 
-Before each delegation, one block per worker (implementer, reviewer,
-re-reviewer, tenth-man):
+Before each delegation, one block per actually assigned worker and stage
+(including an authorized review/re-review). Never instantiate actors to fill
+a recipe or print prospective stages as if already dispatched:
 
     Routing: <CATEGORY> [#n] | role <role> | <harness> | <provider/model> | <effort> | why: <short reason>
+    Agent: worker <task/worker identity|UNPROVEN> | role <role> | path <absolute ROLE.md path|UNPROVEN> | native <actual native agent identifier|UNPROVEN> | why: <short task-specific role fit>
+    Workflow: <workflow ID|UNPROVEN> | stage <current assigned stage|UNPROVEN> | path <absolute workflows.md path|UNPROVEN> | why: <short task-specific workflow fit>
     Skills: <skill> - <short reason>; <skill> - <short reason>
 
 - `#n` is the matched rule's position within its category in
@@ -39,11 +42,32 @@ re-reviewer, tenth-man):
   shared worker skills under section 5; explain why neither applies, never
   use a generic "none needed", and select a fitting skill instead of
   rationalizing an omission.
+- `Agent` distinguishes the assigned **role contract** (for example
+  `django-pro` at its exact `ROLE.md`), a **native agent identifier**
+  (`fm-django-pro` only when actually selected by a native mechanism), and
+  the **spawned worker identity** (FirstMate task/worker id or native helper
+  id). A role in an fm-spawn brief does not establish native agent selection
+  or adoption; never derive the native field from `fm-<role>` availability.
+- `Workflow` names the catalogue ID and the worker's current assigned stage,
+  not a new dispatch category, automatic sequence or success label. Keep
+  task-specific fit, input/output handoff, dependencies, scope and stop
+  boundary consistent with `## Firstmate spec`. For several assigned workers
+  or stages print each real assignment; deferred stages stay deferred. A
+  stage change reports the changed assignment, not fictional new workers.
+- For optional diagnostic comparison, the brief's existing compact spec uses
+  these explicit labels, one nonempty value each: `Worker identity:`,
+  `Assigned role:`, `Role path:`, `Native agent:`, `Workflow ID:`,
+  `Workflow stage:`, `Workflow path:`. Role/workflow paths are absolute;
+  name the actual assigned paths, not another checkout's substitute.
+  Other handoff content stays ordinary prose; never copy the chat trace
+  into the brief. Missing/unobserved values say `UNPROVEN`; conflicting
+  values stay visibly unresolved, never default to generalist/focused success.
 
 After a worker finishes:
 
     Skill evidence:
     - <skill>: read <complete|late|partial|none|UNPROVEN> | applied <`excerpt`|UNPROVEN> | result <`excerpt`|UNPROVEN> | review <`excerpt`|UNPROVEN> | usage <verified|UNPROVEN>
+    Selection evidence: role read <complete|late|partial|none|UNPROVEN> | workflow read <complete|late|partial|none|UNPROVEN> | stage <`observable action excerpt`|UNPROVEN> | result <`executed outcome excerpt`|UNPROVEN> | usage <verified|UNPROVEN>
 
 - Print `Skill evidence:` after every worker, including one whose brief
   selected no skills: after `Skills: none` write `Skill evidence: none
@@ -96,6 +120,27 @@ After a worker finishes:
 - Quote each excerpt in single backticks and separate two excerpts with
   words or a space (`done` and `passed`, not `done`-`passed`). An excerpt
   that itself contains backticks is quoted whole: `Exit code: `1``.
+- `Selection evidence` follows every completed assigned worker/stage, even
+  with no skills. SELECTED/ASSIGNED is the pre-work `Agent`/`Workflow`,
+  not READ or APPLIED. Role/workflow READ uses the same supported OMP
+  receipts, exact-source coverage, pre-edit boundary and limitations above,
+  separately for the named role and workflow file. Workflow policy read by
+  the Captain is not a worker read receipt. Unsupported harness/record,
+  missing source/receipt or an unobserved field stays `UNPROVEN`.
+- `stage` cites actual task-relevant worker tool action, `result` executed
+  output, not a recipe name, brief, plan or self-report. Reading a role or
+  recipe proves exposure only, never understanding, native role adoption or
+  successful stage application. `usage verified` needs both complete reads,
+  action and executed outcome after those reads, plus an independent
+  task-relevant assessment of that application and outcome. Without it use
+  `UNPROVEN`. The checker locates necessary links only; neither a matching
+  handoff nor passing fixtures certifies semantics or compliance.
+
+End-of-period removal: when the captain ends debugging, remove this section
+0's chat/evidence printing and its temporary diagnostic/fixtures and guide
+references. Retain ordinary role/workflow selection and useful stage/handoff
+policy in sections 2-6 and `workflows.md`. No new flag, service, selector,
+telemetry store or completion gate is introduced; do not remove debug early.
 
 A separately requested review stays separate from any automated pipeline:
 
@@ -105,8 +150,14 @@ A separately requested review stays separate from any automated pipeline:
 `tests/routing-trace.sh check` checks one captured block against the real
 spawn axes, the matched rule's route, the brief's selected skills, and the
 worker's session record (plus, for a `review` claim, another session's
-record); its offline suite also drives the real `fm-spawn.sh` seam with a
-fixture worker. It proves read coverage of each listed file and where each
+record). Optional trailing `--brief <delivered-brief>` compares the
+`Agent`/`Workflow` fields above with that brief; old Routing/Skills-only
+captures remain supported with assignment agreement explicitly UNPROVEN.
+With a worker record it also checks `Selection evidence` against the exact
+role/workflow paths. A missing or contradictory field fails agreement, never
+turns unknown usage into success. Its offline suite also drives the real
+`fm-spawn.sh` seam with a fixture worker. It proves read coverage of each
+listed file and where each
 excerpt occurs, and fails a READ, excerpt, or `usage verified` claim whose
 necessary links the records lack. It never proves semantic application:
 located links print as INSPECT with tool, time, and context, and its
@@ -335,8 +386,11 @@ ship. Judge the actual task, not the category label.
 automatically select its smallest fitting recipe from the current blocking
 condition, ambiguity, authorized deliverable/mutation scope and true
 dependencies. Name its ID and one-line fit in `## Firstmate spec`, then hand
-off the selected stage's inputs, role, context/skills, acceptance and stop
-boundary. The catalogue owns the five alternative recipes and fallback;
+off the current assigned stage, input/output artifacts, role and absolute
+role/workflow source paths, context/skills, acceptance and stop boundary.
+Keep the actual worker identity distinct from any native agent identifier;
+unobserved native selection/adoption is unknown, not implied by the role.
+The catalogue owns the five alternative recipes and fallback;
 it is not a mandatory menu or pipeline. Workflow selection never changes
 project resolution, category/route/effort, skill budgets, macro ownership
 or the selected delivery path's review/publication authority.

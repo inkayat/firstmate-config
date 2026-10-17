@@ -5,7 +5,7 @@
 #
 # Usage:
 #   tests/routing-trace.sh                     run the offline fixture suite
-#   tests/routing-trace.sh check <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]]
+#   tests/routing-trace.sh check <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]] [--brief <delivered-brief>]
 #       check ONE worker's captured trace block against the actual spawn
 #       axes (the harness/model/effort really passed to fm-spawn, e.g. from
 #       state/<id>.meta or the worker's own process line) and the skills
@@ -19,6 +19,12 @@
 #       additionally needs another session's record. Prints PASS/FAIL per
 #       check, INSPECT for located context the checker does not assess, and
 #       a SUMMARY per skill; exit 0 only when nothing FAILs.
+#       --brief compares Agent/Workflow with the seven explicit assignment
+#       fields in the delivered Firstmate spec (primary-policy section 0).
+#       Selection evidence reuses the same read/excerpt rules, never proves
+#       native agent adoption, stage semantics, outcome correctness or
+#       authenticity. Without a brief assignment agreement stays UNPROVEN;
+#       legacy Routing/Skills invocations remain supported.
 #
 # What this proves and what it cannot: `check` compares text the Captain
 # printed with facts supplied by the caller. The Routing line starts with
@@ -52,9 +58,17 @@ trace_check() { # <trace-file> <harness> <model> <effort> <skills|none> [<worker
   python3 - "$CREW_DISPATCH" "$CONFIG_ROOT/roles" "$@" <<'PY'
 import hashlib, json, os, re, sys
 
-dispatch, roles_dir, trace_path, harness, model, effort, skills_arg = sys.argv[1:8]
-transcript_path = sys.argv[8] if len(sys.argv) > 8 else None
-review_path = sys.argv[9] if len(sys.argv) > 9 else None
+args = sys.argv[1:]
+brief_path = None
+if len(args) >= 2 and args[-2] == "--brief":
+    brief_path = args[-1]
+    args = args[:-2]
+if not 7 <= len(args) <= 9 or any(a == "--brief" for a in args):
+    print("FAIL - expected spawn axes, skills, optional sessions, then --brief <delivered-brief>")
+    sys.exit(2)
+dispatch, roles_dir, trace_path, harness, model, effort, skills_arg = args[:7]
+transcript_path = args[7] if len(args) > 7 else None
+review_path = args[8] if len(args) > 8 else None
 # primary-policy.md sections 3-4: two roles are fixed to their categories;
 # every other category takes senior-fullstack or any specialist role file.
 FIXED_ROLES = {"ARCHITECTURE": "architecture", "TENTH-MAN": "tenth-man"}
@@ -370,6 +384,92 @@ traced = set() if body == "none" else {skill_id(re.split(" [-\u2013\u2014] ", e,
 selected = set() if skills_arg == "none" else {skill_id(s) for s in skills_arg.split(",") if s.strip()}
 result(traced == selected, "Skills names exactly the selected skills %s (trace says %s)" % (sorted(selected) or "none", sorted(traced) or "none"))
 
+# Optional captured handoff, not a second assignment database or selector.
+# Exact field agreement is observable; compatibility of the whole task and
+# native adoption are not inferred from names or the existence of role files.
+agents = [l for l in lines if l.startswith("Agent:")]
+workflows = [l for l in lines if l.startswith("Workflow:")]
+selection = [l for l in lines if l.startswith("Selection evidence:")]
+assignment = {}
+if brief_path is None:
+    inspect("assignment UNPROVEN: no delivered brief supplied; native adoption UNPROVEN")
+    if selection:
+        result(False, "Selection evidence needs --brief to identify its exact role/workflow sources")
+else:
+    try:
+        brief = open(brief_path, encoding="utf-8").read().splitlines()
+    except (OSError, UnicodeError) as e:
+        result(False, "assignment UNPROVEN: cannot read delivered brief: %s" % e)
+        brief = []
+    keys = ("Worker identity", "Assigned role", "Role path", "Native agent",
+            "Workflow ID", "Workflow stage", "Workflow path")
+    for key in keys:
+        values = [l[len(key) + 1:].strip() for l in brief if l.startswith(key + ":")]
+        ok = len(values) == 1 and bool(values[0])
+        result(ok, "exactly one brief field %s (assignment UNPROVEN if missing/conflicting)" % key)
+        assignment[key] = values[0] if ok else "UNPROVEN"
+    result(len(agents) == len(workflows) == 1, "exactly one Agent and Workflow line per assigned worker/stage")
+    a = re.fullmatch(r"Agent: worker (.+?) \| role (\S+) \| path (.+?) \| native (\S+) \| why: (\S.*)", agents[0]) if len(agents) == 1 else None
+    w = re.fullmatch(r"Workflow: (\S+) \| stage (.+?) \| path (.+?) \| why: (\S.*)", workflows[0]) if len(workflows) == 1 else None
+    result(a is not None and w is not None, "Agent and Workflow have identity/path/stage and task-specific why fields")
+    if a and w:
+        pairs = (("worker", a[1], "Worker identity"), ("role", a[2], "Assigned role"),
+                 ("role path", a[3], "Role path"), ("native agent", a[4], "Native agent"),
+                 ("workflow", w[1], "Workflow ID"), ("stage", w[2], "Workflow stage"),
+                 ("workflow path", w[3], "Workflow path"))
+        for label, value, key in pairs:
+            result(value == assignment[key], "%s agrees with brief (trace %r, brief %r)" % (label, value, assignment[key]))
+        result(a[2] == role, "Agent role agrees with Routing role")
+        # IDs come from the existing catalogue; no parallel workflow registry.
+        catalogue = open(os.path.join(os.path.dirname(roles_dir), "firstmate", "workflows.md"), encoding="utf-8").read()
+        result(w[1] == "UNPROVEN" or w[1] in re.findall(r"^## ([a-z]+(?:-[a-z]+)+)$", catalogue, re.M),
+               "workflow ID exists in workflows.md or is UNPROVEN")
+    inspect("assignment fields compared only; native adoption UNPROVEN (a role contract, native agent identifier and spawned worker identity are distinct)")
+
+if brief_path is not None and (transcript_path is not None or selection):
+    result(len(selection) == 1, "exactly one Selection evidence line after assigned worker/stage")
+    ev = re.fullmatch(r"Selection evidence: role read (\S+) \| workflow read (\S+) \| stage (.+?) \| result (.+?) \| usage (\S+)", selection[0]) if len(selection) == 1 else None
+    result(ev is not None, "Selection evidence separates role/workflow reads, stage, result and usage")
+    if ev:
+        rec = load_record(transcript_path) if harness == "omp" and transcript_path else None
+        statuses, reads = {}, []
+        for label, claim, key in (("role", ev[1], "Role path"), ("workflow", ev[2], "Workflow path")):
+            src = os.path.expanduser(assignment[key])
+            rs = read_status(rec, src) if rec and os.path.isabs(src) else None
+            statuses[label] = rs["status"] if rs else "UNPROVEN"
+            result(claim in READ_STATES + ("UNPROVEN",), "%s read state is supported" % label)
+            if claim != "UNPROVEN":
+                if rs is None:
+                    result(False, "%s read %s needs a retained OMP record and an absolute source path" % (label, claim))
+                else:
+                    result(claim == rs["status"], "%s read %s matches record %s (%d/%d lines, sha256 %s)" % (
+                        label, claim, rs["status"], rs["covered"], rs["total"], rs["sha"]))
+            if rs:
+                inspect("%s read receipts: %s" % (label, "; ".join(rs["receipts"]) or "none"))
+            reads.append(rs["done"][0] if rs and rs["done"] else None)
+        after = max(reads) if all(n is not None for n in reads) else None
+        linked = {}
+        for field, value in (("stage", ev[3]), ("result", ev[4])):
+            linked[field] = False
+            cited = excerpts("selection", field, value)
+            if cited and rec is None:
+                result(False, "selection %s needs a retained OMP record" % field)
+            elif cited:
+                for c in cited:
+                    got = locate("selection", field, rec, c, after, outputs=field == "result")
+                    if got:
+                        linked[field] |= after is not None and got[0] is not None and got[0] > after
+                        inspect("selection %s `%s` located in %s at %s: %s; stage/application semantics UNPROVEN by checker" % (field, c, got[2], got[1], got[3]))
+        missing = [label for ok, label in ((after is not None, "both complete pre-work reads"),
+                   (linked["stage"], "stage action after reads"), (linked["result"], "executed outcome after reads")) if not ok]
+        result(ev[5] in ("verified", "UNPROVEN"), "selection usage is verified or UNPROVEN")
+        if ev[5] == "verified" and missing:
+            result(False, "selection usage verified lacks %s" % ", ".join(missing))
+        print("SUMMARY - selection: READ role %s, workflow %s | STAGE %s | RESULT %s | native adoption UNPROVEN | USAGE %s" % (
+            statuses["role"], statuses["workflow"], "linked" if linked["stage"] else "UNPROVEN",
+            "linked" if linked["result"] else "UNPROVEN",
+            "links located, semantics UNPROVEN by checker" if not missing else "UNPROVEN"))
+
 if transcript_path is not None:
     starts = [i for i, l in enumerate(lines) if l.startswith("Skill evidence:")]
     if len(starts) != 1:
@@ -511,7 +611,7 @@ PY
 }
 if [ "${1:-}" = check ]; then
   shift
-  [ "$#" -ge 5 ] || { printf 'usage: %s check <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]]\n' "$0" >&2; exit 2; }
+  [ "$#" -ge 5 ] || { printf 'usage: %s check <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]] [--brief <delivered-brief>]\n' "$0" >&2; exit 2; }
   trace_check "$@"
   exit $?
 fi
@@ -1147,6 +1247,111 @@ ev expect 'a backticked skill name with a located nested excerpt is accepted' pa
   "$(t nested-ok.txt "$VBC_ONLY
 - \`$VBC\`: read complete | applied ran \`bash tests/all.sh\` | result saw \`Exit code: \`10\`\` | review UNPROVEN | usage verified")" \
   omp openai-codex/gpt-6-luna low "$VBC" "$W_EXIT"
+
+# --- Role/workflow agreement is diagnostic, never a selector or adoption proof.
+# These inputs are captured assignments, not expected answers to task intents.
+# Catch: a trace may currently contradict the brief or invent native adoption.
+ASSIGN_BRIEF="$TMP/assignment-brief.md"
+ROLE_PATH="$CONFIG_ROOT/roles/senior-fullstack/ROLE.md"
+WORKFLOW_PATH="$CONFIG_ROOT/firstmate/workflows.md"
+cat > "$ASSIGN_BRIEF" <<EOF
+## Firstmate spec
+Worker identity: fixture-worker
+Assigned role: senior-fullstack
+Role path: $ROLE_PATH
+Native agent: UNPROVEN
+Workflow ID: focused-delivery
+Workflow stage: implement-and-verify
+Workflow path: $WORKFLOW_PATH
+EOF
+ASSIGNED=$(t assigned.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: coherent CLI and guide change
+Agent: worker fixture-worker | role senior-fullstack | path $ROLE_PATH | native UNPROVEN | why: executable behavior and docs share one owner
+Workflow: focused-delivery | stage implement-and-verify | path $WORKFLOW_PATH | why: settled coherent outcome
+Skills: none")
+expect_shows 'assignment agrees without certifying native adoption' 'native adoption UNPROVEN' \
+  "$ASSIGNED" omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
+expect_rejects 'a workflow differing from the delivered brief is rejected' 'workflow agrees with brief' \
+  "$(t assign-wrong-workflow.txt "${ASSIGNED:+$(cat "$ASSIGNED" | sed 's/Workflow: focused-delivery/Workflow: evidence-first/')}")" \
+  omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
+expect_rejects 'a stage differing from the delivered brief is rejected' 'stage agrees with brief' \
+  "$(t assign-wrong-stage.txt "$(sed 's/stage implement-and-verify/stage diagnose/' "$ASSIGNED")")" \
+  omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
+expect_rejects 'a different worker identity is rejected' 'worker agrees with brief' \
+  "$(t assign-wrong-worker.txt "$(sed 's/worker fixture-worker/worker other-worker/' "$ASSIGNED")")" \
+  omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
+expect_rejects 'a role path from another assignment is rejected' 'role path agrees with brief' \
+  "$(t assign-wrong-path.txt "$(sed "s@path $ROLE_PATH@path /elsewhere/ROLE.md@" "$ASSIGNED")")" \
+  omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
+expect_rejects 'a native agent name is not inferred from the role' 'native agent agrees with brief' \
+  "$(t assign-native.txt "$(sed 's/native UNPROVEN/native fm-senior-fullstack/' "$ASSIGNED")")" \
+  omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
+expect_rejects 'a supplied handoff cannot silently lose its Agent and Workflow trace' 'exactly one Agent and Workflow' \
+  "$IMPL" omp "$OPUS" high "$TDD,$VBC" --brief "$ASSIGN_BRIEF"
+expect_shows 'legacy Routing and Skills stay compatible but assignment is unknown' 'assignment UNPROVEN' \
+  "$IMPL" omp "$OPUS" high "$TDD,$VBC"
+expect_shows 'a new trace without its brief does not prove assignment agreement' 'assignment UNPROVEN' \
+  "$ASSIGNED" omp "$OPUS" high none
+cp "$ASSIGN_BRIEF" "$TMP/contradictory-brief.md"
+printf 'Workflow ID: evidence-first\n' >> "$TMP/contradictory-brief.md"
+expect_rejects 'contradictory brief fields stay unknown rather than last-value-wins' 'exactly one brief field Workflow ID' \
+  "$ASSIGNED" omp "$OPUS" high none --brief "$TMP/contradictory-brief.md"
+expect_rejects 'an Agent role cannot contradict Routing even if the brief matches it' 'Agent role agrees with Routing role' \
+  "$(t assign-role-conflict.txt "$(sed 's/Routing: IMPLEMENT #2 | role senior-fullstack/Routing: IMPLEMENT #2 | role django-pro/' "$ASSIGNED")")" \
+  omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
+sed '/^Workflow stage:/d' "$ASSIGN_BRIEF" > "$TMP/missing-stage-brief.md"
+expect_rejects 'a missing current stage is not a successful default stage' 'exactly one brief field Workflow stage' \
+  "$ASSIGNED" omp "$OPUS" high none --brief "$TMP/missing-stage-brief.md"
+expect_rejects 'two Agent lines cannot hide conflicting assignments' 'exactly one Agent and Workflow' \
+  "$(t assign-duplicate.txt "$(cat "$ASSIGNED")
+Agent: worker other | role senior-fullstack | path $ROLE_PATH | native UNPROVEN | why: conflicting assignment")" \
+  omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
+
+# Native-shaped receipts exercise the existing coverage/excerpt logic. They
+# prove checker behavior only, not a real model's selection or application.
+W_ASSIGN="$TMP/w-assignment.jsonl"
+rec "$W_ASSIGN" session "$TMP/wt"
+rec "$W_ASSIGN" user "$(cat "$ASSIGN_BRIEF")"
+rec "$W_ASSIGN" read "$ROLE_PATH" "$ROLE_PATH"
+rec "$W_ASSIGN" read "$WORKFLOW_PATH" "$WORKFLOW_PATH"
+rec "$W_ASSIGN" tool bash './fixture-check.sh' 'fixture acceptance passed'
+selection_block() {
+  t "$1" "$(cat "$ASSIGNED")
+Skill evidence: none selected
+Selection evidence: role read $2 | workflow read $3 | stage $4 | result $5 | usage $6"
+}
+expect_shows 'role and workflow receipt links do not certify semantic usage' 'semantics UNPROVEN by checker' \
+  "$(selection_block assign-links.txt complete complete '`./fixture-check.sh`' '`fixture acceptance passed`' verified)" \
+  omp "$OPUS" high none "$W_ASSIGN" --brief "$ASSIGN_BRIEF"
+expect_rejects 'a worker self-report cannot replace a role read receipt' 'role read complete matches record' \
+  "$(selection_block assign-no-read.txt complete none UNPROVEN UNPROVEN UNPROVEN)" \
+  omp "$OPUS" high none "$W_UNREAD" --brief "$ASSIGN_BRIEF"
+expect_rejects 'a recipe name is not an observed stage action' 'stage `I used focused-delivery` occurs' \
+  "$(selection_block assign-self-report.txt complete complete '`I used focused-delivery`' UNPROVEN UNPROVEN)" \
+  omp "$OPUS" high none "$W_ASSIGN" --brief "$ASSIGN_BRIEF"
+expect_rejects 'an unobserved outcome cannot support role/workflow usage' 'result `all features verified` occurs' \
+  "$(selection_block assign-false-result.txt complete complete '`./fixture-check.sh`' '`all features verified`' verified)" \
+  omp "$OPUS" high none "$W_ASSIGN" --brief "$ASSIGN_BRIEF"
+expect_rejects 'a verified usage claim requires both reads and executed outcome' 'selection usage verified lacks' \
+  "$(selection_block assign-false-usage.txt UNPROVEN UNPROVEN UNPROVEN UNPROVEN verified)" \
+  omp "$OPUS" high none "$W_UNREAD" --brief "$ASSIGN_BRIEF"
+expect_rejects 'unsupported records support only unknown selection reads' 'role read complete needs' \
+  "$(selection_block assign-unsupported.txt complete complete UNPROVEN UNPROVEN UNPROVEN)" \
+  omp "$OPUS" high none "$FAKE_RECEIPT" --brief "$ASSIGN_BRIEF"
+expect_shows 'honest unsupported role/workflow evidence remains unknown' 'READ role UNPROVEN, workflow UNPROVEN' \
+  "$(selection_block assign-unknown.txt UNPROVEN UNPROVEN UNPROVEN UNPROVEN UNPROVEN)" \
+  omp "$OPUS" high none "$FAKE_RECEIPT" --brief "$ASSIGN_BRIEF"
+expect_rejects 'positive selection evidence without any worker record is not accepted' 'role read complete needs' \
+  "$(selection_block assign-no-record.txt complete complete UNPROVEN UNPROVEN UNPROVEN)" \
+  omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
+W_ASSIGN_LATE="$TMP/w-assignment-late.jsonl"
+rec "$W_ASSIGN_LATE" session "$TMP/wt"
+rec "$W_ASSIGN_LATE" read "$ROLE_PATH" "$ROLE_PATH"
+rec "$W_ASSIGN_LATE" tool edit 'fixture source change' 'fixture changed'
+rec "$W_ASSIGN_LATE" read "$WORKFLOW_PATH" "$WORKFLOW_PATH"
+rec "$W_ASSIGN_LATE" tool bash './fixture-check.sh' 'fixture acceptance passed'
+expect_rejects 'a late workflow read cannot certify usage despite complete role read and output' 'selection usage verified lacks' \
+  "$(selection_block assign-late.txt complete late '`./fixture-check.sh`' '`fixture acceptance passed`' verified)" \
+  omp "$OPUS" high none "$W_ASSIGN_LATE" --brief "$ASSIGN_BRIEF"
 
 # --- 4. Real dispatch/brief/spawn seam --------------------------------------
 # The real, unmodified official bin/fm-spawn.sh launches one task on an

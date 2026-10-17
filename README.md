@@ -45,8 +45,8 @@ policy chooses worker harness, model, effort, and role by task semantics.
   is the everyday cross-family challenger and the same-effort GPT alternative
   in IMPLEMENT and IMPLEMENT-LARGE, with Astra limited to each lane's most
   extreme, exceptional escalation
-- Temporary routing/skill trace in the Captain chat during the debugging
-  period (`firstmate/primary-policy.md` section 0)
+- Temporary routing/agent/workflow/skill trace in the Captain chat during the
+  debugging period (`firstmate/primary-policy.md` section 0)
 - Multi-project operation with per-task project resolution
 - Scoped `AGENTS.md` / `CLAUDE.md` context and project-local skills
 - Role files that double as OMP agent definitions and load their own default
@@ -120,8 +120,13 @@ The complete conditions live in the tracked routing file and
 [`firstmate/primary-policy.md`](firstmate/primary-policy.md).
 
 During the debugging period the Captain prints a short `Routing:` /
-`Skills:` block before each delegation and a `Skill evidence:` block after
-each worker finishes (primary-policy.md section 0). Skill evidence keeps
+`Agent:` / `Workflow:` / `Skills:` block for each actually assigned worker
+and stage, then `Skill evidence:` and `Selection evidence:` after it finishes
+(primary-policy.md section 0). `Agent` distinguishes the role contract and
+absolute path, native agent identifier (or `UNPROVEN`), and actual worker
+identity; selecting a role does not prove native adoption. `Workflow` names
+the selected recipe, current stage, source path and task-specific fit.
+Do not spawn actors merely to display every recipe stage. Skill evidence keeps
 SELECTED, READ, APPLIED, and VERIFIED separate. READ comes from the omp
 worker's own `read` receipts in its retained OMP session record: the whole
 listed file (a mandatory companion is its own entry) before its first
@@ -140,6 +145,19 @@ and those records. It fails claims whose necessary links are missing and
 reports located links only, with their context. Semantic application stays
 unproven by the checker, and it cannot prove the category/rule choice
 either.
+Optional trailing `--brief <delivered-brief>` also compares `Agent` and
+`Workflow` with the brief's explicit worker/role/path/native-agent/workflow/
+stage fields. Missing or contradictory fields fail agreement, never become
+successful adoption. Legacy captures remain supported with assignment
+agreement `UNPROVEN`. `Selection evidence` separates exact role/workflow
+read receipts, observable stage action and executed outcome; the checker
+locates necessary links but cannot certify semantic application or outcome
+correctness. Unsupported or unobserved evidence stays `UNPROVEN`, not success.
+The Captain ends debugging by removing section 0's temporary trace/diagnostic
+and matching guide references, retaining ordinary role/workflow and useful
+stage/handoff policy. No flag, telemetry service, selector, new evidence
+database, dispatch hook or completion gate is added. No passing diagnostic
+installs or activates an isolated candidate.
 
 ## Context and skills
 
