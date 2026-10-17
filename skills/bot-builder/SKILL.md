@@ -1,6 +1,6 @@
 ---
 name: bot-builder
-description: Create, inspect, pause, resume, or remove a FirstMate bot - a scheduled daily routine that runs one role against one project (e.g. "bot oluştur", "create a bot", "make a nightly security bot", "list my bots"). Collects the routine, schedule, and permission level, refuses missing pieces, and writes the spec with `fm bot`; never activates or dispatches anything.
+description: Create, inspect, pause, resume, or remove FirstMate bot specs (e.g. "bot oluştur", "create a bot", "make a nightly security bot", "list my bots"). Supports daily windows, elapsed intervals and selected remote branches with skip-if-unfinished admission. Collects the routine, schedule, and permission level; never activates or dispatches anything.
 ---
 
 # Bot builder
@@ -27,6 +27,11 @@ hand, and never write `$FM_HOME/data/captain.md` from here.
 - Never substitute a different role because the mapped one is missing. When
   `fm bot create` refuses with `unknown-role`, name the missing
   `roles/<role>/ROLE.md` and ask the captain which existing role to use.
+- New interval/remote occurrences are skipped permanently while a previous
+  job is unfinished or uncertain, or the conservative two-hour spacing bound
+  has not elapsed. Never bypass admission with a raw backlog add, another
+  route, a timer, or a restart. `wall_clock_min` is an advisory target, not a
+  hard runtime cap, forced termination, or provider-cancellation promise.
 
 ## 1. Collect the routine
 
@@ -38,9 +43,11 @@ Ask in one batch for whatever is missing; do not create a partial spec.
 | project | `--project` | the registered project name |
 | role | `--role` | see the mapping below; `fm bot create` checks that `roles/<role>/ROLE.md` exists in the firstmate-config checkout |
 | route | `--route "CATEGORY #N"` | an existing rule in `firstmate/crew-dispatch.json` (primary-policy.md section 3 owns which fits) |
-| schedule | `--days`, `--at`, `--until` | Europe/Stockholm wall clock; `daily` or `mon,tue,...`; `--until` on the same day; never 02:xx |
+| daily schedule | `--days`, `--at`, `--until` | Europe/Stockholm wall clock; `daily` or `mon,tue,...`; `--until` on the same day; never 02:xx |
+| interval | `--every-hours N` | whole hours, at least 2; first candidate N elapsed UTC hours after creation; no daily flags; no missed-slot backlog |
+| remote branch | `--on-remote NAME --on-branch BRANCH` | existing project's configured remote and exact branch, never a URL/command; no daily or interval flags; first observation is a baseline; skipped unchanged tips never replay |
 | scope | `--scope` | one line: what the bot looks at and what it produces |
-| wall-clock | `--wall-clock-min` | minutes per run |
+| wall-clock target | `--wall-clock-min` | advisory minutes per run; 1..60 for interval/remote, not enforced termination; daily unchanged |
 | access | `--access` | `none` (default) or `secret:<reference-name>` - a reference, never a secret |
 | notify | `--notify` | `report` (default) or `needs-decision-on-high` |
 | limits | `--max-candidates`, `--max-files`, `--max-lines`, `--exclude` | optional at local-proposal |
@@ -96,15 +103,23 @@ Run `fm bot create <name> ...` with every collected flag. On refusal,
 `fm bot` prints `refused (<code>): <reason>`; relay the reason, ask for what
 is missing, and retry. Do not loosen a field to make it pass.
 
-On success, run `fm bot show <name>` and report: name, level, role, project,
-schedule (Europe/Stockholm), and next window. If `$FM_HOME/state/bots.check.sh`
-does not exist, add that the bot will not run until the watcher check is
-activated; if it exists, say the bot runs in its next window.
+On success, run `fm bot show <name>` and report name, level, role, project,
+schedule exactly as printed, and next candidate/window. Explain that interval
+and remote modes need a matching native done row/plan plus trusted idle
+ownership or normal metadata/busy/pending-close retirement, and at least two
+hours after observed finish before another job. Saved positive observations
+survive later pruning; a row pruned before observation stays unknown.
+Queued, held, busy or unknown work skips the occurrence, not postpones it.
+A remote plan
+pins an exact commit artifact, not an automatic worker checkout or a reviewed
+commit claim. If `$FM_HOME/state/bots.check.sh` does not exist, say the bot
+cannot wake until separately authorized activation; never activate it here.
 
 ## Other requests
 
 - "list bots" / `/bots`: `fm bot list`.
 - One bot's details: `fm bot show <name>`.
-- What would run now: `fm bot due` (dry; never dispatches).
+- What would run now: `fm bot due` (never files or dispatches; real-clock
+  evaluation can record observations, completion evidence and durable skips).
 - Pause, resume, remove: `fm bot pause|resume|remove <name>`, only for the bot
   the captain named.
