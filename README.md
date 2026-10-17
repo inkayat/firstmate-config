@@ -121,38 +121,23 @@ The complete conditions live in the tracked routing file and
 
 During the debugging period the Captain prints a short `Routing:` /
 `Agent:` / `Workflow:` / `Skills:` block for each actually assigned worker
-and stage, then `Skill evidence:` and `Selection evidence:` after it finishes
-(primary-policy.md section 0). `Agent` distinguishes the role contract and
+and stage (primary-policy.md section 0). `Agent` distinguishes the role contract and
 absolute path, native agent identifier (or `UNPROVEN`), and actual worker
 identity; selecting a role does not prove native adoption. `Workflow` names
 the selected recipe, current stage, source path and task-specific fit.
-Do not spawn actors merely to display every recipe stage. Skill evidence keeps
-SELECTED, READ, APPLIED, and VERIFIED separate. READ comes from the omp
-worker's own `read` receipts in its retained OMP session record: the whole
-listed file (a mandatory companion is its own entry) before its first
-edit/write call. Bash/eval writes are not seen by that boundary and are
-only counted. APPLIED is an excerpt of the worker's own tool calls or
-output; a result is executed bash/eval output, ordered by its call (a
-background job by its launch), never text the worker wrote; a review
-excerpt comes from another session's record, which is not
-proof of independence. `usage verified` is a declaration that also needs an
-independent task-relevant assessment; otherwise it is `UNPROVEN`. A Pi
-record supports only `UNPROVEN`, and a missing, partial, or late read never
-becomes verified usage.
+Do not spawn actors merely to display every recipe stage. Selecting an
+instruction or skill does not prove it was read or applied; workers still
+read and apply their assigned context and methods, run actual checks, and
+report observed outcomes and limits under the ordinary handoff/completion
+policy.
 `tests/routing-trace.sh check` compares a captured block with the real
-spawn axes, the matched rule's route (`#n`), the brief's selected skills,
-and those records. It fails claims whose necessary links are missing and
-reports located links only, with their context. Semantic application stays
-unproven by the checker, and it cannot prove the category/rule choice
-either.
+spawn axes, the matched rule's route (`#n`), and the brief's selected skills.
 Optional trailing `--brief <delivered-brief>` also compares `Agent` and
 `Workflow` with the brief's explicit worker/role/path/native-agent/workflow/
 stage fields. Missing or contradictory fields fail agreement, never become
 successful adoption. Legacy captures remain supported with assignment
-agreement `UNPROVEN`. `Selection evidence` separates exact role/workflow
-read receipts, observable stage action and executed outcome; the checker
-locates necessary links but cannot certify semantic application or outcome
-correctness. Unsupported or unobserved evidence stays `UNPROVEN`, not success.
+agreement `UNPROVEN`. The diagnostic cannot certify instruction/skill
+application, stage semantics, outcome correctness, or category/rule choice.
 The Captain ends debugging by removing section 0's temporary trace/diagnostic
 and matching guide references, retaining ordinary role/workflow and useful
 stage/handoff policy. No flag, telemetry service, selector, new evidence
