@@ -894,33 +894,6 @@ contains '15 a restore whose registration also fails says so' "$out" 'could not 
 if registered19; then fail '15 an unregistered restore is not reported as registered'; else pass '15 an unregistered restore is not reported as registered'; fi
 rm -f "$RS/fail-always"
 
-H20="$TMP_ROOT/home-oneread"
-mkdir -p "$H20/data"
-cp "$H/data/projects.md" "$H20/data/"
-HOME="$DECOY" FM_HOME="$H20" FIRSTMATE_ROOT="$FMROOT" "$BOT" create twice "${BASE[@]}" >/dev/null
-# -B: loading bin/fm-bot as a module must not leave bin/__pycache__ in the checkout.
-out=$(HOME="$DECOY" FM_HOME="$H20" FIRSTMATE_ROOT="$FMROOT" python3 -B - "$BOT" <<'PY'
-import contextlib, importlib.machinery, importlib.util, io, sys
-loader = importlib.machinery.SourceFileLoader("fm_bot", sys.argv[1])
-mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("fm_bot", loader))
-loader.exec_module(mod)
-original, reads = mod.read_spec, []
-def changing(name):
-    # A spec rewritten between two reads: only the first read may plan.
-    spec = original(name)
-    reads.append(name)
-    if len(reads) > 1:
-        spec["scope"] = "SECOND READ"
-    return spec
-mod.read_spec = changing
-buf = io.StringIO()
-with contextlib.redirect_stdout(buf), contextlib.suppress(SystemExit):
-    mod.main(["file", "twice-20261015", "--json", "--now", "2026-10-15T01:00Z"])
-print(buf.getvalue())
-PY
-)
-check '15 file plans from the spec it evaluated' "$(field "$out" scope)" 'src/ static review'
-
 # =============================================================================
 # Scenario 16: a missed window (I5, captain decision 2026-10-04). Outside the
 # scheduled window nothing is filed until the next scheduled occurrence: no

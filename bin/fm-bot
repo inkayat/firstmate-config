@@ -1,12 +1,32 @@
 #!/usr/bin/env python3
-"""fm-bot - home-local bot specs and a dry, deterministic due evaluation.
+"""fm-bot - home-local daily, interval and selected-remote-branch bots.
 
 A bot is a spec file plus the one watcher check that reads every spec; it is
 never a process. Specs live at `$FM_HOME/data/bots/<name>.md` (machine-local,
-never tracked). `due` evaluates them against Europe/Stockholm wall-clock time
-and Firstmate's own backlog, and prints what is due; it never dispatches,
-files, spawns, or calls a model. Firstmate acts on a `bot due:` line exactly
-as it acts on any other custom-check wake.
+never tracked). Daily `due` evaluates Europe/Stockholm windows and Firstmate's
+own backlog; it never dispatches, files, spawns, or calls a model. Firstmate
+acts on a `bot due:` line exactly as it acts on another custom-check wake.
+
+Opt-in --every-hours N (whole hours, minimum two) stores a creation-time UTC
+anchor, with the first candidate N elapsed hours later. A late inspection
+selects the latest boundary only; restart and pause/resume retain the anchor.
+--on-remote NAME --on-branch BRANCH pins the existing project's configured
+remote binding, then bounded noninteractive native Git reads retain a first
+baseline and the latest observed tip, never a missed-change queue.
+Real-clock evaluation records observations and new-mode admission dispositions;
+--now without the explicit test clock writes nothing. Observation is not
+successful work, ancestry verification, or proof of reviewed bytes.
+
+Both new modes share an atomic admission guard. Unfinished, held, busy or
+unknown predecessors skip the current occurrence permanently, not until idle.
+Positive owned native backlog completion plus matching adapter idle ownership
+or normal metadata/busy/pending-close retirement starts a conservative two-hour
+wait on BOTH UTC and monotonic clocks. A saved positive observation survives
+later pruning; a row pruned before observation stays unknown. Filing is not a
+native start receipt. A hung or unprovable predecessor can skip future runs.
+wall_clock_min is advisory, including the new modes' requested 1..60 minutes:
+there is no forced stop, hard one-hour cap, or provider/resource cancellation.
+Existing daily behavior is unchanged.
 
 Every spec carries the routine itself: role, project, route (an existing
 `CATEGORY #N` dispatch rule, whose harness/model/effort `create` records as
@@ -15,7 +35,7 @@ re-target), schedule, scope, access (`none` or a
 `secret:<ref>` reference name, never a secret), notify, and limits (wall-clock
 minutes, optional candidate/file/line caps, excluded paths). These fields are
 stored and validated for the Captain and its workers to apply; fm-bot itself
-enforces only the schedule and the level gate below.
+enforces the schedule and level gate; new modes also enforce admission.
 
 A spec's `level` (local-proposal < local-commit < push) is an upper bound the
 spec may claim, never an authorization. `local-proposal` (the default) needs
@@ -88,11 +108,11 @@ until `file` holds it. `file` never spawns a worker. Filing a bot's dated id
 any other way (a raw `fm-tasks-axi.sh add`) bypasses the filing-time marker
 and reopens the poll-gap race.
 
-A per-bot fault no `fm bot` command can answer (`backlog-unavailable`, or a
-`check-failed-*` crash) prints once per occurrence: an identical line from
-the previous real-clock sweep that Stockholm day stays quiet, so it cannot
-starve the watcher's later checks. Due, invalid, invalid-unheld, and deadline
-lines always print.
+A per-bot fault no `fm bot` command can answer (`backlog-unavailable`
+or a `check-failed-*` crash) prints once per occurrence:
+an identical line from the previous real-clock sweep that Stockholm day stays
+quiet, so it cannot starve later checks. Due, invalid, invalid-unheld, and
+check-budget deadline lines always print.
 `list` and `show` report each bot's last run: the newer of the newest
 `<name>-<YYYYMMDD>` id the official `fm-tasks-axi.sh list` still shows and the
 bot's filed marker, `none` when neither has one, `unknown` when the backlog
@@ -101,6 +121,8 @@ cannot answer.
 Usage:
   fm-bot create NAME --role R --project P --route "CATEGORY #N"
                 --at HH:MM --until HH:MM [--days daily|mon,tue,...]
+                # alternatively: --every-hours N (whole hours, minimum two)
+                # or: --on-remote NAME --on-branch BRANCH
                 --scope TEXT --wall-clock-min N
                 [--access none|secret:REF] [--notify report|needs-decision-on-high]
                 [--max-candidates N] [--max-files N --max-lines N] [--exclude PATH ...]
@@ -113,12 +135,13 @@ Usage:
   fm-bot show NAME [--json] [--now ISO]
   fm-bot pause NAME | resume NAME | remove NAME
   fm-bot due [--check] [--json] [--now ISO]
-  fm-bot file NAME-YYYYMMDD [--json] [--now ISO, only with FM_BOT_TEST_CLOCK=1]
+  fm-bot file OCCURRENCE-ID [--json] [--now ISO, only with FM_BOT_TEST_CLOCK=1]
   fm-bot check-install
 
 `due --check` is the watcher form: only actionable lines, always exit 0. It
-starts no bot after CHECK_BUDGET (15 s, leaving at least 5 s before the
-watcher's 30 s kill), names the bots it did not reach and evaluates those
+starts no bot after CHECK_BUDGET (15 s). The watcher's 30 s kill is unchanged;
+reads, lock waits and native Git termination consume the remaining margin.
+It names the bots it did not reach and evaluates those
 first on the next recorded sweep that day (`data/bots/.deferred`), and starts
 one bot further along each 5-minute slot, so a deferred bot waits at most one
 sweep while the budget can reach it.
@@ -139,6 +162,8 @@ import datetime
 import errno
 import fcntl
 import json
+import hashlib
+import math
 import os
 import re
 import shlex
@@ -148,6 +173,7 @@ import sys
 import tempfile
 import time
 import zoneinfo
+import urllib.parse
 
 SCHEMA = "fm-bot.v1"
 TZ_NAME = "Europe/Stockholm"
@@ -180,9 +206,9 @@ SPEC_LINE_RE = re.compile(r"^([a-z_]+): (.*)$")
 LIST_ID_RE = re.compile(r"^\s+([A-Za-z0-9][A-Za-z0-9._-]*),")
 
 TEXT_LIMITS = {"scope": 500, "authorization": 1000, "authorization_scope": 500, "exclude": 300}
-# fm-watch.sh kills a check after 30 s: each backlog/posture read gets
-# CALL_TIMEOUT, and a sweep starts no bot after CHECK_BUDGET, which leaves
-# room for one elevated bot's two reads plus 5 s of margin before the kill.
+# fm-watch.sh kills a check after 30 s. Daily reads retain CALL_TIMEOUT;
+# new-mode subprocess reads share 2 * CALL_TIMEOUT per inspection, plus the
+# bounded admission-lock wait. A sweep starts no bot after CHECK_BUDGET.
 # Backlog writes get no timeout: killing one mid-write leaves the backlog's
 # own lock behind, and tasks-axi already bounds its lock wait.
 CALL_TIMEOUT = 5
@@ -192,6 +218,7 @@ CHECK_BUDGET = 30 - 2 * CALL_TIMEOUT - 5
 # spec; the rest appear only when set. `exclude` may repeat.
 FIELDS = (
     "schema", "name", "state", "role", "project", "route", "route_use", "days", "at", "until",
+    "trigger", "every_hours", "interval_anchor", "on_remote", "on_branch", "remote_identity",
     "scope", "access", "notify", "wall_clock_min", "max_candidates", "max_files",
     "max_lines", "exclude", "level", "authorization", "authorization_scope",
     "authorized_on", "expires", "push_remote", "push_branch_prefix",
@@ -208,12 +235,15 @@ REGISTER_TIMEOUT = 10
 # The first line of a filed row's backlog body; the plan follows as JSON.
 PLAN_HEADER = "fm-bot dispatch plan (fm-bot.v1): dispatch exactly this, never widen it"
 REQUIRED_KEYS = (
-    "schema", "name", "state", "role", "project", "route", "days", "at", "until",
+    "schema", "name", "state", "role", "project", "route",
     "scope", "access", "notify", "wall_clock_min", "level", "created_at", "updated_at",
 )
 REPEATED_KEYS = ("exclude",)
 AUTH_KEYS = ("authorization", "authorization_scope", "authorized_on", "expires")
 PUSH_KEYS = ("push_remote", "push_branch_prefix", "push_max_per_run")
+TRIGGER_FIELDS = ("trigger", "every_hours", "interval_anchor", "on_remote", "on_branch", "remote_identity")
+ADMISSION_SCHEMA = "fm-bot-admission.v1"
+MIN_SPACING_SECONDS = 2 * 3600
 
 
 class SpecError(Exception):
@@ -343,6 +373,28 @@ def dated_id(name: str, local: datetime.datetime) -> str:
     return f"{name}-{local.strftime('%Y%m%d')}"
 
 
+def trigger_mode(spec: dict) -> str:
+    return spec.get("trigger", "daily")
+
+
+def utc_text(moment: datetime.datetime) -> str:
+    return moment.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def interval_candidate(spec: dict, moment: datetime.datetime) -> dict:
+    """Latest elapsed boundary, never a queue of missed slots."""
+    anchor = datetime.datetime.fromisoformat(spec["interval_anchor"].replace("Z", "+00:00"))
+    seconds = int(spec["every_hours"]) * 3600
+    elapsed = int((moment.astimezone(datetime.timezone.utc) - anchor).total_seconds())
+    slot = max(1, elapsed // seconds)
+    candidate = anchor + datetime.timedelta(seconds=slot * seconds)
+    return {"id": f"{spec['name']}-i{candidate.strftime('%Y%m%dT%H%M%SZ')}",
+            "verdict": "not-yet" if elapsed < seconds else "due",
+            "next": utc_text(candidate if elapsed < seconds else candidate + datetime.timedelta(seconds=seconds)),
+            "trigger": {"mode": "interval", "candidate_at": utc_text(candidate),
+                        "anchor": spec["interval_anchor"], "every_hours": int(spec["every_hours"])}}
+
+
 # --- spec file I/O --------------------------------------------------------------
 
 def _refuse_symlink(path: str, what: str) -> None:
@@ -351,13 +403,24 @@ def _refuse_symlink(path: str, what: str) -> None:
 
 
 @contextlib.contextmanager
-def _lock(lock_name: str = ".lock"):
+def _lock(lock_name: str = ".lock", wait_seconds: float | None = None):
     _refuse_symlink(os.path.join(fm_home(), "data"), "data directory")
     _refuse_symlink(bots_dir(), "bots directory")
     os.makedirs(bots_dir(), mode=0o700, exist_ok=True)
     lock_fd = os.open(os.path.join(bots_dir(), lock_name), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if wait_seconds is None:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        else:
+            until = time.monotonic() + wait_seconds
+            while True:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= until:
+                        raise SpecError("observation-busy", "another check still owns this bot's observation")
+                    time.sleep(0.02)
         yield
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -397,7 +460,8 @@ def parse_spec_text(text: str) -> dict:
             spec[key] = value
         else:
             raise SpecError("unreadable", f"unknown spec key '{key}'")
-    missing = [k for k in REQUIRED_KEYS if k not in spec]
+    required = REQUIRED_KEYS + (("days", "at", "until") if trigger_mode(spec) == "daily" else ())
+    missing = [k for k in required if k not in spec]
     if missing:
         raise SpecError("unreadable", f"spec is missing: {', '.join(missing)}")
     return spec
@@ -543,23 +607,15 @@ def check_base(spec: dict, name: str) -> None:
         raise SpecError("route-unpinned", f"the spec records no route_use for '{spec.get('route')}'; recreate the bot")
     if spec["route_use"] != route_use_of(rule):
         raise SpecError("route-changed", f"route '{spec['route']}' now resolves to '{route_use_of(rule)}', not the recorded '{spec['route_use']}'; recreate the bot to accept the new rule")
-    parse_days(spec.get("days") or "")
-    for key in ("at", "until"):
-        value = spec.get(key) or ""
-        if not HM_RE.match(value):
-            raise SpecError(f"bad-{key}", f"{key} must be HH:MM (got '{value}')")
-        if value.startswith("02:"):
-            raise SpecError("dst-hour", f"{key} {value} is in 02:xx, which is ambiguous or absent on {TZ_NAME} DST days")
-    if hm_minutes(spec["until"]) < hm_minutes(spec["at"]):
-        raise SpecError("bad-window", "until must not be earlier than at (windows never cross midnight)")
-    if hm_minutes(spec["until"]) - hm_minutes(spec["at"]) + 1 < MIN_WINDOW_MINUTES:
-        raise SpecError("window-too-short", f"a window spans at least {MIN_WINDOW_MINUTES} minutes, so a 5-minute sweep lands in it while the watcher is armed")
+    check_schedule(spec)
     _text(spec, "scope")
     if not ACCESS_RE.match(spec.get("access") or ""):
         raise SpecError("bad-access", "access must be 'none' or 'secret:<reference-name>' (a reference, never the secret)")
     if spec.get("notify") not in NOTIFY:
         raise SpecError("bad-notify", f"notify must be one of {', '.join(NOTIFY)}")
     _positive_int(spec, "wall_clock_min")
+    if trigger_mode(spec) != "daily" and int(spec["wall_clock_min"]) > 60:
+        raise SpecError("bad-wall-clock-min", "interval and remote-branch jobs require 1..60 minutes")
     for key in ("max_candidates", "max_files", "max_lines"):
         if spec.get(key) is not None:
             _positive_int(spec, key)
@@ -583,15 +639,215 @@ def check_base(spec: dict, name: str) -> None:
                 raise SpecError("unexpected-push-field", f"{key} applies only to level push")
 
 
-def project_posture(project: str) -> tuple[str, str]:
+def check_schedule(spec: dict) -> None:
+    mode = trigger_mode(spec)
+    if mode not in ("daily", "interval", "remote-branch"):
+        raise SpecError("bad-trigger", "trigger must be daily, interval or remote-branch")
+    allowed = {
+        "daily": ("days", "at", "until"),
+        "interval": ("every_hours", "interval_anchor"),
+        "remote-branch": ("on_remote", "on_branch", "remote_identity"),
+    }[mode]
+    for key in ("days", "at", "until", *TRIGGER_FIELDS[1:]):
+        if spec.get(key) is not None and key not in allowed:
+            raise SpecError("compound-schedule", "choose one daily window, interval or remote-branch trigger")
+    if mode == "interval":
+        value = spec.get("every_hours") or ""
+        if not re.fullmatch(r"[0-9]{1,8}", value) or int(value) < 2:
+            raise SpecError("bad-every-hours", "every_hours must be a whole number of hours, at least 2")
+        anchor = spec.get("interval_anchor") or ""
+        try:
+            if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", anchor):
+                raise ValueError
+            interval_candidate(spec, datetime.datetime.fromisoformat(anchor.replace("Z", "+00:00")))
+        except (ValueError, OverflowError):
+            raise SpecError("bad-interval-anchor", "interval anchor and next instant must be representable UTC seconds") from None
+        return
+    if mode == "remote-branch":
+        if not REMOTE_RE.fullmatch(spec.get("on_remote") or ""):
+            raise SpecError("bad-on-remote", "on_remote must name one configured Git remote, never a URL")
+        branch = spec.get("on_branch") or ""
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}", branch)
+                or ".." in branch or "//" in branch
+                or any(p.startswith(".") or p.endswith((".", ".lock")) for p in branch.split("/"))
+                or branch.endswith("/")):
+            raise SpecError("bad-on-branch", "on_branch must name one exact branch, never a ref expression or command")
+        if not re.fullmatch(r"[a-f0-9]{64}", spec.get("remote_identity") or ""):
+            raise SpecError("remote-unpinned", "remote-branch spec must pin its configured remote identity")
+        return
+    parse_days(spec.get("days") or "")
+    for key in ("at", "until"):
+        value = spec.get(key) or ""
+        if not HM_RE.match(value):
+            raise SpecError(f"bad-{key}", f"{key} must be HH:MM (got '{value}')")
+        if value.startswith("02:"):
+            raise SpecError("dst-hour", f"{key} {value} is in 02:xx, which is ambiguous or absent on {TZ_NAME} DST days")
+    if hm_minutes(spec["until"]) < hm_minutes(spec["at"]):
+        raise SpecError("bad-window", "until must not be earlier than at (windows never cross midnight)")
+    if hm_minutes(spec["until"]) - hm_minutes(spec["at"]) + 1 < MIN_WINDOW_MINUTES:
+        raise SpecError("window-too-short", f"a window spans at least {MIN_WINDOW_MINUTES} minutes, so a 5-minute sweep lands in it while the watcher is armed")
+
+
+# --- bounded remote inspection and private artifact Git operations -------------
+
+def _git_read(project: str, args: list[str], deadline: float) -> str:
+    """Native Git under the official bounded-command owner, not a worker timer.
+    Reads in one observation share a five-second budget. The same owner can
+    write a task-private bare artifact, never the configured project's refs."""
+    remaining = int(deadline - time.monotonic())
+    lib = os.path.join(firstmate_root(), "bin", "fm-timeout-lib.sh")
+    if remaining < 1 or not os.path.isfile(lib):
+        raise SpecError("remote-unavailable", "bounded native Git inspection is unavailable")
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/usr/bin/false",
+           "SSH_ASKPASS": "/usr/bin/false", "GCM_INTERACTIVE": "Never",
+           "GIT_SSH_COMMAND": "/usr/bin/ssh -oBatchMode=yes -oStrictHostKeyChecking=yes"}
+    # Never allow ext::/custom helpers, or widen a caller's protocol restriction.
+    protocols = set(env.get("GIT_ALLOW_PROTOCOL", "file:https:ssh").split(":"))
+    env["GIT_ALLOW_PROTOCOL"] = ":".join(sorted(protocols & {"file", "https", "ssh"}))
+    try:
+        out = subprocess.run(
+            ["bash", "-c", '. "$1"; shift; fm_run_timed "$@"', "fm-bot-git",
+             lib, str(remaining), "git", "-C", project, *args],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            timeout=remaining + 2, env=env)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        raise SpecError("remote-unavailable", "native Git inspection failed or exceeded its bound") from None
+    if out.returncode != 0 or len(out.stdout) > 4096:
+        # Native stderr can contain credentials from a configured URL; do not echo it.
+        raise SpecError("remote-unavailable", "native Git could not read the configured remote/ref")
+    return out.stdout
+
+
+def remote_binding(spec: dict, deadline: float | None = None) -> tuple[str, str, str]:
+    """Use fm-spawn's existing projects/<name> shorthand, never the posture
+    registry as a location resolver. Pin the real checkout and effective URL
+    without storing or printing a potentially credential-bearing URL."""
+    if not PROJECT_RE.fullmatch(spec.get("project") or ""):
+        raise SpecError("bad-project", "remote trigger needs an existing project name")
+    project = os.path.realpath(os.path.join(fm_home(), "projects", spec["project"]))
+    deadline = time.monotonic() + CALL_TIMEOUT if deadline is None else deadline
+    top = _git_read(project, ["rev-parse", "--show-toplevel"], deadline).strip()
+    if os.path.realpath(top) != project:
+        raise SpecError("remote-unavailable", "configured project must be its Git checkout root")
+    urls = _git_read(project, ["remote", "get-url", "--all", spec["on_remote"]], deadline).splitlines()
+    if len(urls) != 1 or not urls[0] or not urls[0].isprintable() or urls[0].startswith("-"):
+        raise SpecError("remote-unavailable", "remote must have one readable, printable effective URL")
+    url = urls[0]
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError:
+        raise SpecError("remote-unavailable", "configured remote URL is malformed") from None
+    # Explicit URLs never fall through to Git's scp-style SSH syntax.
+    scp = "://" not in url and re.fullmatch(r"(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+:\S+", url)
+    if ("::" in url or (parsed.scheme and parsed.scheme not in ("file", "https", "ssh") and not scp)
+            or (parsed.scheme in ("https", "ssh") and not parsed.hostname)):
+        raise SpecError("remote-unavailable", "remote transport must be local file, HTTPS or SSH")
+    identity = hashlib.sha256(json.dumps([project, url], ensure_ascii=True).encode()).hexdigest()
+    return project, identity, url
+
+
+def observation_path(name: str) -> str:
+    return os.path.join(bots_dir(), ".observed", f"{name}.json")
+
+
+def read_observation(spec: dict) -> dict | None:
+    path = observation_path(spec["name"])
+    if os.path.islink(os.path.dirname(path)):
+        raise SpecError("observation-unavailable", "observation directory must not be a symlink")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise SpecError("observation-unavailable", "observation state cannot be opened safely") from None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
+            raise ValueError
+        with os.fdopen(fd, "r", encoding="utf-8") as stream:
+            fd = -1
+            state = json.loads(stream.read(4097))
+        if (not isinstance(state, dict) or set(state) != {
+                "remote_identity", "branch", "baseline_oid", "observed_oid", "sequence", "observed_at"}
+                or state["remote_identity"] != spec["remote_identity"] or state["branch"] != spec["on_branch"]
+                or any(not isinstance(state[k], str) or not re.fullmatch(r"[a-f0-9]{40}|[a-f0-9]{64}", state[k])
+                       or not state[k].strip("0") for k in ("baseline_oid", "observed_oid"))
+                or type(state["sequence"]) is not int or not 0 <= state["sequence"] <= 999999999999
+                or not isinstance(state["observed_at"], str)
+                or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", state["observed_at"])):
+            raise ValueError
+        if state["sequence"] == 0 and state["observed_oid"] != state["baseline_oid"]:
+            raise ValueError
+        return state
+    except (OSError, ValueError, TypeError):
+        raise SpecError("observation-unavailable", "observation state is malformed or belongs to another binding") from None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def remote_candidate(spec: dict, moment: datetime.datetime, record: bool, read_deadline: float | None = None) -> dict:
+    # Serialize observation as well as persistence, so an older concurrent
+    # network response cannot overwrite a newer observation. No work marker is
+    # ever advanced here, and errors leave the previous observation untouched.
+    guard = _lock(f".observe-{spec['name']}.lock", wait_seconds=2) if record else contextlib.nullcontext()
+    try:
+        with guard:
+            deadline = time.monotonic() + CALL_TIMEOUT
+            if read_deadline is not None:
+                deadline = min(deadline, read_deadline)
+            project, identity, _url = remote_binding(spec, deadline)
+            if identity != spec["remote_identity"]:
+                raise SpecError("remote-changed", "project or effective remote changed; no observation accepted")
+            previous = read_observation(spec)
+            ref = f"refs/heads/{spec['on_branch']}"
+            response = _git_read(project, ["ls-remote", "--exit-code", "--refs", spec["on_remote"], ref], deadline)
+            if remote_binding(spec, deadline)[1] != identity:
+                raise SpecError("remote-changed", "remote binding changed during inspection; observation retained")
+            match = re.fullmatch(rf"([a-f0-9]{{40}}|[a-f0-9]{{64}})\t{re.escape(ref)}\n", response)
+            if match is None or not match[1].strip("0"):
+                raise SpecError("remote-unavailable", "remote did not return exactly one valid selected ref")
+            oid = match[1]
+            if previous is None:
+                state = {"remote_identity": identity, "branch": spec["on_branch"], "baseline_oid": oid,
+                         "observed_oid": oid, "sequence": 0, "observed_at": utc_text(moment)}
+            elif previous["observed_oid"] == oid:
+                state = previous
+            else:
+                if previous["sequence"] == 999999999999:
+                    raise SpecError("observation-unavailable", "observation sequence exhausted; pending state retained")
+                state = {**previous, "observed_oid": oid, "sequence": previous["sequence"] + 1,
+                         "observed_at": utc_text(moment)}
+            if record and state != previous:
+                directory = os.path.dirname(observation_path(spec["name"]))
+                os.makedirs(directory, mode=0o700, exist_ok=True)
+                _atomic_write(observation_path(spec["name"]), json.dumps(state, sort_keys=True) + "\n", 0o600)
+    except OSError:
+        raise SpecError("observation-unavailable", "observation could not be persisted safely") from None
+    trigger = {"mode": "remote-branch", "remote": spec["on_remote"], "branch": spec["on_branch"],
+               "baseline_oid": state["baseline_oid"], "observed_oid": state["observed_oid"],
+               "observed_at": state["observed_at"]}
+    if state["sequence"]:
+        return {"id": f"{spec['name']}-r{state['sequence']:012d}", "verdict": "due", "trigger": trigger}
+    return {"verdict": "baseline" if previous is None else "unchanged", "trigger": trigger}
+
+
+def read_timeout(deadline: float | None) -> float:
+    """Share one new-mode inspection budget; never time-bound backlog writes."""
+    return CALL_TIMEOUT if deadline is None else max(0, min(CALL_TIMEOUT, deadline - time.monotonic()))
+
+
+def project_posture(project: str, timeout: float = CALL_TIMEOUT) -> tuple[str, str]:
     """(mode, yolo) from the official registered-posture lookup. Its fallback
     for an unknown project is a warning plus a default posture, so that
     warning is read as 'unregistered' instead of trusting the default."""
     script = os.path.join(firstmate_root(), "bin", "fm-project-mode.sh")
+    if timeout <= 0:
+        raise SpecError("posture-unavailable", "new-mode inspection read budget was exhausted")
     if not os.path.isfile(script):
         raise SpecError("posture-unavailable", f"cannot read project posture: {script} is missing")
     try:
-        out = subprocess.run([script, project], capture_output=True, text=True, timeout=CALL_TIMEOUT,
+        out = subprocess.run([script, project], capture_output=True, text=True, timeout=timeout,
                              env={**os.environ, "FM_HOME": fm_home()})
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SpecError("posture-unavailable", f"cannot read project posture: {exc}") from None
@@ -605,7 +861,7 @@ def project_posture(project: str) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
-def check_elevated(spec: dict, name: str, today: datetime.date) -> None:
+def check_elevated(spec: dict, name: str, today: datetime.date, deadline: float | None = None) -> None:
     """The gate for local-commit and push, re-evaluated every time: the
     authorization, the limits, the push scope, the registered posture, and
     the captain's standing rule. A local-proposal spec never reaches it.
@@ -632,7 +888,7 @@ def check_elevated(spec: dict, name: str, today: datetime.date) -> None:
         words = normalize_words(spec["authorization"])
         if not names_word(words, name) or not names_word(words, spec["project"]):
             raise SpecError("authorization-unscoped", "a push authorization must name both the bot and the project")
-    mode, yolo = project_posture(spec["project"])
+    mode, yolo = project_posture(spec["project"], read_timeout(deadline))
     if LEVELS.index(level) > LEVELS.index(POSTURE_CEILING[mode]):
         raise SpecError("level-above-posture", f"{spec['project']} is registered {mode}; its bots may claim at most {POSTURE_CEILING[mode]}")
     if level == "push" and yolo == "on":
@@ -660,7 +916,7 @@ def _tasks_axi(*args: str, timeout: float | None = CALL_TIMEOUT) -> subprocess.C
 
 def _official(script_name: str, *args: str, timeout: float | None) -> subprocess.CompletedProcess | None:
     script = os.path.join(firstmate_root(), "bin", script_name)
-    if not os.path.isfile(script):
+    if (timeout is not None and timeout <= 0) or not os.path.isfile(script):
         return None
     try:
         return subprocess.run([script, *args], capture_output=True, text=True, timeout=timeout,
@@ -677,11 +933,11 @@ def _captain_hold(task_id: str, reason: str, title: str | None) -> subprocess.Co
     return _official("fm-captain-hold.sh", "hold", task_id, "--reason", reason, *extra, timeout=None)
 
 
-def backlog_row(task_id: str) -> tuple[bool | None, str]:
+def backlog_row(task_id: str, timeout: float = CALL_TIMEOUT) -> tuple[bool | None, str]:
     """(True, row text)/(False, "") from the official fm-tasks-axi.sh, or
     (None, "") when the backlog cannot answer (so the caller reports an
     error instead of guessing)."""
-    out = _tasks_axi("show", task_id, "--full")
+    out = _tasks_axi("show", task_id, "--full", timeout=timeout)
     if out is None:
         return None, ""
     if out.returncode == 0:
@@ -918,13 +1174,278 @@ def writes_allowed(now: str | None) -> bool:
     return now is None or os.environ.get("FM_BOT_TEST_CLOCK") == "1"
 
 
+# --- new-mode admission: one bot-owned record, no worker lifecycle controller ---
+
+def admission_path(name: str) -> str:
+    return os.path.join(bots_dir(), ".admission", f"{name}.json")
+
+
+def admission_binding(spec: dict) -> str:
+    fields = ["project", *TRIGGER_FIELDS]
+    return hashlib.sha256(json.dumps({k: spec.get(k) for k in fields}, sort_keys=True).encode()).hexdigest()
+
+
+def routine_identity(spec: dict) -> str:
+    routine = {k: v for k, v in spec.items() if k not in ("state", "created_at", "updated_at")}
+    return hashlib.sha256(json.dumps(routine, sort_keys=True).encode()).hexdigest()
+
+
+def _safe_bytes(path: str, limit: int = 16384) -> bytes:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+            raise ValueError("not a bounded regular file")
+        data = stream.read(limit + 1)
+        if len(data) > limit:
+            raise ValueError("file grew beyond bound")
+        return data
+
+
+def _state_instant(value: str) -> datetime.datetime:
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", value):
+        raise ValueError("not UTC seconds")
+    return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def read_admission(spec: dict) -> dict:
+    try:
+        path = admission_path(spec["name"])
+        if os.path.islink(os.path.dirname(path)):
+            raise ValueError("symlinked admission directory")
+        state = json.loads(_safe_bytes(path))
+        if (not isinstance(state, dict) or set(state) != {"schema", "binding", "latest", "last_job", "blocked_by"}
+                or state["schema"] != ADMISSION_SCHEMA or state["binding"] != admission_binding(spec)):
+            raise ValueError("admission binding mismatch")
+        pattern = re.compile(rf"{re.escape(spec['name'])}-(?:i\d{{8}}T\d{{6}}Z|r\d{{12}})\Z")
+        if state["blocked_by"] is not None and (
+                not isinstance(state["blocked_by"], str) or not pattern.fullmatch(state["blocked_by"])):
+            raise ValueError("malformed unowned occurrence blocker")
+        latest, job = state["latest"], state["last_job"]
+        if latest is not None and (
+                not isinstance(latest, dict) or set(latest) != {"id", "status", "reason"}
+                or not isinstance(latest["id"], str) or not pattern.fullmatch(latest["id"])
+                or latest["status"] not in ("due", "skipped", "filing", "filed")
+                or latest["reason"] not in ("eligible", "previous-unfinished", "previous-unknown",
+                                           "minimum-spacing", "clock-regressed", "unowned-occurrence")):
+            raise ValueError("malformed candidate disposition")
+        if job is not None:
+            if (not isinstance(job, dict) or set(job) != {
+                    "id", "project", "kind", "filed_at", "observed_oid",
+                    "incarnation", "finished_at", "finished_tick"}
+                    or not isinstance(job["id"], str) or not pattern.fullmatch(job["id"])
+                    or job["project"] != spec["project"] or job["kind"] not in ("scout", "ship")):
+                raise ValueError("malformed last-owned-job receipt")
+            _state_instant(job["filed_at"])
+            if job["observed_oid"] is not None and (
+                    not isinstance(job["observed_oid"], str)
+                    or not re.fullmatch(r"[a-f0-9]{40}|[a-f0-9]{64}", job["observed_oid"])):
+                raise ValueError("malformed filed commit")
+            identity = job["incarnation"]
+            if identity is not None and (
+                    not isinstance(identity, list) or len(identity) != 4
+                    or any(not isinstance(v, str) or not v or not v.isprintable() for v in identity)):
+                raise ValueError("malformed incarnation")
+            if job["finished_at"] is not None:
+                _state_instant(job["finished_at"])
+                if (type(job["finished_tick"]) not in (int, float)
+                        or not math.isfinite(job["finished_tick"]) or job["finished_tick"] < 0):
+                    raise ValueError("malformed completion observation")
+            elif job["finished_tick"] is not None:
+                raise ValueError("unbound completion clock")
+        return state
+    except (OSError, ValueError, TypeError, KeyError):
+        raise SpecError("admission-unavailable", "new-mode admission state is missing, malformed or bound to another schedule; never reset it to bypass an owned job") from None
+
+
+def save_admission(spec: dict, state: dict) -> None:
+    directory = os.path.dirname(admission_path(spec["name"]))
+    _refuse_symlink(directory, "admission directory")
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    _atomic_write(admission_path(spec["name"]), json.dumps(state, sort_keys=True) + "\n", 0o600)
+
+
+def elapsed_clock(moment: datetime.datetime) -> float:
+    if os.environ.get("FM_BOT_TEST_CLOCK") != "1":
+        return time.monotonic()
+    try:
+        tick = float(os.environ.get("FM_BOT_TEST_MONOTONIC", moment.timestamp()))
+        if not math.isfinite(tick) or tick < 0:
+            raise ValueError
+        return tick
+    except ValueError:
+        raise SpecError("bad-test-clock", "test monotonic clock must be finite and nonnegative") from None
+
+
+_IDLE_IDENTITY = r'''
+. "$1/fm-backend.sh" || exit 1
+. "$1/fm-busy-lib.sh" || exit 1
+meta=$2; id=$3; state=$4
+gen=$(fm_busy_current_gen "$state" "$id") || exit 1
+[ "$(fm_meta_get "$meta" busy_gen)" = "$gen" ] || exit 1
+out=$(fm_busy_record_read "$state" "$id") || exit 1
+read -r verdict source event seq <<< "$out"
+[ "$verdict" = idle ] || exit 1
+case "$source" in fm-*) exit 1 ;; esac
+fm_busy_source_trusted "$(fm_meta_get "$meta" harness)" "$source" || exit 1
+spawn=$(fm_meta_get "$meta" spawn_gen)
+fm_busy_token_valid "$spawn" || exit 1
+for key in endpoint_task_id project kind spawn_gen busy_gen harness worktree; do
+  printf '%s\0' "$(fm_meta_get "$meta" "$key")"
+done
+'''
+
+
+def idle_identity(job: dict, timeout: float = CALL_TIMEOUT) -> list[str] | None:
+    """Read only native metadata/semantic evidence. No endpoint or process probe.
+    Stable before/after bytes reject a torn generation snapshot; native owners
+    retain parsing and source trust. External later steering is not sandboxed."""
+    state = os.path.join(fm_home(), "state")
+    paths = [os.path.join(state, job["id"] + suffix) for suffix in (".meta", ".busy-gen", ".busy-state")]
+    try:
+        if timeout <= 0 or os.path.islink(state):
+            return None
+        before = [_safe_bytes(p) for p in paths]
+        out = subprocess.run(["bash", "-c", _IDLE_IDENTITY, "fm-bot-idle",
+                              os.path.join(firstmate_root(), "bin"), paths[0], job["id"], state],
+                             capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout)
+        if out.returncode != 0 or before != [_safe_bytes(p) for p in paths]:
+            return None
+        fields = out.stdout.split("\0")
+        if (len(fields) != 8 or fields[-1] != "" or fields[0] != job["id"]
+                or fields[2] != job["kind"]
+                or os.path.realpath(fields[1]) != os.path.realpath(os.path.join(fm_home(), "projects", job["project"]))
+                or not os.path.isdir(fields[6])):
+            return None
+        return [fields[3], fields[4], fields[5], fields[6]]
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+def records_retired(job: dict) -> bool:
+    """Retirement is only corroboration, never positive completion by itself.
+
+    Native close removes busy/status and metadata before marking the row done.
+    A pending close or surviving busy record still makes ownership uncertain.
+    """
+    state = os.path.join(fm_home(), "state")
+    try:
+        before = os.stat(state, follow_symlinks=False)
+        if not stat.S_ISDIR(before.st_mode):
+            return False
+        for suffix in (".meta", ".busy-gen", ".busy-state", ".backlog-close"):
+            try:
+                os.lstat(os.path.join(state, job["id"] + suffix))
+            except FileNotFoundError:
+                continue
+            return False
+        after = os.stat(state, follow_symlinks=False)
+        return (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino)
+    except OSError:
+        return False
+
+
+
+def job_receipt(plan: dict, moment: datetime.datetime) -> dict:
+    return {"id": plan["id"], "project": plan["project"], "kind": plan["kind"],
+            "filed_at": utc_text(moment), "observed_oid": plan.get("trigger", {}).get("observed_oid"),
+            "incarnation": None, "finished_at": None, "finished_tick": None}
+
+
+def previous_guard(spec: dict, state: dict, moment: datetime.datetime, deadline: float) -> str | None:
+    if state["blocked_by"] is not None:
+        return "unowned-occurrence"
+    job = state["last_job"]
+    if job is None:
+        return None
+    reason = "previous-unknown"
+    retired = records_retired(job)
+    found, row = backlog_row(job["id"], read_timeout(deadline))
+    identity = None if retired else idle_identity(job, read_timeout(deadline))
+    retired = retired and records_retired(job)
+    if found and (row_held(row) or not re.search(r"^\s*state:\s*done\s*$", row, re.M)):
+        reason = "previous-unfinished"
+    else:
+        plan = stored_plan(row, job["id"], spec["name"]) if found else None
+        prior_proof = found is False and job["finished_at"] is not None
+        matching = (plan is not None and plan.get("project") == job["project"] and plan.get("kind") == job["kind"]
+                    and plan.get("trigger", {}).get("observed_oid") == job["observed_oid"])
+        if (identity is not None or retired) and (matching or prior_proof):
+            changed = (identity is not None and job["incarnation"] != identity
+                       and (job["incarnation"] is not None or job["finished_at"] is not None))
+            job["incarnation"] = identity
+            if not changed:
+                tick = elapsed_clock(moment)
+                if job["finished_at"] is None or tick < job["finished_tick"]:
+                    job.update(finished_at=utc_text(moment), finished_tick=tick)
+                since = (moment - _state_instant(job["finished_at"])).total_seconds()
+                if since >= MIN_SPACING_SECONDS and tick - job["finished_tick"] >= MIN_SPACING_SECONDS:
+                    return None
+                return "minimum-spacing"
+    job.update(finished_at=None, finished_tick=None)
+    return reason
+
+
+def new_evaluate_locked(name: str, moment: datetime.datetime, record: bool) -> tuple[dict, dict]:
+    deadline = time.monotonic() + 2 * CALL_TIMEOUT
+    spec = read_spec(name)
+    result = {"name": name, "id": dated_id(name, local_now(moment)), "spec": spec_rel(name),
+              "local": local_now(moment).strftime("%Y-%m-%d %H:%M %Z")}
+    if spec["state"] == "paused":
+        return {**result, "verdict": "paused"}, spec
+    check_base(spec, name)
+    state = read_admission(spec)
+    before = json.dumps(state, sort_keys=True)
+    candidate = (interval_candidate(spec, moment) if trigger_mode(spec) == "interval"
+                 else remote_candidate(spec, moment, record, deadline))
+    latest = state["latest"]
+    if latest and latest["status"] == "filing":
+        found, row = backlog_row(latest["id"], read_timeout(deadline))
+        plan = stored_plan(row, latest["id"], name) if found else None
+        if plan is None or plan.get("project") != spec["project"] or plan.get("kind") not in ("scout", "ship"):
+            raise SpecError("filing-uncertain", "a prior add has no provable stored plan; dispatch nothing and resolve that exact occurrence")
+        state["last_job"] = job_receipt(plan, moment)
+        latest["status"] = "filed"
+    reason = previous_guard(spec, state, moment, deadline)
+    result.update(candidate)
+    if candidate["verdict"] == "due":
+        ident = candidate["id"]
+        if latest and latest["id"] > ident:
+            result.update(verdict="skipped", reason="clock-regressed")
+        elif state["last_job"] and state["last_job"]["id"] == ident:
+            result["verdict"] = "filed"
+        elif latest and latest["id"] == ident and latest["status"] == "skipped":
+            result.update(verdict="skipped", reason=latest["reason"])
+        else:
+            found, _row = backlog_row(ident, read_timeout(deadline))
+            if found is None and reason is None:
+                raise SpecError("backlog-unavailable", "fm-tasks-axi.sh could not answer")
+            if found:
+                state["blocked_by"] = ident
+                reason = "unowned-occurrence"
+            result.update(verdict="skipped" if reason else "due")
+            if reason:
+                result["reason"] = reason
+            state["latest"] = {"id": ident, "status": result["verdict"], "reason": reason or "eligible"}
+    if result["verdict"] == "due":
+        result.update(level=spec["level"], requested=spec["level"])
+        if spec["level"] != "local-proposal":
+            try:
+                check_elevated(spec, name, local_now(moment).date(), deadline)
+            except SpecError as exc:
+                result.update(level="local-proposal", reason=exc.code, detail=exc.message)
+    if record and json.dumps(state, sort_keys=True) != before:
+        save_admission(spec, state)
+    return result, spec
+
+
 # --- evaluation -------------------------------------------------------------------
 
 def evaluate(name: str, moment: datetime.datetime, record: bool = True) -> dict:
     return _evaluate(name, moment, record)[0]
 
 
-def _evaluate(name: str, moment: datetime.datetime, record: bool) -> tuple[dict, dict | None]:
+def _evaluate(name: str, moment: datetime.datetime, record: bool, filing: bool = False) -> tuple[dict, dict | None]:
     """One bot's verdict at `moment`. Order matters: a paused or out-of-window
     bot is silent without touching the backlog, so a sweep costs nothing
     outside windows; validity is judged only when the bot would fire, so a
@@ -943,6 +1464,13 @@ def _evaluate(name: str, moment: datetime.datetime, record: bool) -> tuple[dict,
         unreadable = {"reason": "unreadable", "detail": str(exc)}
     if spec is not None and spec.get("state") == "paused":
         return {**result, "verdict": "paused"}, spec
+    if spec is not None and trigger_mode(spec) != "daily":
+        try:
+            guard = _lock(f".admit-{name}.lock", wait_seconds=2) if record else contextlib.nullcontext()
+            with guard:
+                return new_evaluate_locked(name, moment, record)
+        except SpecError as exc:
+            return {**result, "verdict": "error", "reason": exc.code, "detail": exc.message}, spec
     try:
         window = spec is None or in_window(spec, local)
     except (SpecError, ValueError, KeyError):
@@ -993,7 +1521,7 @@ def watcher_line(r: dict) -> str | None:
         return line
     if r["verdict"] == "invalid":
         return f"bot invalid: {r['id']} spec={r['spec']} reason={r['reason']}"
-    if r["verdict"] == "error":
+    if r["verdict"] in ("error", "blocked"):
         return f"bot error: {r['id']} reason={r['reason']}"
     return None
 
@@ -1027,8 +1555,24 @@ def cmd_create(args: argparse.Namespace) -> None:
         "push_max_per_run": args.push_max_per_run,
         "created_at": ts, "updated_at": ts,
     }
+    if args.every_hours is not None:
+        spec.update(trigger="interval", every_hours=args.every_hours, interval_anchor=utc_text(moment))
+    if args.on_remote is not None or args.on_branch is not None:
+        if spec.get("trigger") is not None:
+            die("refused (compound-schedule): choose interval or remote-branch, never both")
+        spec.update(trigger="remote-branch", on_remote=args.on_remote, on_branch=args.on_branch)
+        # Validate argument shapes before inspecting any project or remote.
+        spec["remote_identity"] = "0" * 64
+    if spec.get("trigger") is not None and args.days is None:
+        spec.pop("days")
     try:
-        spec["days"] = normalize_days(args.days)
+        if trigger_mode(spec) == "daily":
+            spec["days"] = normalize_days("daily" if args.days is None else args.days)
+        else:
+            spec = {k: v for k, v in spec.items() if v is not None}
+            check_schedule(spec)
+            if trigger_mode(spec) == "remote-branch":
+                spec["remote_identity"] = remote_binding(spec)[1]
         rule = _route_rule(args.route or "")
         if rule is not None:
             spec["route_use"] = route_use_of(rule)
@@ -1037,16 +1581,24 @@ def cmd_create(args: argparse.Namespace) -> None:
             check_elevated(spec, name, local_now(moment).date())
     except SpecError as exc:
         die(f"refused ({exc.code}): {exc.message}")
-    with _lock():
+    with _lock(f".admit-{name}.lock"), _lock():
         if os.path.lexists(spec_path(name)):
             die(f"bot '{name}' already exists (remove it first, or pause/resume it)")
+        if trigger_mode(spec) != "daily":
+            if os.path.lexists(admission_path(name)):
+                read_admission(spec)  # recreation retains continuity, never resets it
+            else:
+                if read_filed_marker(name):
+                    die("refused (admission-unavailable): this name has daily job history; use a distinct new-mode bot name")
+                save_admission(spec, {"schema": ADMISSION_SCHEMA, "binding": admission_binding(spec),
+                                      "latest": None, "last_job": None, "blocked_by": None})
         _atomic_write(spec_path(name), render_spec(spec), 0o600)
     print(f"created: {name} ({spec_rel(name)})")
 
 
 def _set_state(name: str, state: str) -> None:
     require_name(name)
-    with _lock():
+    with _lock(f".admit-{name}.lock"), _lock():
         spec = load_spec(name)
         if spec["state"] == state:
             print(f"unchanged: {name} already {state}")
@@ -1067,7 +1619,7 @@ def cmd_resume(args: argparse.Namespace) -> None:
 
 def cmd_remove(args: argparse.Namespace) -> None:
     name = require_name(args.name)
-    with _lock():
+    with _lock(f".admit-{name}.lock"), _lock():
         path = spec_path(name)
         _refuse_symlink(path, "bot spec")
         if not os.path.isfile(path):
@@ -1086,6 +1638,21 @@ def _summary(name: str, moment: datetime.datetime, runs: dict | None) -> dict:
     try:
         spec = read_spec(name)
         row.update({k: spec.get(k) for k in SUMMARY_FIELDS})
+        if trigger_mode(spec) != "daily":
+            check_schedule(spec)
+            state = read_admission(spec)
+            row["last_run"] = state["last_job"]["id"] if state["last_job"] else "none"
+            row["execution"] = "skip unfinished/unknown; two-hour completion-observation spacing; duration advisory, not enforced"
+            row["admission"] = state
+            if trigger_mode(spec) == "interval":
+                row["schedule"] = f"every {spec['every_hours']} elapsed hours from {spec['interval_anchor']}"
+                row["next"] = interval_candidate(spec, moment)["next"]
+            else:
+                row["schedule"] = f"remote {spec['on_remote']} branch {spec['on_branch']}"
+                row["next"] = "next successful remote observation"
+            if spec["state"] == "paused":
+                row["next"] = "paused"
+            return row
         row["schedule"] = f"{spec['days']} {spec['at']}-{spec['until']} {TZ_NAME}"
         filed_today = dated_id(name, local) in (read_filed_marker(name), (runs or {}).get(name))
         if spec["state"] == "paused":
@@ -1123,10 +1690,16 @@ def cmd_show(args: argparse.Namespace) -> None:
     spec = load_spec(name)
     summary = _summary(name, parse_now(args.now), last_runs([name]))
     spec["last_run"], spec["next"] = summary["last_run"], summary.get("next")
+    if summary.get("execution"):
+        spec["execution"] = summary["execution"]
+    if "admission" in summary:
+        spec["admission"] = summary["admission"]
     if args.json:
         print(json.dumps(spec, sort_keys=True))
         return
-    for key in FIELDS + ("last_run", "next"):
+    for key in FIELDS + ("last_run", "next", "execution", "admission"):
+        if key in TRIGGER_FIELDS + ("execution", "admission") and key not in spec:
+            continue
         value = spec.get(key)
         if isinstance(value, list):
             value = ", ".join(value) if value else None
@@ -1218,7 +1791,8 @@ def cmd_due(args: argparse.Namespace) -> None:
                     break
                 try:
                     r = evaluate(name, moment, record)
-                    line, quiet = watcher_line(r), r.get("reason") == "backlog-unavailable"
+                    line = watcher_line(r)
+                    quiet = r.get("reason") == "backlog-unavailable"
                 except Exception as exc:  # noqa: BLE001 - surfaced as a wake, never swallowed
                     line, quiet = f"bot error: {name} reason=check-failed-{type(exc).__name__}", True
                 if line and quiet:
@@ -1248,7 +1822,7 @@ def cmd_due(args: argparse.Namespace) -> None:
 
 # --- dispatch seam --------------------------------------------------------------
 
-FILE_ID_RE = re.compile(r"^([a-z0-9][a-z0-9-]{0,39})-([0-9]{8})\Z")
+FILE_ID_RE = re.compile(r"^([a-z0-9][a-z0-9-]{0,39})-([0-9]{8}|i[0-9]{8}T[0-9]{6}Z|r[0-9]{12})\Z")
 
 STOP_RULES = {
     "local-proposal": (
@@ -1301,6 +1875,12 @@ def dispatch_plan(spec: dict, result: dict) -> dict:
                     push_remote=spec["push_remote"], push_max_per_run=spec["push_max_per_run"],
                     approval="per-commit captain approval before any commit or push")
     plan["stop_rule"] = STOP_RULES[level].format(**{k: v for k, v in plan.items() if v is not None})
+    if trigger_mode(spec) != "daily":
+        plan.update(trigger=result["trigger"], routine_identity=routine_identity(spec), duration_enforced=False,
+                    duration_note="wall_clock_min is an advisory target; no forced stop or resource cancellation",
+                    admission={"minimum_spacing_seconds": MIN_SPACING_SECONDS,
+                               "basis": "positive predecessor completion observed on UTC and monotonic clocks",
+                               "unfinished": "skip this occurrence permanently, not defer"})
     return plan
 
 
@@ -1317,7 +1897,7 @@ def _print_record(record: dict, as_json: bool) -> None:
 def cmd_file(args: argparse.Namespace) -> None:
     m = FILE_ID_RE.match(args.id or "")
     if not m:
-        die(f"refused (bad-id): '{args.id}' is not <bot-name>-<YYYYMMDD>")
+        die(f"refused (bad-id): '{args.id}' is not a daily, interval or remote occurrence id")
     name = m.group(1)
     # A symlinked or non-regular spec is filed and held like an unreadable
     # one (evaluate never follows or reads it), so its day can be silenced.
@@ -1329,9 +1909,133 @@ def cmd_file(args: argparse.Namespace) -> None:
         _file_locked(args, name)
 
 
+def remote_artifact(spec: dict, result: dict) -> dict:
+    """Fetch only into a private per-occurrence bare artifact, never the primary.
+    Pin the observed object, not a branch that may move during the fetch."""
+    oid = result["trigger"]["observed_oid"]
+    directory = os.path.join(bots_dir(), ".artifacts", result["id"])
+    git_dir = os.path.join(directory, "source.git")
+    deadline = time.monotonic() + CALL_TIMEOUT
+    try:
+        for path in (os.path.dirname(directory), directory, git_dir):
+            if os.path.islink(path):
+                raise SpecError("artifact-unavailable", "artifact path is a symlink")
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        project, identity, url = remote_binding(spec, deadline)
+        if identity != spec["remote_identity"]:
+            raise SpecError("remote-changed", "configured remote changed before artifact capture")
+        if not os.path.exists(git_dir):
+            options = ["--object-format=sha256"] if len(oid) == 64 else []
+            _git_read(project, ["init", "--bare", "--template=", *options, git_dir], deadline)
+        # No stored remote URL, FETCH_HEAD, hooks, submodules or auto-maintenance.
+        # Disabling hooks only in this private artifact is not a TLS/SSH bypass.
+        try:
+            present = _git_read(git_dir, ["rev-parse", "--verify", "refs/fm-bot/observed"], deadline).strip()
+        except SpecError:
+            present = None
+        if present is not None and present != oid:
+            raise SpecError("artifact-unavailable", "existing occurrence artifact names a different commit")
+        if present is None:
+            _git_read(git_dir, ["-c", "core.hooksPath=/dev/null", "fetch", "--no-tags",
+                                "--no-write-fetch-head", "--no-recurse-submodules",
+                                "--no-auto-maintenance", "--depth=2", "--", url,
+                                f"{oid}:refs/fm-bot/observed"], deadline)
+        if _git_read(git_dir, ["cat-file", "-t", oid], deadline).strip() != "commit":
+            raise SpecError("artifact-unavailable", "observed ref does not name a commit")
+        tree = _git_read(git_dir, ["rev-parse", f"{oid}^{{tree}}"], deadline).strip()
+        if not re.fullmatch(r"[a-f0-9]{40}|[a-f0-9]{64}", tree):
+            raise SpecError("artifact-unavailable", "observed commit has no verified tree")
+    except (OSError, SpecError):
+        raise SpecError("artifact-unavailable", "exact observed commit could not be retained and verified; no job filed, observation retained") from None
+    return {"git_dir": git_dir, "commit": oid, "tree": tree, "history_depth": 2,
+            "show": ["git", "--git-dir", git_dir, "show", oid],
+            "source_rule": "Use this exact immutable commit/tree, not the current remote/default tip. "
+                           "Read files with git --git-dir <git_dir> show <commit>:<path>. "
+                           "Report the commit actually inspected; do not claim it is still latest. "
+                           "Before any authorized source edit, prove the assigned worktree HEAD matches this commit; "
+                           "otherwise stop for a decision rather than edit an unrelated base."}
+
+
+def _file_new(args: argparse.Namespace, name: str) -> None:
+    """Under existing filing lock plus the same per-bot admission lock as due."""
+    try:
+        moment = parse_now(args.now)
+        spec = read_spec(name)
+        check_base(spec, name)
+        suffix = r"i\d{8}T\d{6}Z" if trigger_mode(spec) == "interval" else r"r\d{12}"
+        if not re.fullmatch(rf"{re.escape(name)}-{suffix}", args.id):
+            die("refused (bad-id): occurrence id does not match this bot's schedule")
+        if spec["state"] == "paused":
+            die(f"refused (not-due): {name} is paused")
+        state = read_admission(spec)
+        if state["latest"] and state["latest"]["status"] == "filing":
+            new_evaluate_locked(name, moment, True)
+            state = read_admission(spec)
+        job = state["last_job"]
+        if job and job["id"] == args.id:
+            found, row = backlog_row(args.id)
+            plan = stored_plan(row, args.id, name) if found else None
+            if plan and plan.get("routine_identity") != routine_identity(spec):
+                die("refused (recovery-changed): the stored routine/authority differs from the current spec; dispatch nothing")
+            if plan and plan.get("level") != "local-proposal":
+                check_elevated(spec, name, local_now(moment).date())
+            _already_filed(args, name, current_day=False)
+            return
+        # Never recover an obsolete job or replay an unfiled/skipped event.
+        if job and args.id < job["id"]:
+            found, _row = backlog_row(args.id)
+            if found is not True:
+                die("refused (not-current): this older occurrence has no proven filing")
+            print(f"already-filed (obsolete, never dispatch): {args.id}")
+            return
+        result, spec = new_evaluate_locked(name, moment, True)
+        if result["id"] != args.id:
+            die(f"refused (not-current): {args.id} is not the latest eligible occurrence; never backfill")
+        if result["verdict"] != "due":
+            die(f"refused ({result.get('reason', 'not-due')}): {name} is {result['verdict']}; this occurrence is not deferred")
+        artifact = remote_artifact(spec, result) if trigger_mode(spec) == "remote-branch" else None
+        # Artifact/network work is not an admission receipt. Recheck predecessor,
+        # permissions and selected occurrence immediately before the actual add.
+        result, spec = new_evaluate_locked(name, parse_now(args.now), True)
+        if result["id"] != args.id or result["verdict"] != "due":
+            die(f"refused ({result.get('reason', 'not-current')}): occurrence is no longer eligible")
+        plan = dispatch_plan(spec, result)
+        if artifact:
+            if artifact["commit"] != result["trigger"]["observed_oid"]:
+                die("refused (not-current): selected observation changed during artifact capture")
+            plan["artifact"] = artifact
+        state = read_admission(spec)
+        state["latest"]["status"] = "filing"
+        save_admission(spec, state)  # crash before/inside add never opens admission
+        title = f"bot {name} {plan['level']} run, {plan['role']} on {plan['project']}"
+        added = _tasks_axi("add", args.id, title, "--kind", plan["kind"], "--repo", plan["project"],
+                           "--body", plan_body(plan), timeout=None)
+        if added is None or added.returncode != 0:
+            die(f"refused (filing-uncertain): add {args.id} did not confirm success; dispatch nothing, retain the reservation")
+        state["last_job"] = job_receipt(plan, parse_now(args.now))
+        state["latest"]["status"] = "filed"
+        save_admission(spec, state)
+        _plan_or_die(name, args.id, recovered_marker_path(args.id))
+        _print_record(plan, args.json)
+    except SpecError as exc:
+        die(f"refused ({exc.code}): {exc.message}")
+    except OSError:
+        die("refused (admission-unavailable): durable admission/artifact state could not be accessed; dispatch nothing")
+
+
 def _file_locked(args: argparse.Namespace, name: str) -> None:
     require_test_clock(args.now)
-    result, spec = _evaluate(name, parse_now(args.now), True)
+    try:
+        spec = read_spec(name)
+    except (SpecError, OSError, ValueError):
+        spec = None
+    if spec is not None and trigger_mode(spec) != "daily":
+        with _lock(f".admit-{name}.lock"):
+            _file_new(args, name)
+        return
+    if not re.fullmatch(rf"{re.escape(name)}-[0-9]{{8}}", args.id):
+        die("refused (bad-id): occurrence id does not match this bot's schedule")
+    result, spec = _evaluate(name, parse_now(args.now), True, filing=True)
     if _already_filed_elsewhen(result, args.id, name):
         _already_filed(args, name, current_day=result["id"] == args.id)
         return
@@ -1527,9 +2231,10 @@ def build_parser() -> argparse.ArgumentParser:
     for flag in ("--role", "--project", "--route", "--at", "--until", "--scope",
                  "--wall-clock-min", "--max-candidates", "--max-files", "--max-lines",
                  "--authorization", "--authorization-scope", "--authorized-on", "--expires",
-                 "--push-remote", "--push-branch-prefix", "--push-max-per-run", "--now"):
+                 "--push-remote", "--push-branch-prefix", "--push-max-per-run", "--now",
+                 "--every-hours", "--on-remote", "--on-branch"):
         c.add_argument(flag)
-    c.add_argument("--days", default="daily")
+    c.add_argument("--days")
     c.add_argument("--access", default="none")
     c.add_argument("--notify", default="report")
     c.add_argument("--level", default="local-proposal")

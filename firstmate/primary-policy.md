@@ -587,10 +587,11 @@ A `check:` wake from `state/bots.check.sh` carries one line per bot;
 `bin/fm-bot` owns the line formats and their meaning.
 
 - **`bot due: <id> …`** - run `fm bot file <id>`. It is the only way to file a
-  bot's dated task: it re-checks the spec at that moment, files the id with
-  the plan in the row's body, records the marker that keeps the bot silent
-  for the rest of the day, and prints the dispatch plan. Never file a bot id
-  with a raw `fm-tasks-axi.sh add`, which skips that marker. `already-filed:`
+  bot occurrence: it re-checks the spec and admission at that moment, files the
+  id with the plan in the row's body, records its durable filing receipt,
+  and prints the dispatch plan. Daily ids remain silent for that day.
+  Never file a bot id with a raw `fm-tasks-axi.sh add`, which bypasses its receipt.
+  `already-filed:`
   or a refusal means dispatch nothing. `already-filed (planned in this
   session, not started):` with no plan means this same session already printed
   that id's plan and nothing was dispatched: the earlier plan stays valid -
@@ -607,10 +608,16 @@ A `check:` wake from `state/bots.check.sh` carries one line per bot;
   exactly that plan, once. A missed window (an id never filed in its window) is
   never filed later: the bot waits for its next scheduled occurrence.
 - **Dispatch exactly the plan.** Its role file, route rule, kind and
-  delivery, scope, limits, excluded paths, access, notify, wall-clock limit,
-  and stop rule go into the brief as printed. Never widen the scope or raise
-  the level; a plan carrying `reason:` runs at the level it prints, and the
-  report says why.
+  delivery, scope, limits, excluded paths, access, notify, wall-clock target,
+  duration note, trigger, admission and stop rule go into the brief as printed.
+  A remote plan also carries its exact selected branch, observed commit and
+  private artifact, including `source_rule`: inspect that pinned commit with
+  the supplied Git commands, never silently review the default branch or call
+  an old observation the latest reviewed bytes. The artifact does not select
+  the native worker's checkout; before source edits prove its HEAD matches
+  the observed OID, otherwise stop for a decision. Missing/ambiguous history
+  also needs a decision, not an invented range. Never widen scope or raise
+  level; a plan carrying `reason:` runs at the level it prints and says why.
 - **The level is never approval.** `local-proposal` is a scout report.
   `local-commit` and `push` are ships that stop uncommitted with
   `needs-decision [key=commit-approval]`; any commit, and any push, still
@@ -622,3 +629,14 @@ A `check:` wake from `state/bots.check.sh` carries one line per bot;
   nothing. Any other **`bot error: …`** - the check or the backlog could not
   answer; investigate, dispatch nothing. A per-bot fault repeats only when it
   recurs, so a quiet sweep after one does not mean it cleared.
+- **Interval/remote admission belongs to `fm bot`.** A queued, inflight,
+  held, busy or uncertain predecessor permanently skips that occurrence.
+  Finishing later does not replay it; an unchanged skipped remote tip is not
+  a new event. Another job needs positive matching native completion and at
+  least two hours after that finish was first observed, not after filing.
+  Never bypass this with raw backlog adds, a changed route, an erased receipt,
+  or recovery of an unowned row. Only the current owned queued plan is
+  recoverable, under the existing printer/dispatch checks and current authority.
+  New-mode `wall_clock_min` is advisory (1..60), not hard termination or
+  provider/detached-resource cancellation. No native lifecycle owner changes
+  or daily-bot migration are implied.
