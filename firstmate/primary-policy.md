@@ -63,108 +63,26 @@ a recipe or print prospective stages as if already dispatched:
   into the brief. Missing/unobserved values say `UNPROVEN`; conflicting
   values stay visibly unresolved, never default to generalist/focused success.
 
-After a worker finishes:
-
-    Skill evidence:
-    - <skill>: read <complete|late|partial|none|UNPROVEN> | applied <`excerpt`|UNPROVEN> | result <`excerpt`|UNPROVEN> | review <`excerpt`|UNPROVEN> | usage <verified|UNPROVEN>
-    Selection evidence: role read <complete|late|partial|none|UNPROVEN> | workflow read <complete|late|partial|none|UNPROVEN> | stage <`observable action excerpt`|UNPROVEN> | result <`executed outcome excerpt`|UNPROVEN> | usage <verified|UNPROVEN>
-
-- Print `Skill evidence:` after every worker, including one whose brief
-  selected no skills: after `Skills: none` write `Skill evidence: none
-  selected` and nothing under it. Never invent a line to fill it.
-- One line per entry in `Skills:`, none for an unselected skill, at most
-  two excerpts per field. `Skills:` is SELECTED; READ, APPLIED, and
-  VERIFIED are separate fields, each taken from the assigned worker's own
-  retained OMP session record (`~/.omp/agent/sessions/<worktree>/<session>.jsonl`
-  whose header `cwd` is the worktree in `state/<id>.meta`, that starts
-  after the spawn, and whose first user message is the delivered brief),
-  never from the brief, the skill's name, a quoted plan, or the worker
-  saying it read or applied the skill. A non-omp worker's record (Pi) is
-  not supported: every field is `UNPROVEN`. `UNPROVEN` is always honest; a
-  missing, partial, or late read never becomes verified usage, and never
-  erases behavior the record shows.
-- `read complete`: the record's own successful `read` results show every
-  line of the exact listed file - a shared skill at
-  `~/.agents/skills/<name>/SKILL.md`, a project-local one at its path in
-  the worker's own worktree, a companion at its exact path - with its
-  current bytes, before the worker's first `edit`/`write`/`ast_edit`
-  call; explicitly read ranges add up. Writes made through bash or eval,
-  and jobs launched before the read, are not seen by that boundary;
-  `check` counts the bash/eval calls that came first. `late`: coverage
-  completed only after that call. `partial`: truncated, elided, or never
-  continued output, or shown lines that differ from the file. `none`: no
-  receipt. A listed path that is no readable file is `unreadable`: nothing
-  can be compared, so only `read UNPROVEN` passes. A same-named file
-  elsewhere, an errored read, `cat` output, or a harness skill-loaded
-  notice is not a receipt. READ covers the listed file only: a `SKILL.md`
-  receipt never covers its companion.
-- `applied`: what the worker did - its own tool calls or their output (a
-  command, an edit, a test run). Behavior without a complete pre-work
-  read, or before it, is still reported; its attribution to the skill
-  stays UNPROVEN. `result`: executed output - a bash, eval, or background
-  bash result. Every result is ordered by its call (a background job by
-  its launch), never by when its output arrived, so a command issued
-  alongside the read never counts as after it. Text the worker wrote (an
-  edit/write echo, a test it added, its report prose) is never a result.
-  `review`: an excerpt from another
-  session's record; a different session is necessary, but it proves
-  neither the reviewer's independence nor the verdict.
-- `usage verified` is a declaration, never a checker verdict. It needs
-  `read complete`, an applied excerpt and a result excerpt located after
-  that read, and an independent task-relevant assessment - FirstMate's or
-  a reviewer's - that this behavior and output are the method's
-  application. An echoed plan, negative-control or RED output,
-  self-printed text, or an unrelated success never establishes it.
-  Without such an assessment, write `usage UNPROVEN`; that is the normal
-  report, not a request for approval.
-- Quote each excerpt in single backticks and separate two excerpts with
-  words or a space (`done` and `passed`, not `done`-`passed`). An excerpt
-  that itself contains backticks is quoted whole: `Exit code: `1``.
-- `Selection evidence` follows every completed assigned worker/stage, even
-  with no skills. SELECTED/ASSIGNED is the pre-work `Agent`/`Workflow`,
-  not READ or APPLIED. Role/workflow READ uses the same supported OMP
-  receipts, exact-source coverage, pre-edit boundary and limitations above,
-  separately for the named role and workflow file. Workflow policy read by
-  the Captain is not a worker read receipt. Unsupported harness/record,
-  missing source/receipt or an unobserved field stays `UNPROVEN`.
-- `stage` cites actual task-relevant worker tool action, `result` executed
-  output, not a recipe name, brief, plan or self-report. Reading a role or
-  recipe proves exposure only, never understanding, native role adoption or
-  successful stage application. `usage verified` needs both complete reads,
-  action and executed outcome after those reads, plus an independent
-  task-relevant assessment of that application and outcome. Without it use
-  `UNPROVEN`. The checker locates necessary links only; neither a matching
-  handoff nor passing fixtures certifies semantics or compliance.
-
 End-of-period removal: when the captain ends debugging, remove this section
-0's chat/evidence printing and its temporary diagnostic/fixtures and guide
-references. Retain ordinary role/workflow selection and useful stage/handoff
-policy in sections 2-6 and `workflows.md`. No new flag, service, selector,
-telemetry store or completion gate is introduced; do not remove debug early.
+0's temporary trace/diagnostic, fixtures and guide references. Retain ordinary
+role/workflow selection and useful stage/handoff policy in sections 2-6 and
+`workflows.md`. No new flag, service, selector, telemetry store or completion
+gate is introduced; do not remove debug early.
 
 A separately requested review stays separate from any automated pipeline:
 
     Review: <role> | <harness> <model> <effort> | why: <reason> | skills: <...> | BLOCKER n, IMPORTANT n, OPTIONAL n
     no-mistakes: <result>
 
-`tests/routing-trace.sh check` checks one captured block against the real
-spawn axes, the matched rule's route, the brief's selected skills, and the
-worker's session record (plus, for a `review` claim, another session's
-record). Optional trailing `--brief <delivered-brief>` compares the
-`Agent`/`Workflow` fields above with that brief; old Routing/Skills-only
+`tests/routing-trace.sh check` compares one captured block against the real
+spawn axes, the matched rule's route, and the brief's selected skills.
+Optional trailing `--brief <delivered-brief>` compares `Agent`/`Workflow`
+with that brief's explicit assignment fields; old Routing/Skills-only
 captures remain supported with assignment agreement explicitly UNPROVEN.
-With a worker record it also checks `Selection evidence` against the exact
-role/workflow paths. A missing or contradictory field fails agreement, never
-turns unknown usage into success. Its offline suite also drives the real
-`fm-spawn.sh` seam with a fixture worker. It proves read coverage of each
-listed file and where each
-excerpt occurs, and fails a READ, excerpt, or `usage verified` claim whose
-necessary links the records lack. It never proves semantic application:
-located links print as INSPECT with tool, time, and context, and its
-SUMMARY reports at most `links located, semantics UNPROVEN by checker`. It
-cannot prove understanding, the reason the worker acted, reviewer
-independence, that the record is the assigned worker's, the record's
-authenticity, or that the category or rule was chosen correctly. It is a
+A missing or contradictory field fails agreement. Its offline suite also
+drives the real `fm-spawn.sh` seam with a fixture worker. The checker cannot
+prove native agent adoption, instruction/skill application, stage semantics,
+outcome correctness, or that the category/rule was chosen correctly. It is a
 diagnostic, never a gate.
 
 ## 1. Authority
@@ -287,8 +205,7 @@ started from - make the following an explicit, compact part of that task's
    different scope or a global default. Each selected skill and companion
    is read with the harness's own file read tool before the first edit and
    before any work done through the shell, continuing any truncated or
-   elided output until every line has been shown, so the session record
-   holds the receipt section 0 checks;
+   elided output until every line has been shown;
 6. guidance for target discovery and subtree changes: revisit steps 1-4
    for each newly selected scope and read the newly applicable instructions
    and project-local skills before substantive work there. This applies to
@@ -300,8 +217,7 @@ This is an advisory handoff contract, not a pre-tool barrier or a completion
 gate. Name paths and the resolution, never paste file or skill bodies into
 the brief, and never enumerate every installed global skill. Worker reports
 can describe discovery, but cannot independently prove read order or skill
-application; the harness's generic native loader alone cannot either. The
-worker's retained session record is what section 0 reports from.
+application; the harness's generic native loader alone cannot either.
 
 Official FirstMate internal skills (`$FIRSTMATE_ROOT/.agents/skills/*`) are
 never a selected shared worker skill and never belong in step 4: they are
@@ -477,14 +393,13 @@ Official FirstMate internal skills (the official checkout's own
 `.agents/skills`) are never a global skill choice for a delegated task -
 they are Captain/FirstMate-only, per section 2.
 
-Selecting a skill is not reading or applying it: section 0 reports
-SELECTED, READ, APPLIED, and VERIFIED separately for every selected skill,
-including a role default. A mandatory companion named under section 2 step
-4 is the task's one reference skill, not an extra method. When it does not
-fit this budget it is not listed in `Skills:`; instead an
-`Unmet companion: <path> - <reason>` line follows the `Skills:` line, and
-the selected skill's `Skill evidence` line keeps `usage UNPROVEN`, because
-its `read complete` covers the named `SKILL.md` only, never the full method.
+Selecting a skill is not reading or applying it, including a role default.
+A mandatory companion named under section 2 step 4 is the task's one
+reference skill, not an extra method. When it does not fit this budget it
+is not listed in `Skills:`; instead an
+`Unmet companion: <path> - <reason>` line follows the `Skills:` line.
+Do not claim the full method was applied when its required companion
+was not read and applied.
 
 ## 6. Orchestration boundary
 

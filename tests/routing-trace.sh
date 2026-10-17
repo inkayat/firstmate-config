@@ -5,82 +5,44 @@
 #
 # Usage:
 #   tests/routing-trace.sh                     run the offline fixture suite
-#   tests/routing-trace.sh check <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]] [--brief <delivered-brief>]
-#       check ONE worker's captured trace block against the actual spawn
-#       axes (the harness/model/effort really passed to fm-spawn, e.g. from
-#       state/<id>.meta or the worker's own process line) and the skills
-#       actually selected in its brief (comma-separated; absolute
-#       .../<name>/SKILL.md paths normalize to <name>, worktree-relative
-#       project-local paths stay as written; an absolute or ~/ required-
-#       companion path names that exact file). With an omp worker's
-#       retained OMP session record
-#       (~/.omp/agent/sessions/<worktree>/<id>.jsonl), also check the
-#       block's "Skill evidence:" lines against it; a `review` excerpt
-#       additionally needs another session's record. Prints PASS/FAIL per
-#       check, INSPECT for located context the checker does not assess, and
-#       a SUMMARY per skill; exit 0 only when nothing FAILs.
+#   tests/routing-trace.sh check <trace-file> <harness> <model> <effort> <skills|none> [--brief <delivered-brief>]
+#       check ONE worker's captured trace against the actual spawn axes
+#       (e.g. state/<id>.meta) and selected skills (comma-separated).
+#       Absolute .../<name>/SKILL.md paths normalize to <name>;
+#       worktree-relative project-local paths and required companion paths
+#       stay as written. Prints PASS/FAIL; exit 0 only when nothing FAILs.
 #       --brief compares Agent/Workflow with the seven explicit assignment
 #       fields in the delivered Firstmate spec (primary-policy section 0).
-#       Selection evidence reuses the same read/excerpt rules, never proves
-#       native agent adoption, stage semantics, outcome correctness or
-#       authenticity. Without a brief assignment agreement stays UNPROVEN;
-#       legacy Routing/Skills invocations remain supported.
+#       Without a brief assignment agreement stays UNPROVEN; legacy
+#       Routing/Skills invocations remain supported.
 #
-# What this proves and what it cannot: `check` compares text the Captain
-# printed with facts supplied by the caller. The Routing line starts with
-# `CATEGORY` or `CATEGORY #n` only: `#n` names the matched rule within a
-# multi-rule category, the axes must be that rule's route (or a named
-# captain override), and any free-text sub-lane label is rejected because
-# nothing can verify it. For skill evidence it computes READ of each listed
-# file from the record's successful `read` results against that exact
-# file's current bytes (complete before the first edit/write/ast_edit call,
-# late, partial, none, or unreadable when the listed path is no readable
-# file; bash/eval calls before the completing read are counted, not
-# assessed) and fails a read, excerpt, review, or `usage verified` claim
-# whose necessary links the records lack. Excerpts are located, never
-# judged: `result` only in bash/eval/background-bash output, each ordered by
-# its call (a background job by its launch), `review` only in a different
-# session's record. Located links never make usage verified: semantic
-# application stays UNPROVEN by this checker and a `usage verified`
-# declaration stands only on an independent task-relevant assessment. It
-# cannot observe the Captain printing the trace, classify a task into a
-# category or rule, prove understanding, why the worker acted, reviewer
-# independence, that the record is the assigned worker's, or a record's
-# authenticity; a non-omp harness's record supports only UNPROVEN fields.
-# It is a diagnostic for the debugging period, never a completion gate,
-# dispatch hook, or monitor.
+# This compares captured text with facts supplied by the caller. Routing
+# starts with CATEGORY or CATEGORY #n, with #n required for multi-rule
+# categories; axes must match that rule's route or a named captain override.
+# It cannot observe the Captain printing, choose the correct category/rule,
+# prove native adoption, instruction/skill application, or task completion.
+# It is a diagnostic, never a completion gate, dispatch hook, or monitor.
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CREW_DISPATCH="$CONFIG_ROOT/firstmate/crew-dispatch.json"
 
-trace_check() { # <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]]
+trace_check() { # <trace-file> <harness> <model> <effort> <skills|none> [--brief <delivered-brief>]
   python3 - "$CREW_DISPATCH" "$CONFIG_ROOT/roles" "$@" <<'PY'
-import hashlib, json, os, re, sys
+import json, os, re, sys
 
 args = sys.argv[1:]
 brief_path = None
 if len(args) >= 2 and args[-2] == "--brief":
     brief_path = args[-1]
     args = args[:-2]
-if not 7 <= len(args) <= 9 or any(a == "--brief" for a in args):
-    print("FAIL - expected spawn axes, skills, optional sessions, then --brief <delivered-brief>")
+if len(args) != 7 or any(a == "--brief" for a in args):
+    print("FAIL - expected spawn axes and skills, then optional --brief <delivered-brief>")
     sys.exit(2)
-dispatch, roles_dir, trace_path, harness, model, effort, skills_arg = args[:7]
-transcript_path = args[7] if len(args) > 7 else None
-review_path = args[8] if len(args) > 8 else None
+dispatch, roles_dir, trace_path, harness, model, effort, skills_arg = args
 # primary-policy.md sections 3-4: two roles are fixed to their categories;
 # every other category takes senior-fullstack or any specialist role file.
 FIXED_ROLES = {"ARCHITECTURE": "architecture", "TENTH-MAN": "tenth-man"}
-# Worker behavior in a retained OMP session record: these tools' calls and
-# results, plus a bash background job's delivered output. Brief text,
-# assistant prose/thinking, read output, and every other tool are not
-# behavior. Eligibility only: what the behavior means is the Captain's call.
-BEHAVIOR_TOOLS = {"bash", "eval", "edit", "write", "ast_edit"}
-# The first of these calls starts substantive work; a READ must be complete
-# before it.
-MUTATING_TOOLS = {"edit", "write", "ast_edit"}
-READ_STATES = ("complete", "late", "partial", "none")
 failed = False
 
 def result(ok, label):
@@ -100,227 +62,6 @@ def skill_id(token):
     if os.path.isabs(token) and token.endswith("/SKILL.md"):
         return os.path.basename(os.path.dirname(token))
     return token
-
-def skill_source(token, cwd):
-    # The exact selected file: an absolute or ~/ path as given, a
-    # worktree-relative project-local path under the worker's own worktree
-    # (its session cwd), a bare shared skill name under ~/.agents/skills.
-    token = os.path.expanduser(token.strip().strip("`"))
-    if os.path.isabs(token):
-        return token
-    if "/" in token:
-        return os.path.join(cwd, token)
-    return os.path.join(os.path.expanduser("~"), ".agents", "skills", token, "SKILL.md")
-
-def citations(text):
-    # Backticked excerpts -> (excerpts, ambiguous). Supported quoting: an
-    # excerpt opens with one backtick; inside it, a backtick followed by
-    # text opens a nested quote and the next backtick followed by the end,
-    # whitespace, or punctuation closes the innermost open quote; a closing
-    # double backtick ends a nested quote and the excerpt together, as in the
-    # live `Exit code: `1``. So `Exit code: `1`, final` is cited whole, never
-    # as a prefix that a different exit code would also match. Anything
-    # else (a ``/``` opener, an unclosed quote) is reported ambiguous rather
-    # than guessed.
-    found, i, n = [], 0, len(text)
-    def run_at(k):
-        r = 0
-        while k + r < n and text[k + r] == "`":
-            r += 1
-        return r
-    def boundary(k):
-        return k >= n or text[k].isspace() or text[k] in ".,;:!?)]'\""
-    while True:
-        start = text.find("`", i)
-        if start < 0:
-            return found, False
-        if run_at(start) != 1:
-            return found, True
-        j, depth = start + 1, 0
-        while True:
-            k = text.find("`", j)
-            if k < 0:
-                return found, True
-            r = run_at(k)
-            after = k + r
-            if r == 1 and not boundary(after):
-                depth += 1
-            elif r == 1 and depth:
-                depth -= 1
-            elif r == 1:
-                found.append(text[start + 1:k])
-                break
-            elif r == 2 and depth == 1 and boundary(after):
-                found.append(text[start + 1:k + 1])
-                break
-            else:
-                return found, True
-            j = after
-        i = after
-
-def load_record(path):
-    # A retained OMP session record (JSONL under one session header), or
-    # None for any other text: prose shaped like a receipt is not one.
-    recs = []
-    try:
-        with open(path, encoding="utf-8") as f:
-            for l in f:
-                if l.strip():
-                    recs.append(json.loads(l))
-    except (OSError, ValueError, UnicodeDecodeError):
-        return None
-    heads = [r for r in recs if isinstance(r, dict) and r.get("type") == "session"]
-    if len(heads) != 1 or not isinstance(heads[0].get("cwd"), str):
-        return None
-    # behavior: (index, timestamp, where, text, order). `order` is the index
-    # the behavior started at: a call's own message, a synchronous result's
-    # call (never its delivery), and a background job's launching bash call
-    # (located by the launch result's details.async.jobId) - None when that
-    # launch is not in the record, so its order is unassessed.
-    calls, launches, reads, behavior, mutation, brief = {}, {}, [], [], None, None
-    for i, r in enumerate(recs):
-        if not isinstance(r, dict):
-            continue
-        ts = r.get("timestamp", "?")
-        if r.get("type") == "custom_message" and r.get("customType") == "async-result":
-            jobs = (r.get("details") or {}).get("jobs") or []
-            if jobs and all(j.get("type") == "bash" for j in jobs) and isinstance(r.get("content"), str):
-                started = [launches.get(j.get("jobId")) for j in jobs]
-                behavior.append((i, ts, "background bash result", r["content"], None if None in started else max(started)))
-            continue
-        m = r.get("message") if r.get("type") == "message" else None
-        if not isinstance(m, dict):
-            continue
-        if m.get("role") == "user" and brief is None:
-            brief = " ".join("".join(x.get("text", "") for x in m.get("content") or [] if isinstance(x, dict)).split())[:120]
-        elif m.get("role") == "assistant":
-            for c in m.get("content") or []:
-                if not isinstance(c, dict) or c.get("type") != "toolCall":
-                    continue
-                calls[c.get("id")] = (c, i)
-                args = c.get("arguments") if isinstance(c.get("arguments"), dict) else {}
-                if c.get("name") in MUTATING_TOOLS and mutation is None:
-                    mutation = (i, ts, c.get("name"))
-                if c.get("name") in BEHAVIOR_TOOLS:
-                    # The "i" intent argument is the worker describing itself.
-                    behavior.append((i, ts, "%s call" % c["name"], "\n".join(str(v) for k, v in sorted(args.items()) if k != "i"), i))
-        elif m.get("role") == "toolResult":
-            call, at = calls.get(m.get("toolCallId"), (None, None))
-            if not call or call.get("name") != m.get("toolName"):
-                continue
-            text = "".join(x.get("text", "") for x in m.get("content") or [] if isinstance(x, dict))
-            job = ((m.get("details") or {}).get("async") or {}).get("jobId")
-            if m.get("toolName") == "bash" and job:
-                launches[job] = at
-            if m.get("toolName") == "read":
-                if not m.get("isError"):
-                    reads.append((i, ts, m.get("toolCallId"), (call.get("arguments") or {}).get("path"), text))
-            elif m.get("toolName") in BEHAVIOR_TOOLS:
-                behavior.append((i, ts, "%s result" % m["toolName"], text, at))
-    return {"path": os.path.realpath(path), "id": heads[0].get("id"), "cwd": heads[0]["cwd"], "started": heads[0].get("timestamp", "?"),
-            "brief": brief, "reads": reads, "behavior": behavior, "mutation": mutation}
-
-READ_HEADER = re.compile(r"\[(?:Skill file: (?P<file>.+)|.+#(?P<tag>[0-9A-Za-z]{4}))\]")
-SELECTOR = re.compile(r"(?P<path>.*?)(?::-?\d[\d,+-]*)*")
-
-def shown_lines(arg, text, cwd, target, lines):
-    # What one successful read result displayed of the selected file:
-    # (matching line numbers, mismatching line numbers, tag), or None when
-    # it is not a receipt for that exact file. Only the observed OMP shapes
-    # count: a `[path#TAG]` header over numbered "N:text" lines (elided and
-    # truncated lines are not shown), or a skill:// `[Skill file: path]`
-    # header over the whole unnumbered body.
-    head, _, body = text.partition("\n")
-    h = READ_HEADER.fullmatch(head)
-    if not h or not isinstance(arg, str):
-        return None
-    if arg.startswith("skill://"):
-        path = h.group("file")
-    else:
-        path = os.path.expanduser(SELECTOR.fullmatch(arg).group("path"))
-        path = path if os.path.isabs(path) else os.path.join(cwd, path)
-    if not path or os.path.realpath(path) != target:
-        return None
-    if h.group("file"):
-        same = body.rstrip("\n") == "\n".join(lines).rstrip("\n")
-        return (set(range(1, len(lines) + 1)), set(), "-") if same else (set(), {0}, "-")
-    ok, bad = set(), set()
-    for l in body.split("\n"):
-        n = re.match(r"(\d+):(.*)$", l)
-        if n:
-            k = int(n.group(1))
-            (ok if 1 <= k <= len(lines) and lines[k - 1] == n.group(2) else bad).add(k)
-    return ok, bad, h.group("tag")
-
-def read_status(rec, src):
-    # READ from the record: complete (every line of the selected file's
-    # current bytes shown before the first file-mutating call), late (only
-    # after it), partial (some lines, or shown lines that differ from the
-    # file), none, or unreadable (the listed path is no readable file, so no
-    # receipt can be compared and only UNPROVEN is honest).
-    target = os.path.realpath(src)
-    try:
-        data = open(target, "rb").read()
-    except OSError:
-        return {"status": "unreadable", "done": None, "target": target, "sha": "unreadable", "covered": 0, "total": 0, "bad": [], "receipts": []}
-    lines = data.decode("utf-8", "replace").split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
-    full = set(range(1, len(lines) + 1))
-    covered, bad, receipts, done = set(), set(), [], None
-    for i, ts, cid, arg, text in rec["reads"]:
-        got = shown_lines(arg, text, rec["cwd"], target, lines)
-        if got is None:
-            continue
-        ok, b, tag = got
-        covered |= ok
-        bad |= b
-        receipts.append("%s %s read %s #%s (%d matching line(s))" % (ts, cid, arg, tag, len(ok)))
-        if done is None and not bad and covered >= full:
-            done = (i, ts)
-    cut = rec["mutation"][0] if rec["mutation"] else None
-    if not receipts:
-        status = "none"
-    elif bad or done is None:
-        status = "partial"
-    elif cut is not None and done[0] > cut:
-        status = "late"
-    else:
-        status = "complete"
-    return {"status": status, "done": done if status == "complete" else None, "target": target,
-            "sha": hashlib.sha256(data).hexdigest(), "covered": len(covered & full), "total": len(full),
-            "bad": sorted(bad), "receipts": receipts}
-
-def excerpts(name, field, value):
-    # [] for UNPROVEN, the one or two cited excerpts, or None after a FAIL.
-    if value == "UNPROVEN":
-        return []
-    cited, ambiguous = citations(value)
-    if ambiguous:
-        result(False, "%s: ambiguous backtick quoting in %s %r - quote each excerpt as `excerpt`, separated by words or a space" % (name, field, value))
-        return None
-    if not 1 <= len(cited) <= 2:
-        result(False, "%s: %s cites one or two `excerpts` or says UNPROVEN (got %d)" % (name, field, len(cited)))
-        return None
-    return cited
-
-OUTPUTS = ("bash result", "eval result", "background bash result")
-
-def locate(name, field, rec, c, after, outputs=False):
-    # The worker-behavior event holding excerpt c (preferring one whose
-    # order follows index `after`) as (order, timestamp, where, context), or
-    # None after a FAIL. With `outputs`, only executed output counts: bash,
-    # eval, and background-bash results. Edit/write results echo text the
-    # worker wrote and are never an observed outcome.
-    hits = [h for h in rec["behavior"] if c in h[3] and (not outputs or h[2] in OUTPUTS)]
-    if not hits:
-        result(False, "%s: %s `%s` occurs in %s of %s (brief text, assistant prose, read output, edit/write echoes and other tools are not %s)" % (
-            name, field, c, "a bash, eval, or background-bash result" if outputs else "a tool call or tool result", rec["path"],
-            "executed output" if outputs else "behavior"))
-        return None
-    i, ts, where, text, order = next((h for h in hits if after is not None and h[4] is not None and h[4] > after), hits[0])
-    at = text.find(c)
-    return order, ts, where, " ".join(text[max(0, at - 80):at + len(c) + 80].split())
 
 lines = open(trace_path, encoding="utf-8").read().splitlines()
 routing = [l for l in lines if l.startswith("Routing:")]
@@ -389,12 +130,9 @@ result(traced == selected, "Skills names exactly the selected skills %s (trace s
 # native adoption are not inferred from names or the existence of role files.
 agents = [l for l in lines if l.startswith("Agent:")]
 workflows = [l for l in lines if l.startswith("Workflow:")]
-selection = [l for l in lines if l.startswith("Selection evidence:")]
 assignment = {}
 if brief_path is None:
     inspect("assignment UNPROVEN: no delivered brief supplied; native adoption UNPROVEN")
-    if selection:
-        result(False, "Selection evidence needs --brief to identify its exact role/workflow sources")
 else:
     try:
         brief = open(brief_path, encoding="utf-8").read().splitlines()
@@ -426,192 +164,12 @@ else:
                "workflow ID exists in workflows.md or is UNPROVEN")
     inspect("assignment fields compared only; native adoption UNPROVEN (a role contract, native agent identifier and spawned worker identity are distinct)")
 
-if brief_path is not None and (transcript_path is not None or selection):
-    result(len(selection) == 1, "exactly one Selection evidence line after assigned worker/stage")
-    ev = re.fullmatch(r"Selection evidence: role read (\S+) \| workflow read (\S+) \| stage (.+?) \| result (.+?) \| usage (\S+)", selection[0]) if len(selection) == 1 else None
-    result(ev is not None, "Selection evidence separates role/workflow reads, stage, result and usage")
-    if ev:
-        rec = load_record(transcript_path) if harness == "omp" and transcript_path else None
-        statuses, reads = {}, []
-        for label, claim, key in (("role", ev[1], "Role path"), ("workflow", ev[2], "Workflow path")):
-            src = os.path.expanduser(assignment[key])
-            rs = read_status(rec, src) if rec and os.path.isabs(src) else None
-            statuses[label] = rs["status"] if rs else "UNPROVEN"
-            result(claim in READ_STATES + ("UNPROVEN",), "%s read state is supported" % label)
-            if claim != "UNPROVEN":
-                if rs is None:
-                    result(False, "%s read %s needs a retained OMP record and an absolute source path" % (label, claim))
-                else:
-                    result(claim == rs["status"], "%s read %s matches record %s (%d/%d lines, sha256 %s)" % (
-                        label, claim, rs["status"], rs["covered"], rs["total"], rs["sha"]))
-            if rs:
-                inspect("%s read receipts: %s" % (label, "; ".join(rs["receipts"]) or "none"))
-            reads.append(rs["done"][0] if rs and rs["done"] else None)
-        after = max(reads) if all(n is not None for n in reads) else None
-        linked = {}
-        for field, value in (("stage", ev[3]), ("result", ev[4])):
-            linked[field] = False
-            cited = excerpts("selection", field, value)
-            if cited and rec is None:
-                result(False, "selection %s needs a retained OMP record" % field)
-            elif cited:
-                for c in cited:
-                    got = locate("selection", field, rec, c, after, outputs=field == "result")
-                    if got:
-                        linked[field] |= after is not None and got[0] is not None and got[0] > after
-                        inspect("selection %s `%s` located in %s at %s: %s; stage/application semantics UNPROVEN by checker" % (field, c, got[2], got[1], got[3]))
-        missing = [label for ok, label in ((after is not None, "both complete pre-work reads"),
-                   (linked["stage"], "stage action after reads"), (linked["result"], "executed outcome after reads")) if not ok]
-        result(ev[5] in ("verified", "UNPROVEN"), "selection usage is verified or UNPROVEN")
-        if ev[5] == "verified" and missing:
-            result(False, "selection usage verified lacks %s" % ", ".join(missing))
-        print("SUMMARY - selection: READ role %s, workflow %s | STAGE %s | RESULT %s | native adoption UNPROVEN | USAGE %s" % (
-            statuses["role"], statuses["workflow"], "linked" if linked["stage"] else "UNPROVEN",
-            "linked" if linked["result"] else "UNPROVEN",
-            "links located, semantics UNPROVEN by checker" if not missing else "UNPROVEN"))
-
-if transcript_path is not None:
-    starts = [i for i, l in enumerate(lines) if l.startswith("Skill evidence:")]
-    if len(starts) != 1:
-        result(False, "exactly one Skill evidence: block follows the worker's completion (got %d)" % len(starts))
-        sys.exit(1)
-    start = starts[0]
-    # With no selected skills the header may stand alone or say
-    # "none selected" inline, as a live Captain printed it; nothing else.
-    inline = lines[start][len("Skill evidence:"):].strip().rstrip(".").lower()
-    if inline not in ("", "none", "none selected"):
-        result(False, "Skill evidence: header carries nothing inline but 'none selected' (got %r)" % inline)
-    entries = []
-    for l in lines[start + 1:]:
-        m = re.match(r"^- (\S+): (.+)$", l)
-        if not m:
-            break
-        entries.append((skill_id(m.group(1)), m.group(2).strip()))
-    if inline in ("none", "none selected") and entries:
-        result(False, "Skill evidence: says none selected but lists %d skill line(s)" % len(entries))
-    names = [name for name, _ in entries]
-    result(len(names) == len(set(names)), "Skill evidence has one line per skill (got %s)" % names)
-    result(set(names) == selected,
-           "Skill evidence covers exactly the selected skills %s (got %s)" % (sorted(selected) or "none", sorted(set(names)) or "none"))
-
-    # Only an OMP worker's retained record is read; any other harness's
-    # record (Pi shares the session header) supports only UNPROVEN.
-    rec = load_record(transcript_path) if harness == "omp" else None
-    if rec is None:
-        inspect("%s is not a retained OMP session record of an omp worker (harness %s): no read receipt, behavior, or result is observable in it; only UNPROVEN fields can pass" % (transcript_path, harness))
-    else:
-        # Identity for matching the assigned worker: header cwd = its worktree,
-        # start after its spawn, first user message = its delivered brief.
-        inspect("worker record %s (session %s, started %s, cwd %s, first user message: %r); first edit/write/ast_edit call: %s" % (
-            rec["path"], rec["id"], rec["started"], rec["cwd"], rec["brief"], "%s %s" % rec["mutation"][1:] if rec["mutation"] else "none"))
-    review_rec = load_record(review_path) if review_path else None
-    sources = {} if skills_arg == "none" else {skill_id(s): s for s in skills_arg.split(",") if s.strip()}
-    EVIDENCE = re.compile(r"read (\S+) \| applied (.+?) \| result (.+?) \| review (.+?) \| usage (\S+)")
-    for name, text in entries:
-        m = EVIDENCE.fullmatch(text)
-        if not m:
-            result(False, "%s: evidence line is 'read <complete|late|partial|none|UNPROVEN> | applied <`excerpt`|UNPROVEN> | result <`excerpt`|UNPROVEN> | review <`excerpt`|UNPROVEN> | usage <verified|UNPROVEN>' (got %r)" % (name, text))
-            continue
-        if name not in sources:
-            continue  # an unselected skill already failed the coverage check
-        claim, applied, outcome, review, usage = m.groups()
-
-        # READ: only the record's own successful read results count.
-        rs = read_status(rec, skill_source(sources[name], rec["cwd"])) if rec else None
-        if claim not in READ_STATES + ("UNPROVEN",):
-            result(False, "%s: read is one of %s or UNPROVEN (got %r)" % (name, "/".join(READ_STATES), claim))
-        elif rs is None:
-            result(claim == "UNPROVEN", "%s: read %s needs a retained OMP session record; without one only UNPROVEN is honest" % (name, claim))
-        else:
-            detail = "this file only: %d/%d lines of %s (sha256 %s)%s; receipts: %s" % (
-                rs["covered"], rs["total"], rs["target"], rs["sha"][:16],
-                ", shown lines differing from the file: %s" % rs["bad"] if rs["bad"] else "",
-                "; ".join(rs["receipts"]) or "none")
-            if claim == "UNPROVEN":
-                inspect("%s: read UNPROVEN as reported; the record shows %s: %s" % (name, rs["status"], detail))
-            else:
-                result(claim == rs["status"], "%s: read %s matches the record (%s): %s" % (name, claim, rs["status"], detail))
-        done = rs["done"][0] if rs and rs["done"] else None
-        # The edit/write boundary does not see bash/eval writes or the jobs
-        # they launch; disclose every such call before the completing read.
-        early = sum(1 for h in rec["behavior"] if done is not None and h[0] < done and h[2] in ("bash call", "eval call")) if rec else 0
-        if early:
-            inspect("%s: %d bash/eval call(s) precede the completing read; writes they made and jobs they launched are not assessed - pre-work order is proven only against edit/write/ast_edit calls" % (name, early))
-
-        # APPLIED and RESULT: located worker behavior, never a semantic PASS.
-        # Behavior before a complete pre-work read stays visible with its
-        # attribution UNPROVEN.
-        after_read, located = {}, {}
-        for field, value in (("applied", applied), ("result", outcome)):
-            cited = excerpts(name, field, value)
-            after_read[field], located[field] = False, 0
-            if not cited:
-                continue
-            if rec is None:
-                result(False, "%s: %s excerpts need a retained OMP session record" % (name, field))
-                continue
-            for c in cited:
-                got = locate(name, field, rec, c, done, outputs=field == "result")
-                if got is None:
-                    continue
-                order, ts, where, context = got
-                attributed = done is not None and order is not None and order > done
-                after_read[field] |= attributed
-                located[field] += 1
-                inspect("%s: %s `%s` located in %s at %s, %s - location only, semantic application UNPROVEN by this checker: ...%s..." % (
-                    name, field, c, where, ts,
-                    "after the complete pre-work read" if attributed else "launch order unassessed (job launch not in the record)" if order is None
-                    else "attribution UNPROVEN (read %s)" % ("complete, but this precedes it" if done is not None else rs["status"] if rs else "UNPROVEN"),
-                    context))
-
-        # REVIEW: a different session record is necessary, never sufficient:
-        # reviewer independence and the verdict are not assessed here.
-        cited = excerpts(name, "review", review)
-        reviewed = 0
-        if cited:
-            if review_rec is None:
-                result(False, "%s: review needs the reviewer's own retained OMP session record as the review-session argument" % name)
-            elif rec is not None and (review_rec["id"] == rec["id"] or review_rec["path"] == rec["path"]):
-                result(False, "%s: the review record is the worker's own session, not an independent review" % name)
-            else:
-                for c in cited:
-                    got = locate(name, "review", review_rec, c, None)
-                    if got:
-                        reviewed += 1
-                        inspect("%s: review `%s` located in a different session record %s (session %s), %s at %s - reviewer independence and verdict are not assessed by this checker: ...%s..." % (
-                            name, c, review_rec["path"], review_rec["id"], got[2], got[1], got[3]))
-
-        # USAGE: necessary links only - a complete pre-work READ, then applied
-        # behavior and executed output after it. Located links never make
-        # usage verified: semantic application stays UNPROVEN by this checker,
-        # and `usage verified` stands only on an independent task-relevant
-        # assessment. Review is reported separately.
-        missing = [why for ok, why in (
-            (done is not None, "a complete pre-work read (record: %s)" % (rs["status"] if rs else "unsupported")),
-            (after_read["applied"], "applied behavior located after that read"),
-            (after_read["result"], "executed output located after that read")) if not ok]
-        if usage not in ("verified", "UNPROVEN"):
-            result(False, "%s: usage is verified or UNPROVEN (got %r)" % (name, usage))
-        elif usage == "verified" and missing:
-            result(False, "%s: usage verified lacks %s" % (name, "; ".join(missing)))
-        elif usage == "verified":
-            inspect("%s: usage verified is a declaration: its necessary links are located, but semantic application is UNPROVEN by this checker and stands only on an independent task-relevant assessment" % name)
-        # What the records support, whatever the line claimed.
-        def shown(field):
-            if not located[field]:
-                return "UNPROVEN"
-            return "located" if after_read[field] else "located, attribution UNPROVEN"
-        print("SUMMARY - %s: SELECTED yes | READ %s | APPLIED %s | RESULT %s | REVIEW %s | USAGE %s" % (
-            name, "%s (this file only)" % rs["status"] if rs else "UNPROVEN (unsupported record)", shown("applied"), shown("result"),
-            "located in a different session record" if reviewed else "UNPROVEN",
-            "UNPROVEN" if missing else "links located, semantics UNPROVEN by checker"))
-
 sys.exit(1 if failed else 0)
 PY
 }
 if [ "${1:-}" = check ]; then
   shift
-  [ "$#" -ge 5 ] || { printf 'usage: %s check <trace-file> <harness> <model> <effort> <skills|none> [<worker-session> [<review-session>]] [--brief <delivered-brief>]\n' "$0" >&2; exit 2; }
+  [ "$#" -ge 5 ] || { printf 'usage: %s check <trace-file> <harness> <model> <effort> <skills|none> [--brief <delivered-brief>]\n' "$0" >&2; exit 2; }
   trace_check "$@"
   exit $?
 fi
@@ -796,458 +354,6 @@ expect 'commas inside a shared skill reason are accepted' pass \
   "$(t reason-comma.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: x
 Skills: $VBC - fresh evidence before done, then report it")" omp "$OPUS" high "$VBC"
 
-# --- 3. Post-work Skill evidence: SELECTED / READ / APPLIED / VERIFIED ------
-# Evidence is checked against the worker's retained OMP session record
-# (JSONL). omp-record appends records in that exact retained shape - an
-# assistant toolCall, its toolResult (read results carry the `[path#TAG]`
-# header and numbered lines; a truncated read ends with the real
-# "[Showing lines a-b of N. Use :b+1 to continue]" footer), a bash
-# background-job async-result, user brief text, assistant prose - so each
-# fixture is a record a real worker could leave, never prose pretending
-# to be a receipt.
-cat > "$TMP/omp-record.py" <<'PY'
-import hashlib, json, os, sys
-path, kind, args = sys.argv[1], sys.argv[2], sys.argv[3:]
-n = sum(1 for _ in open(path)) if os.path.exists(path) else 0
-def ts(k):
-    return "2026-10-05T07:%02d:%02d.000Z" % divmod(n + k, 60)
-def emit(*recs):
-    with open(path, "a") as f:
-        for r in recs:
-            f.write(json.dumps(r) + "\n")
-def message(k, role, **fields):
-    return {"type": "message", "id": "m%d" % (n + k), "timestamp": ts(k), "message": dict(role=role, timestamp=ts(k), **fields)}
-def tool(name, arguments, text, error=False, details=None):
-    cid = "toolu_%d" % n
-    emit(message(0, "assistant", content=[{"type": "toolCall", "id": cid, "name": name, "arguments": dict(arguments, i="intent text")}]),
-         message(1, "toolResult", toolCallId=cid, toolName=name, content=[{"type": "text", "text": text}], details=details or {}, isError=error))
-def read_text(arg, shown, first=None, last=None):
-    lines = open(shown).read().split("\n")[:-1]
-    first, last = first or 1, last or len(lines)
-    body = ["%d:%s" % (k, lines[k - 1]) for k in range(first, last + 1)]
-    if last < len(lines):
-        body += ["", "[Showing lines %d-%d of %d. Use :%d to continue]" % (first, last, len(lines), last + 1)]
-    head = "[%s#%s]" % (arg.split(":")[0].replace(os.path.expanduser("~"), "~"), hashlib.sha256(open(shown, "rb").read()).hexdigest()[:4].upper())
-    return "\n".join([head] + body), len(lines)
-if kind == "session":
-    emit({"type": "session", "version": 3, "id": hashlib.sha256(path.encode()).hexdigest()[:32], "timestamp": ts(0), "cwd": args[0]})
-elif kind == "user":
-    emit(message(0, "user", content=[{"type": "text", "text": args[0]}]))
-elif kind == "say":
-    emit(message(0, "assistant", content=[{"type": "text", "text": args[0]}]))
-elif kind == "read":  # <path argument> <file shown> [<first> <last>]
-    text, total = read_text(*args[:2], *(int(a) for a in args[2:4]))
-    tool("read", {"path": args[0]}, text, details={"totalLines": total})
-elif kind == "parallel":  # <read path argument> <file shown> <bash command> <bash output> - one message issues both calls
-    text, total = read_text(args[0], args[1])
-    emit(message(0, "assistant", content=[{"type": "toolCall", "id": "toolu_r%d" % n, "name": "read", "arguments": {"path": args[0], "i": "intent text"}},
-                                          {"type": "toolCall", "id": "toolu_b%d" % n, "name": "bash", "arguments": {"command": args[2], "i": "intent text"}}]),
-         message(1, "toolResult", toolCallId="toolu_r%d" % n, toolName="read", content=[{"type": "text", "text": text}], details={"totalLines": total}, isError=False),
-         message(2, "toolResult", toolCallId="toolu_b%d" % n, toolName="bash", content=[{"type": "text", "text": args[3]}], details={}, isError=False))
-elif kind == "read-error":
-    tool("read", {"path": args[0]}, "Path '%s' not found" % args[0], error=True)
-elif kind == "tool":  # <name> <command or input> <output>
-    tool(args[0], {"command" if args[0] == "bash" else "input": args[1]}, args[2])
-elif kind == "bg":  # <command> - a bash call backgrounded as job bg_1 (real launch shape)
-    tool("bash", {"command": args[0], "async": True},
-         "Backgrounded as job bg_1 (killed once it has run 300s in total; `timeout: 0` disables the deadline)",
-         details={"async": {"state": "running", "jobId": "bg_1", "type": "bash"}, "timeoutSeconds": 300})
-elif kind == "job":  # a background bash job's delivered output
-    emit({"type": "custom_message", "customType": "async-result", "id": "c%d" % n, "timestamp": ts(0), "display": True, "attribution": "agent",
-          "content": "<system-notice>\nBackground job bg_1 has completed.\n%s\n</system-notice>" % args[0],
-          "details": {"meta": {"source": {"type": "report", "value": "background job delivery"}}, "jobs": [{"jobId": "bg_1", "type": "bash", "label": "job"}]}})
-PY
-rec() { python3 "$TMP/omp-record.py" "$@"; }
-
-# Selected shared skills resolve by name under the shared root
-# ~/.agents/skills (primary-policy.md section 2); HOME points at a fixture.
-EVHOME="$TMP/evhome"
-SK="$EVHOME/.agents/skills"
-mkdir -p "$SK/$TDD" "$SK/$VBC" "$TMP/wt/.agents/skills/local-check" "$TMP/elsewhere/$TDD"
-printf -- '---\nname: %s\ndescription: fixture\n---\n# TDD\nWrite the failing test first.\nWatch it fail.\nWrite minimal code.\nWatch it pass.\nRefactor.\nRepeat.\nDone.\n' "$TDD" > "$SK/$TDD/SKILL.md"
-printf -- '---\nname: %s\ndescription: fixture\n---\nEvidence before claims.\n' "$VBC" > "$SK/$VBC/SKILL.md"
-printf -- '---\nname: local-check\ndescription: fixture project skill\n---\nRun ./check.sh before done.\n' > "$TMP/wt/.agents/skills/local-check/SKILL.md"
-cp "$SK/$TDD/SKILL.md" "$TMP/elsewhere/$TDD/SKILL.md"
-ev() { HOME="$EVHOME" "$@"; }
-# ev_block <file> <tdd line> [<vbc line>] - the IMPL trace plus its Skill evidence
-ev_block() {
-  t "$1" "$(cat "$IMPL")
-Skill evidence:
-- $TDD: $2
-- $VBC: ${3:-read UNPROVEN | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN}"
-}
-BRIEF_TEXT="Selected shared worker skill: $TDD. Requirement: read and apply; run \`bash tests/red.sh\` and expect \`FAIL expected\`."
-
-# W_GOOD: brief, complete pre-work read of the selected TDD skill, RED run,
-# the fix, GREEN run, then the worker's own claim.
-W_GOOD="$TMP/w-good.jsonl"
-rec "$W_GOOD" session "$TMP/wt"
-rec "$W_GOOD" user "$BRIEF_TEXT"
-rec "$W_GOOD" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md"
-rec "$W_GOOD" tool bash 'bash tests/red.sh' 'not ok - rejects empty email
-FAIL expected'
-rec "$W_GOOD" tool edit 'src/form.py: reject empty email' 'Updated src/form.py'
-rec "$W_GOOD" tool bash 'bash tests/red.sh' 'ok - rejects empty email
-PASS all'
-rec "$W_GOOD" say "I applied $TDD throughout and saw PASS all."
-VERIFIED_LINE='read complete | applied ran `bash tests/red.sh` and saw `FAIL expected` | result `PASS all` | review UNPROVEN | usage verified'
-ev expect 'a complete pre-work read, behavior after it, and executed output locate every link a usage-verified declaration needs' pass \
-  "$(ev_block ev-good.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
-
-# READ: missing receipt. The skill is named only in the brief and the
-# worker's claim; real behavior stays reportable, attribution UNPROVEN.
-W_UNREAD="$TMP/w-unread.jsonl"
-rec "$W_UNREAD" session "$TMP/wt"
-rec "$W_UNREAD" user "$BRIEF_TEXT"
-rec "$W_UNREAD" tool bash 'bash tests/red.sh' 'not ok - rejects empty email
-FAIL expected'
-rec "$W_UNREAD" tool edit 'src/form.py: reject empty email' 'Updated src/form.py'
-rec "$W_UNREAD" tool bash 'bash tests/red.sh' 'ok - rejects empty email
-PASS all'
-rec "$W_UNREAD" say "I read $TDD/SKILL.md and applied it."
-ev expect 'no read receipt: claiming the selected skill was read is rejected' fail \
-  "$(ev_block ev-unread-claim.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_UNREAD"
-ev expect 'no read receipt: claiming verified usage is rejected even when the behavior and result are real' fail \
-  "$(ev_block ev-unread-usage.txt 'read none | applied ran `bash tests/red.sh` and saw `FAIL expected` | result `PASS all` | review UNPROVEN | usage verified')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_UNREAD"
-ev expect_shows 'no read receipt: real behavior is still shown, with its attribution UNPROVEN' 'attribution UNPROVEN' \
-  "$(ev_block ev-unread-honest.txt 'read none | applied ran `bash tests/red.sh` and saw `FAIL expected` | result `PASS all` | review UNPROVEN | usage UNPROVEN')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_UNREAD"
-
-# READ: partial receipt (a truncated read never continued).
-W_PARTIAL="$TMP/w-partial.jsonl"
-rec "$W_PARTIAL" session "$TMP/wt"
-rec "$W_PARTIAL" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md" 1 8
-rec "$W_PARTIAL" tool bash 'bash tests/red.sh' 'FAIL expected'
-rec "$W_PARTIAL" tool edit 'src/form.py: fix' 'Updated src/form.py'
-rec "$W_PARTIAL" tool bash 'bash tests/red.sh' 'PASS all'
-ev expect 'a truncated read is not reported as a complete read' fail \
-  "$(ev_block ev-partial.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_PARTIAL"
-ev expect 'a truncated read honestly reported as partial is accepted without verified usage' pass \
-  "$(ev_block ev-partial-honest.txt 'read partial | applied ran `bash tests/red.sh` and saw `FAIL expected` | result `PASS all` | review UNPROVEN | usage UNPROVEN')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_PARTIAL"
-
-# READ: explicitly read ranges aggregate into one complete receipt.
-W_RANGES="$TMP/w-ranges.jsonl"
-rec "$W_RANGES" session "$TMP/wt"
-rec "$W_RANGES" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md" 1 8
-rec "$W_RANGES" read "$SK/$TDD/SKILL.md:9-12" "$SK/$TDD/SKILL.md" 9 12
-rec "$W_RANGES" tool bash 'bash tests/red.sh' 'FAIL expected'
-rec "$W_RANGES" tool edit 'src/form.py: fix' 'Updated src/form.py'
-rec "$W_RANGES" tool bash 'bash tests/red.sh' 'PASS all'
-ev expect 'two pre-work reads that together cover the whole skill are a complete read' pass \
-  "$(ev_block ev-ranges.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_RANGES"
-
-# READ ORDER: the continuation arrives only after the first file edit.
-W_LATE="$TMP/w-late.jsonl"
-rec "$W_LATE" session "$TMP/wt"
-rec "$W_LATE" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md" 1 8
-rec "$W_LATE" tool bash 'bash tests/red.sh' 'FAIL expected'
-rec "$W_LATE" tool edit 'src/form.py: fix' 'Updated src/form.py'
-rec "$W_LATE" read "$SK/$TDD/SKILL.md:9-12" "$SK/$TDD/SKILL.md" 9 12
-rec "$W_LATE" tool bash 'bash tests/red.sh' 'PASS all'
-ev expect 'coverage completed only after substantive work started is not a complete pre-work read' fail \
-  "$(ev_block ev-late.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_LATE"
-ev expect 'a late read cannot back verified usage' fail \
-  "$(ev_block ev-late-usage.txt 'read late | applied `bash tests/red.sh` | result `PASS all` | review UNPROVEN | usage verified')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_LATE"
-ev expect 'a late read honestly reported as late is accepted' pass \
-  "$(ev_block ev-late-honest.txt 'read late | applied `bash tests/red.sh` | result `PASS all` | review UNPROVEN | usage UNPROVEN')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_LATE"
-
-# SOURCE IDENTITY: a same-named SKILL.md elsewhere, a failed read, and a
-# selected file whose bytes differ from what was shown are not receipts.
-W_ELSEWHERE="$TMP/w-elsewhere.jsonl"
-rec "$W_ELSEWHERE" session "$TMP/wt"
-rec "$W_ELSEWHERE" read "$TMP/elsewhere/$TDD/SKILL.md" "$TMP/elsewhere/$TDD/SKILL.md"
-rec "$W_ELSEWHERE" read-error "$SK/$TDD/SKILL.md"
-rec "$W_ELSEWHERE" tool bash 'bash tests/red.sh' 'FAIL expected'
-rec "$W_ELSEWHERE" tool edit 'src/form.py: fix' 'Updated src/form.py'
-rec "$W_ELSEWHERE" tool bash 'bash tests/red.sh' 'PASS all'
-ev expect 'reading a same-named SKILL.md at another path, or a failed read, is no receipt for the selected one' fail \
-  "$(ev_block ev-elsewhere.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_ELSEWHERE"
-# Same path, bytes changed after the read: the receipt no longer shows the
-# selected file's content, so the identical record stops being complete.
-H2="$TMP/evhome2"
-mkdir -p "$H2/.agents/skills/$TDD" && cp "$SK/$TDD/SKILL.md" "$H2/.agents/skills/$TDD/SKILL.md"
-W_CHANGED="$TMP/w-changed.jsonl"
-rec "$W_CHANGED" session "$TMP/wt"
-rec "$W_CHANGED" read "$H2/.agents/skills/$TDD/SKILL.md" "$H2/.agents/skills/$TDD/SKILL.md"
-rec "$W_CHANGED" tool bash 'bash tests/red.sh' 'FAIL expected'
-rec "$W_CHANGED" tool edit 'src/form.py: fix' 'Updated src/form.py'
-rec "$W_CHANGED" tool bash 'bash tests/red.sh' 'PASS all'
-CHANGED_ARGS=("$(ev_block ev-changed.txt "$VERIFIED_LINE")" omp "$OPUS" high "$H2/.agents/skills/$TDD/SKILL.md,$VBC" "$W_CHANGED")
-ev expect 'content identity control: the receipt matches the unchanged selected file' pass "${CHANGED_ARGS[@]}"
-sed -i.bak 's/Watch it fail\./Skip the failing run./' "$H2/.agents/skills/$TDD/SKILL.md"
-ev expect 'a receipt whose shown lines differ from the selected file bytes is not a complete read' fail "${CHANGED_ARGS[@]}"
-
-# A project-local selection resolves against the worker's own worktree (the
-# session cwd); the same body read from elsewhere never stands in for it.
-LOCAL=.agents/skills/local-check/SKILL.md
-W_LOCAL="$TMP/w-local.jsonl"
-rec "$W_LOCAL" session "$TMP/wt"
-rec "$W_LOCAL" read "$LOCAL" "$TMP/wt/$LOCAL"
-rec "$W_LOCAL" tool bash './check.sh' 'CHECK OK'
-LOCAL_BLOCK=$(t ev-local.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: cross-component diff
-Skills: $LOCAL - project check
-Skill evidence:
-- $LOCAL: read complete | applied ran \`./check.sh\` | result \`CHECK OK\` | review UNPROVEN | usage verified")
-ev expect 'a worktree-relative project-local skill read in the worker worktree is a complete read' pass \
-  "$LOCAL_BLOCK" omp "$OPUS" high "$LOCAL" "$W_LOCAL"
-W_LOCAL_ELSE="$TMP/w-local-else.jsonl"
-rec "$W_LOCAL_ELSE" session "$TMP/elsewhere"
-mkdir -p "$TMP/elsewhere/.agents/skills/local-check" && cp "$TMP/wt/$LOCAL" "$TMP/elsewhere/$LOCAL"
-rec "$W_LOCAL_ELSE" read "$TMP/wt/$LOCAL" "$TMP/wt/$LOCAL"
-rec "$W_LOCAL_ELSE" tool bash './check.sh' 'CHECK OK'
-ev expect 'reading the primary/other checkout copy is no receipt for the worker worktree skill' fail \
-  "$LOCAL_BLOCK" omp "$OPUS" high "$LOCAL" "$W_LOCAL_ELSE"
-
-# APPLIED / RESULT sources: mention, self-report, quoted brief or plan text
-# is not behavior; only the worker's own tool calls and their output are.
-W_QUOTED="$TMP/w-quoted.jsonl"
-rec "$W_QUOTED" session "$TMP/wt"
-rec "$W_QUOTED" user "$BRIEF_TEXT Then expect \`PASS all\`."
-rec "$W_QUOTED" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md"
-printf 'Plan: run bash tests/red.sh, see FAIL expected, then PASS all.\n' > "$TMP/plan.md"
-rec "$W_QUOTED" read "$TMP/plan.md" "$TMP/plan.md"
-rec "$W_QUOTED" tool edit 'src/form.py: fix' 'Updated src/form.py'
-rec "$W_QUOTED" say 'I ran `bash tests/red.sh`, saw FAIL expected, then PASS all.'
-ev expect 'applied evidence found only in the brief, a read plan, or the worker prose is rejected' fail \
-  "$(ev_block ev-quoted-applied.txt 'read complete | applied ran `bash tests/red.sh` and saw `FAIL expected` | result UNPROVEN | review UNPROVEN | usage UNPROVEN')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_QUOTED"
-ev expect 'a result found only in the brief, a read plan, or the worker prose is rejected' fail \
-  "$(ev_block ev-quoted-result.txt 'read complete | applied `src/form.py: fix` | result `PASS all` | review UNPROVEN | usage UNPROVEN')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_QUOTED"
-
-# APPLIED ORDER: behavior before the receipt is shown but is not attributable.
-W_BEFORE="$TMP/w-before.jsonl"
-rec "$W_BEFORE" session "$TMP/wt"
-rec "$W_BEFORE" tool bash 'bash tests/red.sh' 'FAIL expected'
-rec "$W_BEFORE" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md"
-rec "$W_BEFORE" tool edit 'src/form.py: fix' 'Updated src/form.py'
-rec "$W_BEFORE" bg 'bash tests/all.sh'
-rec "$W_BEFORE" job 'ok - rejects empty email
-PASS all'
-ev expect 'verified usage whose only applied evidence predates the read receipt is rejected' fail \
-  "$(ev_block ev-before.txt 'read complete | applied ran `bash tests/red.sh` and saw `FAIL expected` | result `PASS all` | review UNPROVEN | usage verified')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_BEFORE"
-ev expect 'post-receipt behavior and a job launched after the read locate every link a usage-verified declaration needs' pass \
-  "$(ev_block ev-before-ok.txt 'read complete | applied `src/form.py: fix` | result `PASS all` | review UNPROVEN | usage verified')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_BEFORE"
-# A background job runs from its launch, not its delivery: launched before
-# the read and delivered after it, its output cannot follow the read.
-W_EARLYJOB="$TMP/w-earlyjob.jsonl"
-rec "$W_EARLYJOB" session "$TMP/wt"
-rec "$W_EARLYJOB" bg 'bash tests/red.sh'
-rec "$W_EARLYJOB" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md"
-rec "$W_EARLYJOB" tool edit 'src/form.py: fix' 'Updated src/form.py'
-rec "$W_EARLYJOB" job 'ok - rejects empty email
-PASS all'
-ev expect 'a background result launched before the read, delivered after it, cannot back verified usage' fail \
-  "$(ev_block ev-earlyjob.txt 'read complete | applied `src/form.py: fix` | result `PASS all` | review UNPROVEN | usage verified')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_EARLYJOB"
-# The edit/write boundary does not see bash writes: a complete read that
-# finishes after bash calls says how many preceded it.
-W_BASHFIRST="$TMP/w-bashfirst.jsonl"
-rec "$W_BASHFIRST" session "$TMP/wt"
-rec "$W_BASHFIRST" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md" 1 4
-rec "$W_BASHFIRST" tool bash "cat > src/form.py <<'EOF'" '(no output)'
-rec "$W_BASHFIRST" tool bash "sed -i '' s/bool/len/ src/form.py" '(no output)'
-rec "$W_BASHFIRST" read "$SK/$TDD/SKILL.md:5-12" "$SK/$TDD/SKILL.md" 5 12
-ev expect_shows 'bash calls before the completing read are disclosed, not hidden behind "complete"' '2 bash/eval call(s) precede the completing read' \
-  "$(ev_block ev-bashfirst.txt 'read complete | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_BASHFIRST"
-
-# USAGE: located links are never the checker's verdict. A complete read
-# followed only by an echoed plan locates both excerpts; semantics stay
-# unproven by the checker (independent review, 2026-10-05, S1).
-expect_usage() { # <label> <skill> <want SUMMARY USAGE field> <trace-check args...> - and no PASS on usage
-  local label=$1 skill=$2 want=$3 out got
-  shift 3
-  out=$(trace_check "$@" 2>&1)
-  got=$(printf '%s\n' "$out" | sed -n "s/^SUMMARY - $skill: .* | USAGE //p")
-  if [ "$got" != "$want" ]; then
-    fail "$label (USAGE '$got', want '$want')"
-  elif printf '%s\n' "$out" | grep -q "^PASS - $skill: usage"; then
-    fail "$label (a PASS line asserts usage)"
-  else
-    pass "$label"
-  fi
-}
-W_PLAN="$TMP/w-plan.jsonl"
-rec "$W_PLAN" session "$TMP/wt"
-rec "$W_PLAN" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md"
-rec "$W_PLAN" tool bash 'cat plan.md' 'Plan: run bash tests/red.sh, watch it fail, fix, then expect PASS all.'
-ev expect_usage 'an echoed plan with every link located is never reported as verified usage' "$TDD" 'links located, semantics UNPROVEN by checker' \
-  "$(ev_block ev-plan.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_PLAN"
-
-# A synchronous result runs from its call: a command issued in the same
-# message as the read was chosen before the skill was shown, even when its
-# output is recorded after the read result (real shape, re-review V2-I1).
-W_PARALLEL="$TMP/w-parallel.jsonl"
-rec "$W_PARALLEL" session "$TMP/wt"
-rec "$W_PARALLEL" parallel "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md" 'bash tests/all.sh' 'ok - all
-PASS all'
-rec "$W_PARALLEL" tool edit 'src/form.py: fix' 'Updated src/form.py'
-ev expect 'output of a command issued alongside the read is not ordered after the read' fail \
-  "$(ev_block ev-parallel.txt 'read complete | applied `src/form.py: fix` | result `PASS all` | review UNPROVEN | usage verified')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_PARALLEL"
-
-# VERIFIED: an observed result and an independent review stay separate.
-ev expect 'verified usage without an observed result is rejected' fail \
-  "$(ev_block ev-noresult.txt 'read complete | applied `bash tests/red.sh` | result UNPROVEN | review UNPROVEN | usage verified')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
-# A result is output the worker observed, not text it wrote: the expected
-# line inside the test it edited is no outcome (real readiness record:
-# the GREEN test name first appears in the edit that added the test).
-W_WROTE="$TMP/w-wrote.jsonl"
-rec "$W_WROTE" session "$TMP/wt"
-rec "$W_WROTE" read "$SK/$TDD/SKILL.md" "$SK/$TDD/SKILL.md"
-rec "$W_WROTE" tool edit "tests/red.sh: echo 'PASS all'" "[tests/red.sh#ABCD]
-4:echo 'PASS all'"
-rec "$W_WROTE" tool bash 'bash tests/red.sh' 'FAIL expected'
-ev expect 'a result found only in text the worker wrote, never in observed output, is rejected' fail \
-  "$(ev_block ev-wrote.txt 'read complete | applied `bash tests/red.sh` | result `PASS all` | review UNPROVEN | usage verified')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_WROTE"
-ev expect 'a cited result the worker never observed is rejected' fail \
-  "$(ev_block ev-falseresult.txt 'read complete | applied `bash tests/red.sh` | result `ALL 40 TESTS PASS` | review UNPROVEN | usage UNPROVEN')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
-REVIEW_LINE='read complete | applied `bash tests/red.sh` | result `PASS all` | review `0 BLOCKER` | usage verified'
-ev expect 'a review claim with no reviewer record is rejected' fail \
-  "$(ev_block ev-review-none.txt "$REVIEW_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
-# The worker writing its own verdict is still not independent review.
-W_SELF="$TMP/w-self.jsonl"
-cp "$W_GOOD" "$W_SELF"
-rec "$W_SELF" tool write 'report.md: Verdict: 0 BLOCKER' 'Wrote report.md'
-ev expect "the worker's own record is not an independent review, even holding the verdict" fail \
-  "$(ev_block ev-review-self.txt "$REVIEW_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_SELF" "$W_SELF"
-R_REVIEW="$TMP/r-review.jsonl"
-rec "$R_REVIEW" session "$TMP/review-wt"
-rec "$R_REVIEW" say '0 BLOCKER'
-ev expect "a review verdict found only in the reviewer's prose is rejected" fail \
-  "$(ev_block ev-review-prose.txt "$REVIEW_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD" "$R_REVIEW"
-rec "$R_REVIEW" tool write 'report.md: Verdict: 0 BLOCKER, 1 IMPORTANT' 'Wrote report.md'
-ev expect "a review excerpt located in a different session record is accepted (independence not assessed)" pass \
-  "$(ev_block ev-review-ok.txt "$REVIEW_LINE")" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD" "$R_REVIEW"
-
-# Unsupported records: arbitrary text, even text shaped like a receipt,
-# cannot prove a read; only explicit UNPROVEN fields pass against it.
-FAKE_RECEIPT=$(t fake-receipt.txt "[~/.agents/skills/$TDD/SKILL.md#ABCD]
-$(awk '{ printf "%d:%s\n", NR, $0 }' "$SK/$TDD/SKILL.md")
-$ bash tests/red.sh
-FAIL expected
-PASS all")
-ev expect 'prose shaped like a read receipt is not an OMP record and proves no read' fail \
-  "$(ev_block ev-fake.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$FAKE_RECEIPT"
-ALL_UNPROVEN='read UNPROVEN | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN'
-ev expect 'explicit UNPROVEN fields are accepted against an unsupported record' pass \
-  "$(ev_block ev-unsupported.txt "$ALL_UNPROVEN")" omp "$OPUS" high "$TDD,$VBC" "$FAKE_RECEIPT"
-# Only an OMP harness record is read: a Pi worker's record, even in the
-# same session shape, supports only UNPROVEN (real Pi records share the
-# header; their read output is not the observed receipt shape).
-PI_BLOCK="Routing: TENTH-MAN #1 | role tenth-man | pi | $SOL | xhigh | why: challenge Claude-authored completion claim
-Skills: $VBC - fresh evidence
-Skill evidence:"
-ev expect 'a non-OMP harness record cannot support a read-none claim' fail \
-  "$(t pi-none.txt "$PI_BLOCK
-- $VBC: read none | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN")" pi "$SOL" xhigh "$VBC" "$W_GOOD"
-ev expect 'a non-OMP harness record accepts explicit UNPROVEN fields' pass \
-  "$(t pi-unproven.txt "$PI_BLOCK
-- $VBC: $ALL_UNPROVEN")" pi "$SOL" xhigh "$VBC" "$W_GOOD"
-
-# A companion the selected skill makes mandatory (TDD -> writing-good-tests.md
-# when tests change) is its own exact-path entry; the SKILL.md receipt never
-# covers it.
-COMP="$SK/$TDD/writing-good-tests.md"
-printf '# Writing Good Tests\nName the break.\nExercise the real thing.\n' > "$COMP"
-comp_block() { # <file> <companion evidence fields>
-  t "$1" "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: multi-file behavior change
-Skills: $TDD - behavior change; $COMP - required companion
-Skill evidence:
-- $TDD: $ALL_UNPROVEN
-- $COMP: $2"
-}
-ev expect 'a required companion never read is not covered by the SKILL.md read' fail \
-  "$(comp_block comp-unread.txt 'read complete | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN')" \
-  omp "$OPUS" high "$TDD,$COMP" "$W_GOOD"
-W_COMP="$TMP/w-comp.jsonl"
-cp "$W_GOOD" "$W_COMP"
-rec "$W_COMP" read "$COMP" "$COMP"
-ev expect 'a required companion read after the first edit is reported late for its own entry' pass \
-  "$(comp_block comp-read.txt 'read late | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN')" \
-  omp "$OPUS" high "$TDD,$COMP" "$W_COMP"
-# Companion path forms (re-review V2-I2): a `~/` path names the same shared
-# file the worker read; a path that resolves to no readable file is
-# unreadable, never an honest "read none".
-W_COMPFIRST="$TMP/w-compfirst.jsonl"
-rec "$W_COMPFIRST" session "$TMP/wt"
-rec "$W_COMPFIRST" read "$COMP" "$COMP"
-form_block() { # <file> <companion form> <read claim>
-  t "$1" "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: multi-file behavior change
-Skills: $2 - required companion
-Skill evidence:
-- $2: read $3 | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN"
-}
-# shellcheck disable=SC2088  # the literal ~/ form is the input under test
-TILDE="~/.agents/skills/$TDD/writing-good-tests.md"
-ev expect 'a ~/ companion path names the shared file the worker read in full' pass \
-  "$(form_block form-tilde.txt "$TILDE" complete)" omp "$OPUS" high "$TILDE" "$W_COMPFIRST"
-ev expect 'a companion path resolving to no readable file cannot support a read-none claim' fail \
-  "$(form_block form-relative.txt "$TDD/writing-good-tests.md" none)" omp "$OPUS" high "$TDD/writing-good-tests.md" "$W_COMPFIRST"
-# OMP-shaped lines sliced out of a record, without its session header
-# (worker identity and worktree), are not a retained record either.
-grep -v '"type": "session"' "$W_GOOD" > "$TMP/w-headless.jsonl"
-ev expect_rejects 'record lines without their session header prove no read' 'needs a retained OMP session record' \
-  "$(ev_block ev-headless.txt "$VERIFIED_LINE")" omp "$OPUS" high "$TDD,$VBC" "$TMP/w-headless.jsonl"
-
-# Block structure: one line per selected skill, nothing for unselected ones.
-ev expect 'evidence for a skill the brief never selected is rejected' fail \
-  "$(t ev-unsel.txt "$(cat "$(ev_block ev-unsel-base.txt "$ALL_UNPROVEN")")
-- systematic-debugging: $ALL_UNPROVEN")" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
-ev expect 'a selected skill with no evidence line at all is rejected' fail \
-  "$(t ev-gap.txt "$(cat "$IMPL")
-Skill evidence:
-- $TDD: $ALL_UNPROVEN")" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
-ev expect 'two evidence lines for one skill are rejected (a later line must not mask an earlier false one)' fail \
-  "$(t ev-dup.txt "$(cat "$(ev_block ev-dup-base.txt "$VERIFIED_LINE")")
-- $TDD: $ALL_UNPROVEN")" omp "$OPUS" high "$TDD,$VBC" "$W_UNREAD"
-ev expect 'a transcript supplied without any Skill evidence block is rejected' fail "$IMPL" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
-ev expect 'an evidence line without separate read/applied/result/review/usage fields is rejected' fail \
-  "$(ev_block ev-bare.txt 'applied test-driven development throughout')" omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
-ev expect 'more than two applied excerpts for one skill are rejected' fail \
-  "$(ev_block ev-long.txt 'read complete | applied `bash tests/red.sh`, `FAIL expected` and `PASS all` | result `PASS all` | review UNPROVEN | usage UNPROVEN')" \
-  omp "$OPUS" high "$TDD,$VBC" "$W_GOOD"
-LIVE_NONE=$(t live-none.txt "Routing: EXPLORE #1 | role senior-fullstack | omp | openai-codex/gpt-6-luna | low | why: measured viable capacity
-Skills: none
-Skill evidence: none selected.")
-expect '"Skill evidence: none selected." after "Skills: none" is accepted' pass \
-  "$LIVE_NONE" omp openai-codex/gpt-6-luna low none "$W_GOOD"
-expect 'inline "none selected" while a skill was selected is rejected' fail \
-  "$(t live-none-sel.txt "$(sed "s/^Skills: none\$/Skills: $VBC - fresh output/" "$LIVE_NONE")")" \
-  omp openai-codex/gpt-6-luna low "$VBC" "$W_GOOD"
-
-# Excerpt quoting: a nested excerpt is located whole, never as a prefix
-# that a different exit code would also match; ambiguous quoting fails.
-W_EXIT="$TMP/w-exit.jsonl"
-rec "$W_EXIT" session "$TMP/wt"
-rec "$W_EXIT" read "$SK/$VBC/SKILL.md" "$SK/$VBC/SKILL.md"
-rec "$W_EXIT" tool bash 'bash tests/all.sh' 'Exit code: `10`'
-VBC_ONLY="Routing: EXPLORE #1 | role senior-fullstack | omp | openai-codex/gpt-6-luna | low | why: bounded
-Skills: $VBC - fresh verification
-Skill evidence:"
-ev expect 'a nested excerpt followed by a comma is not matched by its prefix in a different exit code' fail \
-  "$(t nested.txt "$VBC_ONLY
-- \`$VBC\`: read complete | applied ran \`bash tests/all.sh\` | result saw \`Exit code: \`1\`, final\` | review UNPROVEN | usage UNPROVEN")" \
-  omp openai-codex/gpt-6-luna low "$VBC" "$W_EXIT"
-ev expect 'unbalanced backtick quoting is rejected as ambiguous, never guessed' fail \
-  "$(t ambiguous.txt "$VBC_ONLY
-- \`$VBC\`: read complete | applied \`\`\`bash tests/all.sh\` | result UNPROVEN | review UNPROVEN | usage UNPROVEN")" \
-  omp openai-codex/gpt-6-luna low "$VBC" "$W_EXIT"
-ev expect 'a backticked skill name with a located nested excerpt is accepted' pass \
-  "$(t nested-ok.txt "$VBC_ONLY
-- \`$VBC\`: read complete | applied ran \`bash tests/all.sh\` | result saw \`Exit code: \`10\`\` | review UNPROVEN | usage verified")" \
-  omp openai-codex/gpt-6-luna low "$VBC" "$W_EXIT"
-
 # --- Role/workflow agreement is diagnostic, never a selector or adoption proof.
 # These inputs are captured assignments, not expected answers to task intents.
 # Catch: a trace may currently contradict the brief or invent native adoption.
@@ -1306,52 +412,18 @@ expect_rejects 'two Agent lines cannot hide conflicting assignments' 'exactly on
 Agent: worker other | role senior-fullstack | path $ROLE_PATH | native UNPROVEN | why: conflicting assignment")" \
   omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
 
-# Native-shaped receipts exercise the existing coverage/excerpt logic. They
-# prove checker behavior only, not a real model's selection or application.
-W_ASSIGN="$TMP/w-assignment.jsonl"
-rec "$W_ASSIGN" session "$TMP/wt"
-rec "$W_ASSIGN" user "$(cat "$ASSIGN_BRIEF")"
-rec "$W_ASSIGN" read "$ROLE_PATH" "$ROLE_PATH"
-rec "$W_ASSIGN" read "$WORKFLOW_PATH" "$WORKFLOW_PATH"
-rec "$W_ASSIGN" tool bash './fixture-check.sh' 'fixture acceptance passed'
-selection_block() {
-  t "$1" "$(cat "$ASSIGNED")
-Skill evidence: none selected
-Selection evidence: role read $2 | workflow read $3 | stage $4 | result $5 | usage $6"
-}
-expect_shows 'role and workflow receipt links do not certify semantic usage' 'semantics UNPROVEN by checker' \
-  "$(selection_block assign-links.txt complete complete '`./fixture-check.sh`' '`fixture acceptance passed`' verified)" \
-  omp "$OPUS" high none "$W_ASSIGN" --brief "$ASSIGN_BRIEF"
-expect_rejects 'a worker self-report cannot replace a role read receipt' 'role read complete matches record' \
-  "$(selection_block assign-no-read.txt complete none UNPROVEN UNPROVEN UNPROVEN)" \
-  omp "$OPUS" high none "$W_UNREAD" --brief "$ASSIGN_BRIEF"
-expect_rejects 'a recipe name is not an observed stage action' 'stage `I used focused-delivery` occurs' \
-  "$(selection_block assign-self-report.txt complete complete '`I used focused-delivery`' UNPROVEN UNPROVEN)" \
-  omp "$OPUS" high none "$W_ASSIGN" --brief "$ASSIGN_BRIEF"
-expect_rejects 'an unobserved outcome cannot support role/workflow usage' 'result `all features verified` occurs' \
-  "$(selection_block assign-false-result.txt complete complete '`./fixture-check.sh`' '`all features verified`' verified)" \
-  omp "$OPUS" high none "$W_ASSIGN" --brief "$ASSIGN_BRIEF"
-expect_rejects 'a verified usage claim requires both reads and executed outcome' 'selection usage verified lacks' \
-  "$(selection_block assign-false-usage.txt UNPROVEN UNPROVEN UNPROVEN UNPROVEN verified)" \
-  omp "$OPUS" high none "$W_UNREAD" --brief "$ASSIGN_BRIEF"
-expect_rejects 'unsupported records support only unknown selection reads' 'role read complete needs' \
-  "$(selection_block assign-unsupported.txt complete complete UNPROVEN UNPROVEN UNPROVEN)" \
-  omp "$OPUS" high none "$FAKE_RECEIPT" --brief "$ASSIGN_BRIEF"
-expect_shows 'honest unsupported role/workflow evidence remains unknown' 'READ role UNPROVEN, workflow UNPROVEN' \
-  "$(selection_block assign-unknown.txt UNPROVEN UNPROVEN UNPROVEN UNPROVEN UNPROVEN)" \
-  omp "$OPUS" high none "$FAKE_RECEIPT" --brief "$ASSIGN_BRIEF"
-expect_rejects 'positive selection evidence without any worker record is not accepted' 'role read complete needs' \
-  "$(selection_block assign-no-record.txt complete complete UNPROVEN UNPROVEN UNPROVEN)" \
-  omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
-W_ASSIGN_LATE="$TMP/w-assignment-late.jsonl"
-rec "$W_ASSIGN_LATE" session "$TMP/wt"
-rec "$W_ASSIGN_LATE" read "$ROLE_PATH" "$ROLE_PATH"
-rec "$W_ASSIGN_LATE" tool edit 'fixture source change' 'fixture changed'
-rec "$W_ASSIGN_LATE" read "$WORKFLOW_PATH" "$WORKFLOW_PATH"
-rec "$W_ASSIGN_LATE" tool bash './fixture-check.sh' 'fixture acceptance passed'
-expect_rejects 'a late workflow read cannot certify usage despite complete role read and output' 'selection usage verified lacks' \
-  "$(selection_block assign-late.txt complete late '`./fixture-check.sh`' '`fixture acceptance passed`' verified)" \
-  omp "$OPUS" high none "$W_ASSIGN_LATE" --brief "$ASSIGN_BRIEF"
+# Session arguments no longer belong to this compact assignment diagnostic.
+# Catch an old invocation reaching post-work reporting instead of a usage error.
+for obsolete in worker-session review-session; do
+  session_args=("$TMP/unused-worker.jsonl")
+  [ "$obsolete" != review-session ] || session_args+=("$TMP/unused-review.jsonl")
+  out=$(trace_check "$ASSIGNED" omp "$OPUS" high none "${session_args[@]}" --brief "$ASSIGN_BRIEF" 2>&1); rc=$?
+  if [ "$rc" -eq 2 ]; then
+    pass "obsolete $obsolete argument is rejected as CLI misuse"
+  else
+    fail "obsolete $obsolete argument reached reporting (exit $rc, want 2): $out"
+  fi
+done
 
 # --- 4. Real dispatch/brief/spawn seam --------------------------------------
 # The real, unmodified official bin/fm-spawn.sh launches one task on an
@@ -1359,7 +431,7 @@ expect_rejects 'a late workflow read cannot certify usage despite complete role 
 # worktree of a disposable project - the same seam tests/multi-project-
 # captain.sh uses. Only the omp executable is faked: it records the argv it
 # was really launched with and, when the delivered brief names the fixture
-# project skill, runs that skill's ./check.sh into its own transcript. This
+# project skill, runs that skill's ./check.sh into a result file. This
 # script plays the Captain: it takes the substantive-IMPLEMENT route from
 # crew-dispatch.json (the category choice itself is still the Captain's
 # judgment and is NOT proven here), reads selected skills from the brief
@@ -1405,21 +477,15 @@ if [ "${1:-}" = models ]; then
   exit 0
 fi
 printf '%s\n' "$@" > worker-argv.txt
-# A launched worker leaves its session record in the retained OMP shape:
-# with the canary skill in its brief, it reads that skill in its own
-# worktree and runs the skill's ./check.sh.
-rm -f worker-session.tmp
-omp-record worker-session.tmp session "$PWD"
+# With the canary skill in its brief, run the fixture check in the worktree.
+: > worker-result.tmp
 case "$*" in
   *.agents/skills/trace-canary/SKILL.md*)
-    omp-record worker-session.tmp read .agents/skills/trace-canary/SKILL.md .agents/skills/trace-canary/SKILL.md
-    omp-record worker-session.tmp tool bash ./check.sh "$(./check.sh)" ;;
+    ./check.sh > worker-result.tmp ;;
 esac
-mv worker-session.tmp worker-session.jsonl
+mv worker-result.tmp worker-result.txt
 SH
   chmod +x "$TMP/bin/omp"
-  printf '#!/bin/sh\nexec python3 %s "$@"\n' "$TMP/omp-record.py" > "$TMP/bin/omp-record"
-  chmod +x "$TMP/bin/omp-record"
 
   BRIEF="$seam_home/data/$SEAM_ID/brief.md"
   cat > "$BRIEF" <<'EOF'
@@ -1455,7 +521,7 @@ Skills: .agents/skills/trace-canary/SKILL.md - project check before done; verifi
     meta=$(cat "$seam_home/state/$SEAM_ID.meta" 2>/dev/null)
     wt=$(field "$meta" worktree)
     waited=0
-    while [ ! -f "$wt/worker-session.jsonl" ] && [ "$waited" -lt 100 ]; do sleep 0.1; waited=$((waited + 1)); done
+    while [ ! -f "$wt/worker-result.txt" ] && [ "$waited" -lt 100 ]; do sleep 0.1; waited=$((waited + 1)); done
     argv=$(cat "$wt/worker-argv.txt" 2>/dev/null)
     launched_model=$(printf '%s\n' "$argv" | sed -n '/^--model$/{n;p;}')
     launched_effort=$(printf '%s\n' "$argv" | sed -n '/^--thinking$/{n;p;}')
@@ -1469,18 +535,11 @@ Skills: .agents/skills/trace-canary/SKILL.md - project check before done; verifi
     expect 'seam: a trace printing xhigh for a task really launched at high is rejected' fail \
       "$(t seam-wrong.txt "$(sed 's/| high |/| xhigh |/' "$CAPTAIN_TRACE")")" omp "$launched_model" "$launched_effort" "$selected"
 
-    SEAM_EVIDENCE=$(t seam-ev.txt "$(cat "$CAPTAIN_TRACE")
-Skill evidence:
-- .agents/skills/trace-canary/SKILL.md: read complete | applied worker ran \`./check.sh\` | result saw \`CHECK OK\` | review UNPROVEN | usage verified
-- verification-before-completion: read none | applied UNPROVEN | result UNPROVEN | review UNPROVEN | usage UNPROVEN")
-    expect 'seam: post-work evidence matches the launched worker record (receipt, behavior, result)' pass \
-      "$SEAM_EVIDENCE" omp "$launched_model" "$launched_effort" "$selected" "$wt/worker-session.jsonl"
-    SEAM_FALSE=$(t seam-false.txt "$(cat "$CAPTAIN_TRACE")
-Skill evidence:
-- .agents/skills/trace-canary/SKILL.md: read complete | applied worker ran \`./check.sh\` | result saw \`CHECK OK\` | review UNPROVEN | usage verified
-- verification-before-completion: read complete | applied worker re-ran \`bash tests/all.sh\` | result UNPROVEN | review UNPROVEN | usage UNPROVEN")
-    expect 'seam: evidence claiming a read and a verification run the worker never made is rejected' fail \
-      "$SEAM_FALSE" omp "$launched_model" "$launched_effort" "$selected" "$wt/worker-session.jsonl"
+    if [ "$(cat "$wt/worker-result.txt" 2>/dev/null)" = 'CHECK OK' ]; then
+      pass 'seam: the delivered project skill triggers the fixture check'
+    else
+      fail 'seam: the delivered project skill did not produce CHECK OK'
+    fi
   fi
 fi
 
