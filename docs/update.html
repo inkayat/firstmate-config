@@ -96,26 +96,45 @@ fm doctor</code></pre>
 </tbody>
 </table>
 
-<h2 id="migration">Omarchy / existing-install migration</h2>
-<p>Commands below are an operator procedure, not something this task ran. Linux/Omarchy execution is unverified. Keep active sessions untouched during preparation. First inspect <code>git status --short</code>, branches, remotes and unfinished operations in both persistent checkouts; retain all local changes and commits. Stop on conflicts rather than using reset, force, stash automation or branch deletion.</p>
-<p>Fetch the published config revision on <code>origin/main</code> and fast-forward the persistent config checkout only after inspecting its diff. The manifest pins core <code>e73653772c7bf7329e58d6425ad74752b5b2b8bf</code>, carrying the generic skill preparation fix. Publication must exist before migration.</p>
-<pre data-label="operator shell; FIRSTMATE_ROOT already resolved"><code>git -C "$FIRSTMATE_ROOT" remote -v
-# Only when origin is exactly the old official URL and upstream is absent:
-git -C "$FIRSTMATE_ROOT" remote rename origin upstream
-git -C "$FIRSTMATE_ROOT" remote add origin https://github.com/inkayat/firstmate.git
-# For any other layout, preserve each remote and resolve conflicts manually.
-git -C "$FIRSTMATE_ROOT" fetch origin refs/heads/inkayat-main:refs/remotes/origin/inkayat-main
-git -C "$FIRSTMATE_ROOT" merge-base --is-ancestor e73653772c7bf7329e58d6425ad74752b5b2b8bf origin/inkayat-main
-# If the local branch does not exist (otherwise inspect it; never overwrite):
-git -C "$FIRSTMATE_ROOT" switch --create inkayat-main --track origin/inkayat-main
-git -C "$FIRSTMATE_ROOT" remote set-head origin inkayat-main
-# From the persistent config checkout, not a task worktree:
-./install.sh
-./install.sh --verify
+<h2 id="migration">One-time updater transition / Omarchy</h2>
+<p><strong>Preparation candidate, not yet published.</strong> Replace <code>APPROVED_FULL_CONFIG_COMMIT</code> below only with the separately reviewed and published full config commit containing this bootstrap support. The older <code>d7e3fc7</code> does not contain this follow-up; do not substitute a moving <code>main</code> script URL. Linux/Omarchy execution is unverified; no machine transition or session restart was performed during preparation.</p>
+<p>The old installed updater validates official origin <em>before</em> fetching config. On the known fork-origin/local-main layout it therefore cannot download its own replacement. A clean official-origin installation can fetch new config, but that success alone does not switch the core source. Use this one-time command for either layout; after it completes, ordinary <code>fm update</code> is sufficient.</p>
+<p>Trust boundary: this obtains code only from the verified owned repository <code>https://github.com/inkayat/firstmate-config.git</code>, checks a full approved revision is on its <code>origin/main</code>, checks out that exact revision, and pauses for inspection before execution. A commit hash verifies identity, not trust: obtain the approved hash through the reviewed publication handoff. No curl-pipe-shell, downloaded instructions evaluated as shell, sudo, daemon or new dependency. The temporary checkout is retained for inspection, never installed or linked.</p>
+<pre data-label="one-time bootstrap command"><code>bash -eu -c '
+revision=$1
+config=$2
+[[ $revision =~ ^[0-9a-f]{40}$ ]] || { echo "Supply the approved full config commit, not a placeholder or branch" &gt;&amp;2; exit 1; }
+repo=https://github.com/inkayat/firstmate-config.git
+stage=$(mktemp -d "${TMPDIR:-/tmp}/fm-bootstrap.XXXXXX")
+printf "Inspectable bootstrap source retained at %s\n" "$stage"
+git -C "$stage" init -q
+git -C "$stage" remote add origin "$repo"
+[ "$(git -C "$stage" remote get-url origin)" = "$repo" ] || { echo "Refusing rewritten source URL" &gt;&amp;2; exit 1; }
+git -C "$stage" fetch --quiet --no-tags origin refs/heads/main:refs/remotes/origin/main
+git -C "$stage" cat-file -e "$revision^{commit}"
+git -C "$stage" merge-base --is-ancestor "$revision" origin/main
+git -C "$stage" checkout --quiet --detach "$revision"
+git -C "$stage" --no-pager log -1 --format=fuller
+printf "Inspect %s (updater, migration helper, manifest and installer); then type the full approved commit to execute: " "$stage"
+read -r approval
+[ "$approval" = "$revision" ] || { echo "Not approved; no installed checkout changed" &gt;&amp;2; exit 1; }
+bash "$stage/bin/fm-update" --bootstrap "$config"
+' bootstrap APPROVED_FULL_CONFIG_COMMIT /absolute/path/to/persistent/firstmate-config</code></pre>
+<p>The command resolves <code>FIRSTMATE_ROOT</code> through the existing machine env file, as normal update does. Check that file first; for nondefault installations provide the correct existing <code>FM_CONFIG_ENV</code>. The final argument must be the persistent installed config Git root, not the temporary checkout. Existing authenticated toolchain and network access are prerequisites; <code>git</code>, <code>pi</code>, <code>omp</code>, and <code>herdr</code> must already be on PATH. No runtime is launched. If the new updater is already installed, <code>fm update --migrate</code> is the same opt-in legacy adoption path without downloading a bootstrap checkout.</p>
+<h3>Accepted layouts and refusals</h3>
+<p>Both persistent checkouts and the bootstrap source must be clean physical Git roots with no unfinished operation. Migration also refuses ignored untracked content conservatively: preserve it outside the checkout yourself before retrying. Config must be on <code>main</code>, track the exact owned <code>origin/main</code>, and fast-forward to the inspected bootstrap revision; a newer config needs a reviewed newer bootstrap, never a downgrade. The fork branch must contain the manifest pin <code>e73653772c7bf7329e58d6425ad74752b5b2b8bf</code>.</p>
+<ul>
+<li>Clean official-origin <code>main</code>: retain official as <code>upstream</code>, add/select fork origin, preserve the old main tip, create or safely fast-forward <code>inkayat-main</code>.</li>
+<li>Known fork-origin local <code>main</code>: preserve its tip and other remotes, retain/add exact official upstream, switch to the safe fork branch. The generic skill-preparation fix must already be published there; no local-only work is adopted.</li>
+<li>Already migrated fork/branch/tracking: safe repeat; still reconcile and verify.</li>
+<li>Dirty/untracked/ignored content, local-only/diverged work, unknown origins, conflicting upstream or target branch/tracking, rewritten URLs, explicit custom push URLs, detached or unexpected branches, missing tools and unfinished operations: refuse before changing either working tree or remote settings. Fetches may already have moved tracking refs/FETCH_HEAD; never fetch or merge official automatically.</li>
+</ul>
+<p>All existing branches and unrelated remote connections are retained. No force/reset/stash/discard/history rewrite. Migration sets local <code>origin/HEAD=origin/inkayat-main</code>, not GitHub’s default <code>main</code>. It fast-forwards config to the inspected revision, then uses the existing installer/reconciliation/verification owner, including conservative workflow-link retirement and preservation of user-owned ordinary files, roles, bots and both skill paths. Fresh installs remain pinned clones; ordinary <code>install.sh</code> still never migrates an existing source.</p>
+<p><strong>Not atomic:</strong> interruption or a later config/install failure reports <code>PARTIAL MIGRATION</code>, completed progress and both HEADs; no rollback or success is claimed. Inspect both repositories, resolve the stated failure and repeat the same command. Official-origin adoption adds/verifies <code>upstream</code> before changing the existing origin URL; it never removes origin. Existing official branch connections and missing cached tracking refs are preserved under upstream without overwriting existing upstream refs, while the selected distribution branch retains origin tracking. Each intermediate remote-adoption layout is already retryable; unrelated missing/custom origins still refuse. Keep source checkouts quiescent during adoption. Running Captains are never restarted or notified; already loaded policy remains unchanged. Fresh installations use the normal installer directly, with no bootstrap step.</p>
+<pre data-label="after successful transition"><code>fm update --check   # source/branch/local guards; not migration proof by itself
 fm version
-fm update --check
-fm doctor</code></pre>
-<p>For a fresh machine, the installer clones the selected fork branch, verifies the pin is on it, starts at the exact pin on that tracked branch, sets local <code>origin/HEAD</code>, and adds official as <code>upstream</code>. Existing checkouts are never switched by install. Running source and loaded sessions do not change merely because these commits were published; adopt only under the operator's chosen maintenance window.</p>
+fm doctor
+fm update           # subsequent maintenance: fork inkayat-main + config, reconcile, verify</code></pre>
 
 <h2 id="official-integration">Official updates: explicit human integration</h2>
 <p>In a separate clean integration checkout, keep <code>origin=https://github.com/inkayat/firstmate.git</code> and <code>upstream=https://github.com/kunchenguid/firstmate.git</code>. Fetch <code>origin/inkayat-main</code> and <code>upstream/main</code>, create a new integration branch from the fork branch, then explicitly merge <code>upstream/main</code>. Resolve conflicts while retaining the generic preparation fix; run relevant tests, inspect the complete diff, and publish the approved fast-forward to <code>origin/inkayat-main</code> only. Never push to official. Move the manifest pin only after that exact commit has been validated. Normal machine updates consume that fork branch; they never perform this integration.</p>

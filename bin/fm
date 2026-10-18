@@ -13,8 +13,8 @@
 #
 # It resolves:
 #
-#   FIRSTMATE_ROOT  the official checkout, never modified except by the
-#                   fast-forward-only first stage of fm update. From
+#   FIRSTMATE_ROOT  the distribution checkout, modified only by fm update's
+#                   fast-forward stage or explicit safe legacy migration. From
 #                   ~/.config/firstmate-config/env, else the environment,
 #                   else ~/Developer/tools/firstmate.
 #   FM_HOME         the machine-local operational home holding state/, data/,
@@ -80,6 +80,10 @@
 #                         PARTIAL UPDATE. A running Captain keeps its old
 #                         instructions until restarted (end it, run fm again)
 #   fm update --check     check local guards/source/branch; no fetch/update/install
+#   fm update --migrate   opt-in recognized clean legacy source adoption, then update
+#   fm update --bootstrap <config-root>
+#                         reviewed external revision bootstraps the old installed
+#                         updater; see docs/update.html before use
 #   fm board             open the persistent Kanban board (bin/fm-board's
 #                         own --help documents the full add/update/move/list/
 #                         show/summary/render/open CLI); fm board --lavish

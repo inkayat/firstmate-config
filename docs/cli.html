@@ -103,8 +103,9 @@ Platform: Darwin arm64</code></pre>
 <p>The versions shown are examples. <code>--json</code> returns the same facts as one object with <code>firstmate_config</code>, <code>firstmate</code>, <code>distribution</code> (repo, branch and official upstream), <code>components</code>, <code>captain_harness</code>, <code>stack_manifest</code>, <code>fm_home</code>, <code>platform</code>, and <code>architecture</code>. Version strings read <code>unknown</code> when a tool is missing.</p>
 
 <h2 id="update">fm update</h2>
-<pre data-label="usage"><code>fm update [--check]</code></pre>
+<pre data-label="usage"><code>fm update [--check|--migrate|--bootstrap &lt;persistent-config-root&gt;]</code></pre>
 <p>Normal mode fast-forwards the manifest's FirstMate fork and explicit branch, then this repository, then runs <code>./install.sh</code> and <code>./install.sh --verify</code>. <code>--check</code> checks local guards and prints source, branch, target and pin without fetching, updating or installing; remote freshness remains unverified. Exits nonzero on a refusal or failure. The full behavior, migration steps and recovery are on <a href="update.html">Update and recovery</a>.</p>
+<p><code>--migrate</code> explicitly adopts recognized clean legacy source layouts before updating. <code>--bootstrap</code> runs a separately inspected, revision-bound new updater against an older persistent config checkout, even when that old updater refuses before fetching. Both preflight the repositories, preserve existing work and refuse ambiguous layouts. See the <a href="update.html#migration">single-command transition and partial-migration recovery</a>; it requires a separately approved published bootstrap revision.</p>
 
 <h2 id="board">fm board</h2>
 <pre data-label="usage"><code>fm board

@@ -29,7 +29,7 @@
 # restarted through the official procedure (end the session, run `fm` again).
 # fm-update never reimplements any of install.sh's reconciliation steps.
 #
-# Usage: fm update [--check] (--check reads local refs only; no fetch/install)
+# Usage: fm update [--check|--migrate|--bootstrap <persistent-config-root>]
 set -u
 
 ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
@@ -42,10 +42,13 @@ while [ -L "$self" ]; do
   case $target in /*) self=$target ;; *) self="$(cd "$(dirname "$self")" && pwd)/$target" ;; esac
 done
 CONFIG_ROOT="$(cd "$(dirname "$self")/.." && pwd)"
+TOOL_ROOT=$CONFIG_ROOT
 FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
 export GIT_OPTIONAL_LOCKS=0
 
 OFFICIAL_UPDATED= # "<old> -> <new>" once the official fast-forward has landed
+MIGRATION_PROGRESS=
+MIGRATION_CONFIG_TARGET=
 
 restart_note() {
   printf 'A running Captain keeps the instructions it loaded at startup and was not restarted or notified.\n'
@@ -53,20 +56,38 @@ restart_note() {
 }
 die() {
   printf 'fm-update: %s\n' "$1" >&2
+  if [ -n "$MIGRATION_PROGRESS" ]; then
+    printf 'fm-update: PARTIAL MIGRATION: %s; config HEAD=%s; FirstMate HEAD=%s branch=%s origin=%s upstream=%s. No rollback; inspect and retry the same bootstrap after resolving the error.\n' \
+      "$MIGRATION_PROGRESS" "$(git_c rev-parse HEAD 2>/dev/null)" "$(git_f rev-parse HEAD 2>/dev/null)" \
+      "$(git_f symbolic-ref --quiet --short HEAD 2>/dev/null)" "$(git_f remote get-url origin 2>/dev/null)" "$(git_f remote get-url upstream 2>/dev/null)" >&2
+  fi
   if [ -n "$OFFICIAL_UPDATED" ]; then
     printf 'fm-update: PARTIAL UPDATE: FirstMate distribution was fast-forwarded (%s), but the firstmate-config update did not complete; fix the error above and re-run fm update\n' "$OFFICIAL_UPDATED" >&2
     restart_note >&2
   fi
   exit 1
 }
-official_refuse() { die "FirstMate distribution checkout: $1; nothing was changed"; }
+official_refuse() {
+  if [ -n "$MIGRATION_PROGRESS" ]; then die "FirstMate distribution checkout: $1"; fi
+  die "FirstMate distribution checkout: $1; nothing was changed"
+}
 git_c() { git -C "$CONFIG_ROOT" "$@"; }
 git_f() { git -C "$FIRSTMATE_ROOT" "$@"; }
 
 CHECK_ONLY=0
+MIGRATE=0
+BOOTSTRAP=0
 case ${1:-} in
-  --help|-h) printf 'Usage: fm update [--check]\n--check: local guards and source resolution only; no fetch, update or install.\n'; exit 0 ;;
+  --help|-h) printf 'Usage: fm update [--check|--migrate|--bootstrap <persistent-config-root>]\n--check: local guards and source resolution only; no fetch, update or install.\n--migrate: explicitly adopt recognized clean legacy layouts, then update.\n--bootstrap: run this reviewed revision against an older persistent config checkout.\n'; exit 0 ;;
   --check) CHECK_ONLY=1 ;;
+  --migrate) MIGRATE=1 ;;
+  --bootstrap)
+    [ "$#" -eq 2 ] || die '--bootstrap requires the persistent config Git root'
+    MIGRATE=1
+    BOOTSTRAP=1
+    CONFIG_ROOT=$2
+    shift
+    ;;
   '') ;;
   *) die "unknown argument '$1'; see fm update --help" ;;
 esac
@@ -77,9 +98,14 @@ command -v git >/dev/null 2>&1 || die 'git is not on PATH'
 # --- 1a. local preconditions, no network -----------------------------------
 
 # shellcheck source=firstmate/fm-stack-manifest.sh
-. "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh"
-stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv" || die "$SM_LOAD_ERROR; nothing was changed"
+. "$TOOL_ROOT/firstmate/fm-stack-manifest.sh"
+stack_manifest_load "$TOOL_ROOT/firstmate/stack-manifest.tsv" || die "$SM_LOAD_ERROR; nothing was changed"
 official=$SM_FIRSTMATE_REPO
+if [ "$MIGRATE" -eq 1 ]; then
+  # shellcheck source=firstmate/fm-update-migration.sh
+  . "$TOOL_ROOT/firstmate/fm-update-migration.sh"
+  migration_prepare "$TOOL_ROOT"
+fi
 
 [ -d "$FIRSTMATE_ROOT" ] || official_refuse "$FIRSTMATE_ROOT does not exist"
 top=$(git_f rev-parse --show-toplevel 2>/dev/null) \
@@ -135,7 +161,7 @@ if [ "$(git_f config --get "branch.$f_branch.remote")" != origin ] \
   || [ "$(git_f config --get "branch.$f_branch.merge")" != "refs/heads/$f_default" ]; then
   official_refuse "branch '$f_branch' does not track origin/$f_default; set it with 'git -C $FIRSTMATE_ROOT branch -u origin/$f_default'"
 fi
-if [ "$CHECK_ONLY" -eq 0 ]; then
+if [ "$CHECK_ONLY" -eq 0 ] && [ "$MIGRATE" -eq 0 ]; then
   printf 'Fetching FirstMate distribution origin/%s...\n' "$f_default"
   git_f fetch --quiet origin "refs/heads/$f_default:refs/remotes/origin/$f_default" \
     || official_refuse "cannot fast-forward-fetch '$f_default' from $official"
@@ -153,13 +179,17 @@ elif ! git_f merge-base --is-ancestor HEAD "$f_upstream"; then
   official_refuse "branch '$f_branch' has diverged from $f_upstream ($f_old vs $f_new); resolve it manually"
 fi
 
-if [ "$CHECK_ONLY" -eq 0 ]; then
+if [ "$CHECK_ONLY" -eq 0 ] && [ "$MIGRATE" -eq 0 ]; then
   printf 'Fetching firstmate-config %s...\n' "$remote"
   git_c fetch --quiet --prune "$remote" || die "cannot fetch from '$remote'; nothing was changed"
 fi
 upstream=$(git_c rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) \
   || die "branch '$branch' has no upstream; set one with 'git branch -u $remote/$branch'; nothing was changed"
 new=$(git_c rev-parse --short "$upstream")
+if [ "$MIGRATE" -eq 1 ]; then
+  upstream=$MIGRATION_CONFIG_TARGET
+  new=$(git_c rev-parse --short "$upstream")
+fi
 current=no
 if [ "$(git_c rev-parse HEAD)" = "$(git_c rev-parse "$upstream")" ]; then
   current=yes
@@ -217,6 +247,9 @@ else
   printf 'Updated %s: %s -> %s (%s commits from %s)\n' \
     "$branch" "$old" "$new" "$(git_c rev-list --count "$old..HEAD")" "$upstream"
   git_c --no-pager log --oneline "$old..HEAD"
+  if [ "$MIGRATE" -eq 1 ]; then
+    MIGRATION_PROGRESS="FirstMate adopted; config fast-forwarded to $(git_c rev-parse HEAD); reconciliation pending"
+  fi
   reconcile 'updated to '"$new"
 fi
 

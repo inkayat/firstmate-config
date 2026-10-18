@@ -156,6 +156,16 @@ are accepted. `fm update --check` verifies local guards and prints the source,
 branch, target and pin without fetching, updating or installing; remote freshness
 is deliberately unverified. See [migration and refusals](docs/update.html).
 
+For an old installation that cannot fetch its own replacement, use the
+[one-time revision-bound bootstrap command](docs/update.html#migration).
+It preflights both persistent checkouts, adopts only recognized clean legacy
+layouts, preserves official as `upstream`, and reconciles at the inspected config
+revision. If the new updater is already installed, `fm update --migrate` performs
+that opt-in transition directly. After success, ordinary `fm update` is enough.
+The follow-up is preparation-only until a concrete bootstrap commit is approved
+and published; do not substitute a moving script URL or the older `d7e3fc7` commit.
+Partial migration is reported explicitly, never rolled back or called complete.
+
 Official updates are a separate human integration: fetch `upstream/main`, merge
 it into a separate integration branch based on `inkayat-main`, test and review,
 then publish the approved result to the fork. Normal `fm update` never merges

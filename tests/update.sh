@@ -56,6 +56,7 @@ make_pair(){ # <name>
   git_q "$clone-official" config user.name Test
 
   git init -q --bare "$remote"
+  git -C "$remote" symbolic-ref HEAD refs/heads/main
   local seed="$TMP_ROOT/$1-seed"
   git init -q "$seed"
   printf 'base\n' > "$seed/file.txt"
@@ -354,6 +355,7 @@ expect_refusal 'official checkout without AGENTS.md' "$clone" 'has no AGENTS.md'
 clone=$(make_pair wrong-remote)
 advance_remote wrong-remote >/dev/null
 git init -q --bare "$TMP_ROOT/impostor.git"
+git -C "$TMP_ROOT/impostor.git" symbolic-ref HEAD refs/heads/main
 git_q "$clone-official" push -q "$TMP_ROOT/impostor.git" main
 advance_official "$TMP_ROOT/impostor.git" impostor >/dev/null
 git -C "$clone-official" remote set-url origin "$TMP_ROOT/impostor.git"
