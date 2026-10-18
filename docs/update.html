@@ -11,30 +11,30 @@
 <body>
 <main><article>
 <h1>Update and recovery</h1>
-<p class="lede"><code>fm update</code> moves the official FirstMate checkout and this repository to their remote tips, then reconciles the machine. It only ever fast-forwards, and it refuses anything else without changing a file.</p>
+<p class="lede"><code>fm update</code> follows the verified FirstMate fork's explicit <code>inkayat-main</code> branch, then updates firstmate-config and reconciles the machine. Official upstream is integrated separately, never automatically.</p>
 
 <h2 id="run">Run an update</h2>
 <pre data-label="shell"><code>fm update</code></pre>
-<p>It takes no options. In order:</p>
+<p><code>fm update --check</code> instead checks local guards and prints source/branch/target/pin without fetching, updating or installing. It cannot prove remote freshness. Normal update, in order:</p>
 <ol class="flow">
-<li><strong>Check both checkouts first.</strong> Local state is inspected before any network call. Then the official default branch is resolved and both remotes are fetched - only remote-tracking refs move. Each checkout must equal, or be a plain fast-forward behind, its upstream.</li>
-<li><strong>Fast-forward the official FirstMate checkout</strong> (<code>FIRSTMATE_ROOT</code>) with <code>git merge --ff-only</code>.</li>
+<li><strong>Check both checkouts first.</strong> Inspect local guards, require the manifest's exact distribution origin and explicit branch, then fetch that branch and the config remote. Each checkout must equal, or be a plain fast-forward behind, its upstream.</li>
+<li><strong>Fast-forward the FirstMate distribution checkout</strong> (<code>FIRSTMATE_ROOT</code>) with <code>git merge --ff-only origin/inkayat-main</code>.</li>
 <li><strong>Fast-forward the firstmate-config checkout</strong> to its upstream.</li>
 <li><strong>Reconcile.</strong> Run that checkout's own <code>./install.sh</code>, then <code>./install.sh --verify</code>. The run only counts as complete if verify reports <code>0 drift item(s), 0 failure(s)</code>.</li>
 </ol>
 <p>On success the last lines name what happened:</p>
-<pre class="out" data-label="output, trimmed"><code>Checking default branch of official FirstMate (https://github.com/kunchenguid/firstmate.git)...
-Fetching official FirstMate origin...
+<pre class="out" data-label="output, trimmed"><code>Checking FirstMate distribution (https://github.com/inkayat/firstmate.git, branch inkayat-main)...
+Fetching FirstMate distribution origin/inkayat-main...
 Fetching firstmate-config origin...
-Updated official FirstMate main: a1b2c3d -> e4f5a6b (3 commits from origin/main)
+Updated FirstMate distribution inkayat-main: a1b2c3d -> e4f5a6b (3 commits from origin/inkayat-main)
 ...
 Reconciling machine state (updated to 9c8d7e6)...
 ...
-fm update complete: official FirstMate a1b2c3d -> e4f5a6b; firstmate-config 5c9252f -> 9c8d7e6; machine reconciled and verified.
+fm update complete: FirstMate distribution a1b2c3d -> e4f5a6b; firstmate-config 5c9252f -> 9c8d7e6; machine reconciled and verified.
 A running Captain keeps the instructions it loaded at startup and was not restarted or notified.
-To adopt the official update, restart it through the official procedure: end the Captain session, then run fm again.
+To adopt the update later, end the Captain session, then run fm again.
 Secondmates and projects were not updated.</code></pre>
-<p>When both checkouts are already current you get <code>Official FirstMate already up to date</code> and <code>Already up to date</code> lines, and the reconcile and verify steps still run. A separate manual <code>./install.sh</code> is not needed after a successful update.</p>
+<p>Already-current checkouts are reported; normal update still reconciles and verifies. Check-only never runs those steps.</p>
 
 <div class="callout note"><span class="t">The Captain does not hot-reload</span>
 <p>A running Captain keeps the instructions, skills, and launch-time wiring it loaded. To adopt an update, end the Captain session and run <code>fm</code> again.</p></div>
@@ -48,15 +48,15 @@ Secondmates and projects were not updated.</code></pre>
 </ul>
 
 <h2 id="refusals">Refusals</h2>
-<p>These stop the run in step 1. Neither working tree has changed when you see them. Refusals about the official checkout end with <code>nothing was changed</code>.</p>
+<p>These stop the run in step 1; neither working tree changes. Distribution checkout refusals end with <code>nothing was changed</code>.</p>
 <table>
 <thead><tr><th>Condition</th><th>What to do</th></tr></thead>
 <tbody>
 <tr><td class="wrap"><code>FIRSTMATE_ROOT</code> is missing, is not the root of a Git checkout, or has no <code>AGENTS.md</code></td><td class="wrap">Point <code>FIRSTMATE_ROOT</code> at the real checkout, or run <code>./install.sh</code> to clone it.</td></tr>
-<tr><td class="wrap">Official <code>origin</code> is not exactly the <code>firstmate_repo</code> value in <code>stack-manifest.tsv</code>, including an <code>insteadOf</code> rewrite</td><td class="wrap">Fix the remote or the rewrite. The URL is checked on purpose so an update cannot pull from an unexpected place.</td></tr>
-<tr><td class="wrap">Official checkout is detached, on a branch other than origin's default, or the branch does not track <code>origin/&lt;default&gt;</code></td><td class="wrap">Check out the default branch, or set tracking with <code>git -C &lt;FIRSTMATE_ROOT&gt; branch -u origin/&lt;default&gt;</code>.</td></tr>
-<tr><td class="wrap">Official checkout has uncommitted or untracked changes, or an unfinished merge, rebase, cherry-pick, revert, or bisect</td><td class="wrap">Resolve or remove them yourself, then re-run.</td></tr>
-<tr><td class="wrap">Official checkout has local commits that are not on <code>origin/&lt;default&gt;</code>, or has diverged</td><td class="wrap">That is unlanded work. Land it or move it to a branch, then re-run.</td></tr>
+<tr><td class="wrap">Distribution <code>origin</code> differs from manifest <code>firstmate_repo</code>, including an <code>insteadOf</code> rewrite</td><td class="wrap">Preserve existing remotes and work, then deliberately configure the verified fork. No automatic official fallback.</td></tr>
+<tr><td class="wrap">Detached/wrong branch, wrong tracking, or local <code>origin/HEAD</code> is not <code>origin/inkayat-main</code></td><td class="wrap">Follow migration below; GitHub's fork default <code>main</code> is not the distribution branch. Never use <code>git remote set-head origin -a</code>.</td></tr>
+<tr><td class="wrap">Uncommitted/untracked changes or unfinished Git operation</td><td class="wrap">Preserve and resolve them manually; never reset or discard to bypass the guard.</td></tr>
+<tr><td class="wrap">Local commits missing from <code>origin/inkayat-main</code>, or divergence</td><td class="wrap">Preserve that work on its existing branch; integrate deliberately, not through update.</td></tr>
 <tr><td class="wrap">firstmate-config checkout is dirty</td><td class="wrap">Commit or stash it yourself, then re-run. The command lists the dirty paths first.</td></tr>
 <tr><td class="wrap">firstmate-config checkout is detached</td><td class="wrap">Check out a branch (normally <code>main</code>).</td></tr>
 <tr><td class="wrap">firstmate-config branch has diverged from its upstream</td><td class="wrap">Resolve the divergence manually.</td></tr>
@@ -67,7 +67,7 @@ Secondmates and projects were not updated.</code></pre>
 <h2 id="partial">Partial updates</h2>
 <p>Step 2 can succeed and a later step can still fail. There is no multi-repository rollback, so that state is reported honestly instead of as success:</p>
 <pre class="out" data-label="stderr, trimmed"><code>fm-update: install.sh failed after update; repository is at 9c8d7e6 but machine state was not reconciled
-fm-update: PARTIAL UPDATE: official FirstMate was fast-forwarded (a1b2c3d -> e4f5a6b), but the firstmate-config update did not complete; fix the error above and re-run fm update</code></pre>
+fm-update: PARTIAL UPDATE: FirstMate distribution was fast-forwarded (a1b2c3d -> e4f5a6b), but the firstmate-config update did not complete; fix the error above and re-run fm update</code></pre>
 <p>The exit status is nonzero. Recovery is the same each time:</p>
 <ol>
 <li>Read the error above the <code>PARTIAL UPDATE</code> line. It comes from the failing step: the fast-forward, <code>install.sh</code>, or <code>install.sh --verify</code>.</li>
@@ -78,7 +78,7 @@ fm-update: PARTIAL UPDATE: official FirstMate was fast-forwarded (a1b2c3d -> e4f
 <p>To inspect installed state without pulling, run <code>./install.sh --verify</code> (read-only) or <code>fm doctor</code> from the primary checkout.</p>
 
 <h2 id="baseline">Ahead of the validated baseline</h2>
-<p>This configuration records the official FirstMate commit it was validated against in <code>firstmate/stack-manifest.tsv</code>. Once the official checkout moves past it,
+<p>This configuration records its validated fork commit in <code>firstmate/stack-manifest.tsv</code>. Once the distribution checkout moves past it,
 <code>fm doctor</code> and <code>install.sh</code> report it as ahead (<span class="badge warning">WARNING</span>, not drift) until the manifest is moved by a reviewed change.
 A checkout <em>behind</em> the baseline, or diverged from it, is a <span class="badge fail">FAIL</span> in <code>fm doctor</code>.</p>
 
@@ -91,10 +91,34 @@ fm doctor</code></pre>
 <tr><td class="wrap"><code>launcher.resolution</code> FAIL</td><td class="wrap">Another <code>fm</code> is earlier on <code>PATH</code> than the one this configuration expects. Fix <code>PATH</code> order or remove the other one.</td></tr>
 <tr><td class="wrap"><code>captain.selection</code> FAIL</td><td class="wrap">No configured startup model is available. Authenticate a provider; see <a href="architecture.html#model-chain">the startup chain</a>.</td></tr>
 <tr><td class="wrap"><code>runtime.herdr_server</code> FAIL</td><td class="wrap">The Herdr server is unreachable, incompatible, or reports not running.</td></tr>
-<tr><td class="wrap"><code>firstmate.commit_compat</code> WARNING</td><td class="wrap">Official FirstMate is ahead of the validated baseline - expected after an official update.</td></tr>
+<tr><td class="wrap"><code>firstmate.commit_compat</code> WARNING</td><td class="wrap">The distribution is ahead of the validated baseline; newer does not mean validated.</td></tr>
 <tr><td class="wrap"><code>runtime.herdr_version</code>, <code>harnesses.*_version</code> WARNING</td><td class="wrap">A tool is newer than the version this configuration was tested with. Unvalidated, not broken.</td></tr>
 </tbody>
 </table>
+
+<h2 id="migration">Omarchy / existing-install migration</h2>
+<p>Commands below are an operator procedure, not something this task ran. Linux/Omarchy execution is unverified. Keep active sessions untouched during preparation. First inspect <code>git status --short</code>, branches, remotes and unfinished operations in both persistent checkouts; retain all local changes and commits. Stop on conflicts rather than using reset, force, stash automation or branch deletion.</p>
+<p>Fetch the published config revision on <code>origin/main</code> and fast-forward the persistent config checkout only after inspecting its diff. The manifest pins core <code>e73653772c7bf7329e58d6425ad74752b5b2b8bf</code>, carrying the generic skill preparation fix. Publication must exist before migration.</p>
+<pre data-label="operator shell; FIRSTMATE_ROOT already resolved"><code>git -C "$FIRSTMATE_ROOT" remote -v
+# Only when origin is exactly the old official URL and upstream is absent:
+git -C "$FIRSTMATE_ROOT" remote rename origin upstream
+git -C "$FIRSTMATE_ROOT" remote add origin https://github.com/inkayat/firstmate.git
+# For any other layout, preserve each remote and resolve conflicts manually.
+git -C "$FIRSTMATE_ROOT" fetch origin refs/heads/inkayat-main:refs/remotes/origin/inkayat-main
+git -C "$FIRSTMATE_ROOT" merge-base --is-ancestor e73653772c7bf7329e58d6425ad74752b5b2b8bf origin/inkayat-main
+# If the local branch does not exist (otherwise inspect it; never overwrite):
+git -C "$FIRSTMATE_ROOT" switch --create inkayat-main --track origin/inkayat-main
+git -C "$FIRSTMATE_ROOT" remote set-head origin inkayat-main
+# From the persistent config checkout, not a task worktree:
+./install.sh
+./install.sh --verify
+fm version
+fm update --check
+fm doctor</code></pre>
+<p>For a fresh machine, the installer clones the selected fork branch, verifies the pin is on it, starts at the exact pin on that tracked branch, sets local <code>origin/HEAD</code>, and adds official as <code>upstream</code>. Existing checkouts are never switched by install. Running source and loaded sessions do not change merely because these commits were published; adopt only under the operator's chosen maintenance window.</p>
+
+<h2 id="official-integration">Official updates: explicit human integration</h2>
+<p>In a separate clean integration checkout, keep <code>origin=https://github.com/inkayat/firstmate.git</code> and <code>upstream=https://github.com/kunchenguid/firstmate.git</code>. Fetch <code>origin/inkayat-main</code> and <code>upstream/main</code>, create a new integration branch from the fork branch, then explicitly merge <code>upstream/main</code>. Resolve conflicts while retaining the generic preparation fix; run relevant tests, inspect the complete diff, and publish the approved fast-forward to <code>origin/inkayat-main</code> only. Never push to official. Move the manifest pin only after that exact commit has been validated. Normal machine updates consume that fork branch; they never perform this integration.</p>
 
 <h2 id="pins">Updating a pinned dependency</h2>
 <p>Shared skills from other repositories are pinned by commit in <code>skills/external.lock</code>; <code>fm update</code> never moves a pin. For the Ponytail skills there is a dedicated helper:</p>

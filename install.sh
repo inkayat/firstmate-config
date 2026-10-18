@@ -8,7 +8,7 @@
 # machine once it exists.
 #
 #   1. checks the toolchain
-#   2. clones the official FirstMate checkout if it is missing, never modifies it
+#   2. clones the selected FirstMate distribution if missing; existing sources are report-only
 #   3. creates the machine-local operational home
 #   4. writes ~/.config/firstmate-config/env, the machine-local resolution
 #   5. selects the herdr runtime backend
@@ -90,14 +90,14 @@ for tool in jq treehouse gh bun; do
 done
 [ "$failed" -eq 0 ] || { printf '\ninstall: missing required tools\n' >&2; exit 1; }
 
-# --- 2. official FirstMate --------------------------------------------------
-step '2. official FirstMate checkout'
+# --- 2. FirstMate distribution -----------------------------------------------
+step '2. FirstMate distribution checkout'
 if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
   ok "present at $FIRSTMATE_ROOT"
   head_sha=$(git -C "$FIRSTMATE_ROOT" rev-parse --short HEAD 2>/dev/null || printf 'unknown')
   dirty=$(git -C "$FIRSTMATE_ROOT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
   ok "at $head_sha, $dirty tracked modifications"
-  [ "$dirty" = 0 ] || warn 'the official checkout has local modifications; this configuration expects it unmodified'
+  [ "$dirty" = 0 ] || warn 'the FirstMate checkout has local modifications; preserve them before migrating'
   # Report-only: an already-present checkout is never updated, rewound, or
   # re-pinned here, no matter how it relates to the validated baseline.
   relation=$(stack_commit_relation "$FIRSTMATE_ROOT" "$SM_FIRSTMATE_COMMIT")
@@ -108,11 +108,21 @@ if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
     diverged) warn "history has diverged from the validated baseline commit $SM_FIRSTMATE_COMMIT" ;;
     *) warn "relationship to the validated baseline commit $SM_FIRSTMATE_COMMIT is unknown (that commit is not in this checkout's local history)" ;;
   esac
+  source_url=$(git -C "$FIRSTMATE_ROOT" remote get-url origin 2>/dev/null || true)
+  source_branch=$(git -C "$FIRSTMATE_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  source_head=$(git -C "$FIRSTMATE_ROOT" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  if [ "$source_url" != "$SM_FIRSTMATE_REPO" ] || [ "$source_branch" != "$SM_FIRSTMATE_BRANCH" ] || [ "$source_head" != "origin/$SM_FIRSTMATE_BRANCH" ]; then
+    warn "source migration needed: expected $SM_FIRSTMATE_REPO branch $SM_FIRSTMATE_BRANCH and origin/HEAD=origin/$SM_FIRSTMATE_BRANCH; existing checkout left unchanged (see docs/update.html)"
+  fi
 elif would "clone $FIRSTMATE_ORIGIN into $FIRSTMATE_ROOT, pinned to $SM_FIRSTMATE_COMMIT"; then
   mkdir -p "$(dirname "$FIRSTMATE_ROOT")" || failf "cannot create $(dirname "$FIRSTMATE_ROOT")"
-  if git clone -q "$FIRSTMATE_ORIGIN" "$FIRSTMATE_ROOT" \
-     && git -C "$FIRSTMATE_ROOT" checkout -q "$SM_FIRSTMATE_COMMIT"; then
-    changedf "cloned FirstMate into $FIRSTMATE_ROOT, pinned to $SM_FIRSTMATE_COMMIT"
+  if git clone -q --branch "$SM_FIRSTMATE_BRANCH" "$FIRSTMATE_ORIGIN" "$FIRSTMATE_ROOT" \
+     && git -C "$FIRSTMATE_ROOT" merge-base --is-ancestor "$SM_FIRSTMATE_COMMIT" "origin/$SM_FIRSTMATE_BRANCH" \
+     && git -C "$FIRSTMATE_ROOT" checkout -q -B "$SM_FIRSTMATE_BRANCH" "$SM_FIRSTMATE_COMMIT" \
+     && git -C "$FIRSTMATE_ROOT" branch --set-upstream-to="origin/$SM_FIRSTMATE_BRANCH" "$SM_FIRSTMATE_BRANCH" >/dev/null \
+     && git -C "$FIRSTMATE_ROOT" remote set-head origin "$SM_FIRSTMATE_BRANCH" \
+     && git -C "$FIRSTMATE_ROOT" remote add upstream "$SM_FIRSTMATE_UPSTREAM_REPO"; then
+    changedf "cloned FirstMate into $FIRSTMATE_ROOT, pinned to $SM_FIRSTMATE_COMMIT on $SM_FIRSTMATE_BRANCH"
   else
     failf "could not clone $FIRSTMATE_ORIGIN and pin it to $SM_FIRSTMATE_COMMIT"
     # Never leave a half-cloned or unpinned checkout behind for the next run

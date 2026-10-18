@@ -228,9 +228,9 @@ if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
   FIRSTMATE_COMMIT=$(git -C "$FIRSTMATE_ROOT" rev-parse --short HEAD 2>/dev/null || printf unknown)
   FIRSTMATE_DIRTY=$(git_dirty_count "$FIRSTMATE_ROOT")
   if [ "$FIRSTMATE_DIRTY" = 0 ]; then
-    add_check firstmate.official PASS "official FirstMate at $FIRSTMATE_COMMIT, unmodified" "$FIRSTMATE_ROOT"
+    add_check firstmate.official PASS "FirstMate distribution at $FIRSTMATE_COMMIT, unmodified" "$FIRSTMATE_ROOT"
   else
-    add_check firstmate.official WARNING "official FirstMate at $FIRSTMATE_COMMIT has $FIRSTMATE_DIRTY local modification(s); this configuration expects it unmodified" "$FIRSTMATE_ROOT"
+    add_check firstmate.official WARNING "FirstMate distribution at $FIRSTMATE_COMMIT has $FIRSTMATE_DIRTY local modification(s); preserve before migration" "$FIRSTMATE_ROOT"
   fi
   FIRSTMATE_RELATION=$(stack_commit_relation "$FIRSTMATE_ROOT" "$SM_FIRSTMATE_COMMIT")
   case $FIRSTMATE_RELATION in
@@ -246,6 +246,14 @@ if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
       ;;
     *) add_check firstmate.commit_compat UNKNOWN "relationship to the validated baseline commit ${SM_FIRSTMATE_COMMIT:-unknown} cannot be determined from local history" "$SM_FIRSTMATE_COMMIT" ;;
   esac
+  source_url=$(git -C "$FIRSTMATE_ROOT" remote get-url origin 2>/dev/null || true)
+  source_branch=$(git -C "$FIRSTMATE_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  source_head=$(git -C "$FIRSTMATE_ROOT" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  if [ "$source_url" = "$SM_FIRSTMATE_REPO" ] && [ "$source_branch" = "$SM_FIRSTMATE_BRANCH" ] && [ "$source_head" = "origin/$SM_FIRSTMATE_BRANCH" ]; then
+    add_check firstmate.update_source PASS "$source_url branch $source_branch; official upstream $SM_FIRSTMATE_UPSTREAM_REPO" "$FIRSTMATE_ROOT"
+  else
+    add_check firstmate.update_source WARNING "source migration needed: expected $SM_FIRSTMATE_REPO branch $SM_FIRSTMATE_BRANCH, origin/HEAD=origin/$SM_FIRSTMATE_BRANCH; existing $source_url branch ${source_branch:-detached}; see docs/update.html" "$FIRSTMATE_ROOT"
+  fi
 else
   FIRSTMATE_COMMIT=unknown
   FIRSTMATE_DIRTY=unknown

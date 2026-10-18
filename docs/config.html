@@ -19,7 +19,7 @@
 <tbody>
 <tr><td><code>firstmate/crew-dispatch.json</code></td><td class="wrap">Routing rules per dispatch category. See <a href="dispatch.html">Dispatch routing</a>.</td><td class="wrap">FirstMate (through a symlink), <code>fm doctor</code></td></tr>
 <tr><td><code>firstmate/captain-startup-models.tsv</code></td><td class="wrap">Ordered Captain startup candidates.</td><td class="wrap"><code>fm</code>, <code>fm doctor</code></td></tr>
-<tr><td><code>firstmate/stack-manifest.tsv</code></td><td class="wrap">Validated FirstMate commit and Pi/OMP/Herdr versions.</td><td class="wrap"><code>install.sh</code>, <code>fm update</code>, <code>fm doctor</code>, <code>fm version</code></td></tr>
+<tr><td><code>firstmate/stack-manifest.tsv</code></td><td class="wrap">Distribution source/explicit branch, official upstream, validated FirstMate commit and Pi/OMP/Herdr versions.</td><td class="wrap"><code>install.sh</code>, <code>fm update</code>, <code>fm doctor</code>, <code>fm version</code></td></tr>
 <tr><td><code>firstmate/primary-policy.md</code></td><td class="wrap">The Captain's operating contract for delegation.</td><td class="wrap">The Captain, at session start</td></tr>
 <tr><td><code>firstmate/captain.md</code></td><td class="wrap">Template for the machine's Captain preferences.</td><td class="wrap"><code>install.sh</code> (seed only)</td></tr>
 <tr><td><code>roles/*/ROLE.md</code></td><td class="wrap">The eight roles, each also an OMP agent definition (<code>fm-&lt;role&gt;</code>).</td><td class="wrap">Workers, by absolute path in the brief; OMP, through the installed agent links; <code>fm doctor</code>; <code>fm bot</code> (role check)</td></tr>
@@ -56,7 +56,7 @@
 <table>
 <thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
 <tbody>
-<tr><td><code>FIRSTMATE_ROOT</code></td><td class="wrap"><code>~/Developer/tools/firstmate</code></td><td class="wrap">The official FirstMate checkout.</td></tr>
+<tr><td><code>FIRSTMATE_ROOT</code></td><td class="wrap"><code>~/Developer/tools/firstmate</code></td><td class="wrap">The selected FirstMate distribution checkout.</td></tr>
 <tr><td><code>FM_HOME</code></td><td class="wrap"><code>~/.firstmate</code></td><td class="wrap">The operational home.</td></tr>
 <tr><td><code>FM_BACKEND</code></td><td class="wrap"><code>herdr</code></td><td class="wrap">Runtime backend. The installer always records <code>herdr</code>.</td></tr>
 <tr><td><code>FM_CONFIG_ROOT</code></td><td class="wrap">the checkout containing the running <code>fm</code></td><td class="wrap">Exported by the launcher so the Captain can find the policy and roles.</td></tr>
@@ -89,7 +89,9 @@ export FIRSTMATE_ROOT FM_CONFIG_ROOT FM_HOME FM_BACKEND</code></pre>
 <thead><tr><th>Key</th><th>Meaning</th></tr></thead>
 <tbody>
 <tr><td><code>schema_version</code></td><td class="wrap">Manifest format version.</td></tr>
-<tr><td><code>firstmate_repo</code></td><td class="wrap">The only <code>origin</code> URL <code>fm update</code> accepts for the official checkout.</td></tr>
+<tr><td><code>firstmate_repo</code></td><td class="wrap">The exact fork <code>origin</code> URL accepted by update.</td></tr>
+<tr><td><code>firstmate_branch</code></td><td class="wrap">Explicit distribution branch; not inferred from GitHub's default. Local branch, tracking and <code>origin/HEAD</code> must agree.</td></tr>
+<tr><td><code>firstmate_upstream_repo</code></td><td class="wrap">Official provenance and separate human integration remote; never automatically merged by update.</td></tr>
 <tr><td><code>firstmate_validated_commit</code></td><td class="wrap">Full hash of the FirstMate commit this configuration was validated against.</td></tr>
 <tr><td><code>pi_min_version</code>, <code>pi_tested_version</code></td><td class="wrap">Pi hard minimum and tested version.</td></tr>
 <tr><td><code>omp_min_version</code>, <code>omp_tested_version</code></td><td class="wrap">OMP hard minimum and tested version.</td></tr>

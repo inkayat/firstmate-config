@@ -44,8 +44,10 @@ printf '# captain notes\n' > "$INST_CFG/firstmate/captain.md"
 # an installer failure (never a dangling link).
 : > "$INST_CFG/bin/fm"; : > "$INST_CFG/bin/ponytail-update"; chmod +x "$INST_CFG/bin/fm" "$INST_CFG/bin/ponytail-update"
 cat > "$INST_CFG/firstmate/stack-manifest.tsv" <<EOF
-schema_version	1
+schema_version	2
 firstmate_repo	$TMP_ROOT/unused-firstmate-origin
+firstmate_branch	main
+firstmate_upstream_repo	https://example.invalid/official.git
 firstmate_validated_commit	0000000000000000000000000000000000000000
 pi_min_version	0.85.1
 pi_tested_version	0.85.1

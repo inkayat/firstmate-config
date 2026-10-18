@@ -23,7 +23,7 @@
 <table>
 <thead><tr><th>Piece</th><th>Responsibility</th></tr></thead>
 <tbody>
-<tr><td><code>fm</code></td><td class="wrap">Resolves paths, picks harness and model, and starts the Captain. It owns no lifecycle logic: the fleet lock, watcher, heartbeat, wake queue, spawn, and teardown all stay in the official checkout.</td></tr>
+<tr><td><code>fm</code></td><td class="wrap">Resolves paths, picks harness and model, and starts the Captain. It owns no lifecycle logic: the fleet lock, watcher, heartbeat, wake queue, spawn, and teardown all stay in the FirstMate distribution checkout.</td></tr>
 <tr><td>Captain</td><td class="wrap">An OMP session (or Pi, by explicit choice) that talks to you and delegates.</td></tr>
 <tr><td>FirstMate</td><td class="wrap">Task lifecycle and delegation.</td></tr>
 <tr><td>Herdr</td><td class="wrap">Runtime and sessions for the Captain and its workers.</td></tr>
@@ -41,7 +41,7 @@ fm --harness pi doctor</code></pre>
 Overriding the harness executable is done with <code>FM_OMP_BIN</code> or <code>FM_PI_BIN</code>.</p>
 
 <h2 id="working-directory">Where the Captain runs</h2>
-<p>The harness runs <strong>inside the official FirstMate checkout</strong>, not in the directory you launched from. FirstMate's <code>AGENTS.md</code> is a working-directory context file, and a
+<p>The harness runs <strong>inside the FirstMate distribution checkout</strong>, not in the directory you launched from. FirstMate's <code>AGENTS.md</code> is a working-directory context file, and a
 Captain that never loaded it would not be a FirstMate Captain. Two consequences:</p>
 <ul>
 <li>No project's <code>AGENTS.md</code>, <code>CLAUDE.md</code>, or project-local skills are preloaded as global authority. Each is resolved per task.</li>
@@ -109,7 +109,7 @@ fm --model grok --harness pi</code></pre>
 <p>The preset is checked by the same probe as the chain and used only when its exact model and effort are <code>AVAILABLE</code>. Any other value, an unavailable model, an unsupported effort, or an unverifiable catalog prints <code>fm: warning: requested model ...</code>, and the launcher walks the unchanged chain - default model and effort - on the same harness. A raw model id is never passed through, and nothing is persisted. A missing harness, Herdr, or an empty chain still stops the launch.</p>
 
 <h2 id="extensions">Extensions</h2>
-<p>The Captain needs FirstMate's primary watcher and turn-end guard extensions from the official checkout. <code>fm --check</code> and <code>fm doctor</code> fail if they are missing.</p>
+<p>The Captain needs FirstMate's primary watcher and turn-end guard extensions from that checkout. <code>fm --check</code> and <code>fm doctor</code> fail if they are missing.</p>
 <ul>
 <li><strong>OMP</strong> discovers them from <code>.omp/extensions</code> in the checkout. The launcher passes no <code>-e</code> flags and no worker overlay.</li>
 <li><strong>Pi</strong> has two modes, chosen by <code>FM_PI_EXTENSIONS</code>: <code>explicit</code> (the launcher passes both extensions), <code>discover</code>, or <code>auto</code> (the default). <code>auto</code> uses <code>discover</code> when <code>~/.pi/agent/trust.json</code> marks the FirstMate checkout as trusted, and <code>explicit</code> otherwise.</li>

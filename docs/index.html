@@ -11,16 +11,16 @@
 <body>
 <main><article>
 <h1>Overview</h1>
-<p class="lede"><code>firstmate-config</code> is a reproducible configuration layer around the official
-<a href="https://github.com/kunchenguid/firstmate">FirstMate</a> checkout. It chooses the Captain runtime,
-routes worker tasks to harnesses and models, installs shared skills and role agents, and keeps machine state
-out of Git - without forking or patching FirstMate.</p>
+<p class="lede"><code>firstmate-config</code> configures
+<a href="https://github.com/kunchenguid/firstmate">FirstMate</a>, distributed through
+the <a href="https://github.com/inkayat/firstmate">inkayat fork</a>'s explicit <code>inkayat-main</code> branch.
+It chooses the Captain runtime, routes worker tasks, installs skills and roles, and keeps machine state out of Git.</p>
 
 <p>The important split:</p>
 <table>
 <thead><tr><th>Layer</th><th>Owns</th><th>Lives in</th></tr></thead>
 <tbody>
-<tr><td>Official FirstMate</td><td class="wrap">Task lifecycle, supervision, spawn and teardown, the fleet lock. Never edited by this repository.</td><td class="wrap"><code>FIRSTMATE_ROOT</code> (default <code>~/Developer/tools/firstmate</code>)</td></tr>
+<tr><td>FirstMate distribution</td><td class="wrap">The verified fork preserving official task lifecycle, supervision, spawn and teardown, and the fleet lock. Never edited by this repository.</td><td class="wrap"><code>FIRSTMATE_ROOT</code> (default <code>~/Developer/tools/firstmate</code>)</td></tr>
 <tr><td>firstmate-config</td><td class="wrap">The <code>fm</code> launcher, Captain startup chain, routing table, roles, shared skills, diagnostics, <code>fm update</code>, <code>fm bot</code>.</td><td class="wrap">This repository</td></tr>
 <tr><td>Operational home</td><td class="wrap">Project registry, Captain preferences, task state, sessions, the board data, bot specs.</td><td class="wrap"><code>FM_HOME</code> (default <code>~/.firstmate</code>)</td></tr>
 <tr><td>Herdr</td><td class="wrap">The runtime that hosts Captain and worker panes.</td><td class="wrap">Installed separately</td></tr>
@@ -31,7 +31,7 @@ out of Git - without forking or patching FirstMate.</p>
 <ol class="flow">
 <li>The launcher loads <code>~/.config/firstmate-config/env</code>, selects the Captain harness (Pi unless you pass <code>--harness omp</code>), and runs a preflight.</li>
 <li>It walks <code>captain-startup-models.tsv</code> in order and picks the first model that is not <em>known</em> to be unavailable.</li>
-<li>It changes into the official FirstMate checkout, so FirstMate's own <code>AGENTS.md</code> is the only global instruction file the Captain loads.</li>
+<li>It changes into the FirstMate distribution checkout, so FirstMate's own <code>AGENTS.md</code> is the only global instruction file the Captain loads.</li>
 <li>The Captain follows <code>primary-policy.md</code> for each task: resolve the project, read that project's own instructions, pick a dispatch category, a role, and at most a few skills, then hand the work to an isolated worker.</li>
 </ol>
 

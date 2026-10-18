@@ -1,35 +1,35 @@
 #!/usr/bin/env bash
-# fm-update - bring the local official FirstMate checkout (FIRSTMATE_ROOT) and
+# fm-update - bring the selected FirstMate distribution (FIRSTMATE_ROOT) and
 # this firstmate-config checkout to their remote tips, then reconcile this
 # machine to firstmate-config via its own install.sh.
 #
 # Order:
 #   1. Preconditions for BOTH repositories, before either is changed. Local
-#      checks first; then origin's default branch is resolved and both remotes
+#      checks first; then the manifest's explicit branch and config remote
 #      are fetched (this only moves remote-tracking refs), and each checkout
 #      must be a plain fast-forward of (or equal to) its upstream.
-#   2. Fast-forward the official FirstMate checkout.
+#   2. Fast-forward the FirstMate distribution checkout.
 #   3. Fast-forward this firstmate-config checkout.
 #   4. Run this checkout's own ./install.sh, then ./install.sh --verify.
 # A refusal in step 1 changes neither working tree. A failure after step 2
-# moved the official checkout is reported as a PARTIAL update, never as
+# moved the distribution checkout is reported as a PARTIAL update, never as
 # success; there is no multi-repository rollback.
 #
 # Every Git step is only ever a fast-forward. Nothing is forced, stashed,
 # reset, merged, rebased, discarded, or pushed: a dirty or diverged checkout is
-# reported and left exactly as it was, for a human to resolve. The official
-# checkout is refused unless it is the root of a Git checkout with AGENTS.md,
-# its origin's configured and effective (insteadOf-rewritten) URL is exactly
-# firstmate_repo from firstmate/stack-manifest.tsv, it is on origin's default
-# branch tracking origin/<default>, it has no unfinished merge/rebase/
-# cherry-pick/revert/bisect, and it has no local commits missing from origin.
-# Only that default branch is fetched there (never --prune). Secondmates and
+# reported and left exactly as it was, for a human to resolve. The distribution
+# checkout must be a Git root with AGENTS.md, use the manifest's exact configured
+# and effective origin URL, check out firstmate_branch tracking origin/<branch>,
+# and set local origin/HEAD to that same branch for native bootstrap consistency.
+# No unfinished operation or local commits missing from origin are allowed.
+# Only the explicit distribution branch is fetched (never --prune, never
+# upstream). Secondmates and
 # projects are never updated, and a running Captain is never restarted or
 # notified: it keeps the instructions it loaded at startup until it is
 # restarted through the official procedure (end the session, run `fm` again).
 # fm-update never reimplements any of install.sh's reconciliation steps.
 #
-# Usage: fm update
+# Usage: fm update [--check] (--check reads local refs only; no fetch/install)
 set -u
 
 ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
@@ -49,25 +49,28 @@ OFFICIAL_UPDATED= # "<old> -> <new>" once the official fast-forward has landed
 
 restart_note() {
   printf 'A running Captain keeps the instructions it loaded at startup and was not restarted or notified.\n'
-  printf 'To adopt the official update, restart it through the official procedure: end the Captain session, then run fm again.\n'
+  printf 'To adopt the update later, end the Captain session, then run fm again.\n'
 }
 die() {
   printf 'fm-update: %s\n' "$1" >&2
   if [ -n "$OFFICIAL_UPDATED" ]; then
-    printf 'fm-update: PARTIAL UPDATE: official FirstMate was fast-forwarded (%s), but the firstmate-config update did not complete; fix the error above and re-run fm update\n' "$OFFICIAL_UPDATED" >&2
+    printf 'fm-update: PARTIAL UPDATE: FirstMate distribution was fast-forwarded (%s), but the firstmate-config update did not complete; fix the error above and re-run fm update\n' "$OFFICIAL_UPDATED" >&2
     restart_note >&2
   fi
   exit 1
 }
-official_refuse() { die "official FirstMate checkout: $1; nothing was changed"; }
+official_refuse() { die "FirstMate distribution checkout: $1; nothing was changed"; }
 git_c() { git -C "$CONFIG_ROOT" "$@"; }
 git_f() { git -C "$FIRSTMATE_ROOT" "$@"; }
 
+CHECK_ONLY=0
 case ${1:-} in
-  --help|-h) printf 'Usage: fm update\n'; exit 0 ;;
+  --help|-h) printf 'Usage: fm update [--check]\n--check: local guards and source resolution only; no fetch, update or install.\n'; exit 0 ;;
+  --check) CHECK_ONLY=1 ;;
   '') ;;
   *) die "unknown argument '$1'; see fm update --help" ;;
 esac
+[ "$#" -le 1 ] || die 'too many arguments'
 
 command -v git >/dev/null 2>&1 || die 'git is not on PATH'
 
@@ -94,6 +97,10 @@ effective=$(git_f remote get-url origin)
   || official_refuse "origin is rewritten to '$effective' by Git config; expected exactly $official"
 f_branch=$(git_f symbolic-ref --quiet --short HEAD) \
   || official_refuse "$FIRSTMATE_ROOT is on a detached HEAD"
+[ "$f_branch" = "$SM_FIRSTMATE_BRANCH" ] \
+  || official_refuse "$FIRSTMATE_ROOT is on '$f_branch', expected $SM_FIRSTMATE_BRANCH"
+[ "$(git_f symbolic-ref --quiet refs/remotes/origin/HEAD)" = "refs/remotes/origin/$SM_FIRSTMATE_BRANCH" ] \
+  || official_refuse "origin/HEAD must select origin/$SM_FIRSTMATE_BRANCH for native bootstrap; set it explicitly with git remote set-head origin $SM_FIRSTMATE_BRANCH"
 f_git_dir=$(git_f rev-parse --absolute-git-dir) \
   || official_refuse "cannot resolve the Git directory of $FIRSTMATE_ROOT"
 for op in MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
@@ -122,22 +129,21 @@ fi
 
 # --- 1b. remote preconditions; only remote-tracking refs move --------------
 
-printf 'Checking default branch of official FirstMate (%s)...\n' "$official"
-f_default=$(git_f ls-remote --symref origin HEAD 2>/dev/null \
-  | sed -n 's|^ref: refs/heads/\([^[:space:]]*\)[[:space:]]*HEAD$|\1|p')
-[ -n "$f_default" ] || official_refuse "cannot determine origin's default branch"
-[ "$f_branch" = "$f_default" ] \
-  || official_refuse "$FIRSTMATE_ROOT is on '$f_branch', expected origin's default branch '$f_default'"
+f_default=$SM_FIRSTMATE_BRANCH
+printf 'Checking FirstMate distribution (%s, branch %s)...\n' "$official" "$f_default"
 if [ "$(git_f config --get "branch.$f_branch.remote")" != origin ] \
   || [ "$(git_f config --get "branch.$f_branch.merge")" != "refs/heads/$f_default" ]; then
   official_refuse "branch '$f_branch' does not track origin/$f_default; set it with 'git -C $FIRSTMATE_ROOT branch -u origin/$f_default'"
 fi
-printf 'Fetching official FirstMate origin...\n'
-git_f fetch --quiet origin "refs/heads/$f_default:refs/remotes/origin/$f_default" \
-  || official_refuse "cannot fast-forward-fetch '$f_default' from $official"
+if [ "$CHECK_ONLY" -eq 0 ]; then
+  printf 'Fetching FirstMate distribution origin/%s...\n' "$f_default"
+  git_f fetch --quiet origin "refs/heads/$f_default:refs/remotes/origin/$f_default" \
+    || official_refuse "cannot fast-forward-fetch '$f_default' from $official"
+fi
 f_upstream="origin/$f_default"
 f_old=$(git_f rev-parse --short HEAD)
-f_new=$(git_f rev-parse --short "$f_upstream")
+f_new=$(git_f rev-parse --short --verify "$f_upstream^{commit}") \
+  || official_refuse "missing local $f_upstream; fetch the selected branch explicitly"
 f_current=no
 if [ "$(git_f rev-parse HEAD)" = "$(git_f rev-parse "$f_upstream")" ]; then
   f_current=yes
@@ -147,8 +153,10 @@ elif ! git_f merge-base --is-ancestor HEAD "$f_upstream"; then
   official_refuse "branch '$f_branch' has diverged from $f_upstream ($f_old vs $f_new); resolve it manually"
 fi
 
-printf 'Fetching firstmate-config %s...\n' "$remote"
-git_c fetch --quiet --prune "$remote" || die "cannot fetch from '$remote'; nothing was changed"
+if [ "$CHECK_ONLY" -eq 0 ]; then
+  printf 'Fetching firstmate-config %s...\n' "$remote"
+  git_c fetch --quiet --prune "$remote" || die "cannot fetch from '$remote'; nothing was changed"
+fi
 upstream=$(git_c rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) \
   || die "branch '$branch' has no upstream; set one with 'git branch -u $remote/$branch'; nothing was changed"
 new=$(git_c rev-parse --short "$upstream")
@@ -159,15 +167,22 @@ elif ! git_c merge-base --is-ancestor HEAD "$upstream"; then
   die "branch '$branch' has diverged from '$upstream' ($old vs $new); resolve it manually; nothing was changed"
 fi
 
-# --- 2. official FirstMate --------------------------------------------------
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  printf 'UPDATE_SOURCE: %s\nUPDATE_BRANCH: %s\nUPDATE_TARGET: %s\nVALIDATED_COMMIT: %s\nOFFICIAL_UPSTREAM: %s\n' \
+    "$official" "$f_default" "$f_upstream" "$SM_FIRSTMATE_COMMIT" "$SM_FIRSTMATE_UPSTREAM_REPO"
+  printf 'CHECK_ONLY: local refs; no fetch, update or install\n'
+  exit 0
+fi
+
+# --- 2. FirstMate distribution -----------------------------------------------
 
 if [ "$f_current" = yes ]; then
-  printf 'Official FirstMate already up to date: %s at %s (%s)\n' "$f_branch" "$f_old" "$f_upstream"
+  printf 'FirstMate distribution already up to date: %s at %s (%s)\n' "$f_branch" "$f_old" "$f_upstream"
 else
   git_f merge --ff-only --quiet "$f_upstream" \
     || official_refuse "fast-forward to $f_upstream failed"
   OFFICIAL_UPDATED="$f_old -> $f_new"
-  printf 'Updated official FirstMate %s: %s -> %s (%s commits from %s)\n' \
+  printf 'Updated FirstMate distribution %s: %s -> %s (%s commits from %s)\n' \
     "$f_branch" "$f_old" "$f_new" "$(git_f rev-list --count "$f_old..HEAD")" "$f_upstream"
   git_f --no-pager log --oneline "$f_old..HEAD"
 fi
@@ -207,7 +222,7 @@ fi
 
 # --- 4. summary -------------------------------------------------------------
 
-printf '\nfm update complete: official FirstMate %s; firstmate-config %s; machine reconciled and verified.\n' \
+printf '\nfm update complete: FirstMate distribution %s; firstmate-config %s; machine reconciled and verified.\n' \
   "${OFFICIAL_UPDATED:-already up to date}" "$([ "$current" = yes ] && printf 'already up to date' || printf '%s -> %s' "$old" "$new")"
 [ -z "$OFFICIAL_UPDATED" ] || restart_note
 printf 'Secondmates and projects were not updated.\n'

@@ -58,6 +58,8 @@
 # shellcheck disable=SC2034 # public interface: read by install.sh/fm-doctor after stack_manifest_load
 SM_SCHEMA_VERSION=
 SM_FIRSTMATE_REPO=
+SM_FIRSTMATE_BRANCH=
+SM_FIRSTMATE_UPSTREAM_REPO=
 SM_FIRSTMATE_COMMIT=
 SM_PI_MIN=
 SM_PI_TESTED=
@@ -70,11 +72,12 @@ SM_LOAD_ERROR=
 # The schema_version this parser understands. Bump this only alongside a
 # parser change that actually reads a new/changed key; a tracked manifest
 # whose schema_version disagrees fails closed rather than being guessed at.
-SM_SUPPORTED_SCHEMA_VERSION=1
+SM_SUPPORTED_SCHEMA_VERSION=2
 
 stack_manifest_load() { # <path>
   local file=$1 key value missing='' field seen=' ' name min tested
   SM_SCHEMA_VERSION=; SM_FIRSTMATE_REPO=; SM_FIRSTMATE_COMMIT=
+  SM_FIRSTMATE_BRANCH=; SM_FIRSTMATE_UPSTREAM_REPO=
   SM_PI_MIN=; SM_PI_TESTED=; SM_OMP_MIN=; SM_OMP_TESTED=
   SM_HERDR_MIN=; SM_HERDR_TESTED=; SM_LOAD_ERROR=
 
@@ -86,7 +89,7 @@ stack_manifest_load() { # <path>
   while IFS="$(printf '\t')" read -r key value || [ -n "${key:-}" ]; do
     case ${key:-} in
       ''|\#*) continue ;;
-      schema_version|firstmate_repo|firstmate_validated_commit|pi_min_version|pi_tested_version|omp_min_version|omp_tested_version|herdr_min_version|herdr_tested_version)
+      schema_version|firstmate_repo|firstmate_branch|firstmate_upstream_repo|firstmate_validated_commit|pi_min_version|pi_tested_version|omp_min_version|omp_tested_version|herdr_min_version|herdr_tested_version)
         case $seen in
           *" $key "*)
             SM_LOAD_ERROR="manifest $file has duplicate key: $key"
@@ -99,6 +102,8 @@ stack_manifest_load() { # <path>
     case ${key:-} in
       schema_version) SM_SCHEMA_VERSION=$value ;;
       firstmate_repo) SM_FIRSTMATE_REPO=$value ;;
+      firstmate_branch) SM_FIRSTMATE_BRANCH=$value ;;
+      firstmate_upstream_repo) SM_FIRSTMATE_UPSTREAM_REPO=$value ;;
       firstmate_validated_commit) SM_FIRSTMATE_COMMIT=$value ;;
       pi_min_version) SM_PI_MIN=$value ;;
       pi_tested_version) SM_PI_TESTED=$value ;;
@@ -109,7 +114,7 @@ stack_manifest_load() { # <path>
     esac
   done < "$file"
 
-  for field in SM_SCHEMA_VERSION SM_FIRSTMATE_REPO SM_FIRSTMATE_COMMIT \
+  for field in SM_SCHEMA_VERSION SM_FIRSTMATE_REPO SM_FIRSTMATE_BRANCH SM_FIRSTMATE_UPSTREAM_REPO SM_FIRSTMATE_COMMIT \
                SM_PI_MIN SM_PI_TESTED SM_OMP_MIN SM_OMP_TESTED \
                SM_HERDR_MIN SM_HERDR_TESTED; do
     [ -n "${!field}" ] || missing="$missing ${field#SM_}"
@@ -121,6 +126,10 @@ stack_manifest_load() { # <path>
 
   if [ "$SM_SCHEMA_VERSION" != "$SM_SUPPORTED_SCHEMA_VERSION" ]; then
     SM_LOAD_ERROR="manifest $file has unsupported schema_version '$SM_SCHEMA_VERSION' (this parser supports only $SM_SUPPORTED_SCHEMA_VERSION)"
+    return 1
+  fi
+  if ! git check-ref-format "refs/heads/$SM_FIRSTMATE_BRANCH" >/dev/null 2>&1; then
+    SM_LOAD_ERROR="manifest $file firstmate_branch is not a valid branch: $SM_FIRSTMATE_BRANCH"
     return 1
   fi
 

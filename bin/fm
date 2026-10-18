@@ -64,21 +64,22 @@
 #   fm doctor --json      the same diagnostics as machine-readable JSON
 #   fm version            print compact installed stack identity/version facts
 #   fm version --json     the same facts as machine-readable JSON
-#   fm update             1) fast-forward the official FirstMate checkout
-#                         (FIRSTMATE_ROOT) from origin's default branch,
+#   fm update             1) fast-forward the FirstMate distribution checkout
+#                         from the manifest's explicit origin branch,
 #                         2) fast-forward this firstmate-config checkout to
 #                         its remote tip, 3) run its install.sh and
 #                         install.sh --verify. Both checkouts are checked
 #                         before either changes; refuses a missing or wrong
-#                         official checkout, an origin that is not
+#                         distribution checkout, an origin that differs from
 #                         firstmate_repo in stack-manifest.tsv, a detached,
-#                         non-default, or upstream-less branch, dirty state,
+#                         wrong, or upstream-less branch, wrong origin/HEAD, dirty state,
 #                         an unfinished Git operation, and local commits not
 #                         on the upstream. Never forces, stashes, resets,
 #                         merges, rebases, or pushes, or touches secondmates/
 #                         projects. A failure after step 1 is reported as a
 #                         PARTIAL UPDATE. A running Captain keeps its old
 #                         instructions until restarted (end it, run fm again)
+#   fm update --check     check local guards/source/branch; no fetch/update/install
 #   fm board             open the persistent Kanban board (bin/fm-board's
 #                         own --help documents the full add/update/move/list/
 #                         show/summary/render/open CLI); fm board --lavish

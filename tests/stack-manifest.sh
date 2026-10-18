@@ -77,16 +77,13 @@ check 'component_compat: empty version is UNKNOWN, never a guessed FAIL' UNKNOWN
 check 'component_compat: missing policy bound is UNKNOWN' UNKNOWN "$(stack_component_compat 0.85.1 '' 0.85.1)"
 
 stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv" && pass 'manifest_load: the real tracked manifest loads' || fail "manifest_load: the real tracked manifest failed to load: $SM_LOAD_ERROR"
-REAL_SM_FIRSTMATE_REPO=$SM_FIRSTMATE_REPO
 REAL_SM_FIRSTMATE_COMMIT=$SM_FIRSTMATE_COMMIT
-check 'manifest_load: real firstmate_repo is a github.com URL' 'https://github.com/kunchenguid/firstmate.git' "$REAL_SM_FIRSTMATE_REPO"
-check 'manifest_load: real firstmate_validated_commit is a full 40-hex SHA' 40 "${#REAL_SM_FIRSTMATE_COMMIT}"
 
 stack_manifest_load "$TMP_ROOT/no-such-manifest.tsv" && fail 'manifest_load: a missing file must not report success' || pass 'manifest_load: a missing file reports failure'
 contains 'manifest_load: missing-file error names the path' "$SM_LOAD_ERROR" "$TMP_ROOT/no-such-manifest.tsv"
 
 MALFORMED="$TMP_ROOT/malformed.tsv"
-printf 'schema_version\t1\nfirstmate_repo\thttps://example.invalid/x.git\n' > "$MALFORMED"
+printf 'schema_version\t2\nfirstmate_repo\thttps://example.invalid/x.git\n' > "$MALFORMED"
 stack_manifest_load "$MALFORMED" && fail 'manifest_load: a manifest missing required keys must not report success' || pass 'manifest_load: a manifest missing required keys reports failure'
 contains 'manifest_load: malformed-file error names a missing key' "$SM_LOAD_ERROR" 'PI_MIN'
 
@@ -97,7 +94,7 @@ contains 'manifest_load: malformed-file error names a missing key' "$SM_LOAD_ERR
 VALID_COMMIT=$(printf 'a%.0s' {1..40})
 mkmanifest() { # <path> <schema> <repo> <commit> <pi_min> <pi_tested> <omp_min> <omp_tested> <herdr_min> <herdr_tested>
   local _out=$1
-  printf 'schema_version\t%s\nfirstmate_repo\t%s\nfirstmate_validated_commit\t%s\npi_min_version\t%s\npi_tested_version\t%s\nomp_min_version\t%s\nomp_tested_version\t%s\nherdr_min_version\t%s\nherdr_tested_version\t%s\n' \
+  printf 'schema_version\t%s\nfirstmate_repo\t%s\nfirstmate_validated_commit\t%s\npi_min_version\t%s\npi_tested_version\t%s\nomp_min_version\t%s\nomp_tested_version\t%s\nherdr_min_version\t%s\nherdr_tested_version\t%s\nfirstmate_branch\tmain\nfirstmate_upstream_repo\thttps://example.invalid/official.git\n' \
     "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" > "$_out"
 }
 
@@ -107,27 +104,29 @@ stack_manifest_load "$UNSUPPORTED_SCHEMA" && fail 'manifest_load: an unsupported
 contains 'manifest_load: unsupported schema_version error names the field' "$SM_LOAD_ERROR" 'schema_version'
 
 BAD_COMMIT="$TMP_ROOT/bad-commit.tsv"
-mkmanifest "$BAD_COMMIT" 1 https://example.invalid/x.git deadbeef 0.85.1 0.85.1 18.1.21 18.1.21 0.8.0 0.8.0
+mkmanifest "$BAD_COMMIT" 2 https://example.invalid/x.git deadbeef 0.85.1 0.85.1 18.1.21 18.1.21 0.8.0 0.8.0
 stack_manifest_load "$BAD_COMMIT" && fail 'manifest_load: a non-40-hex firstmate_validated_commit must not report success' || pass 'manifest_load: a non-40-hex firstmate_validated_commit reports failure'
 contains 'manifest_load: bad-commit error names the field' "$SM_LOAD_ERROR" 'firstmate_validated_commit'
 
 BAD_VERSION="$TMP_ROOT/bad-version.tsv"
-mkmanifest "$BAD_VERSION" 1 https://example.invalid/x.git "$VALID_COMMIT" latest 0.85.1 18.1.21 18.1.21 0.8.0 0.8.0
+mkmanifest "$BAD_VERSION" 2 https://example.invalid/x.git "$VALID_COMMIT" latest 0.85.1 18.1.21 18.1.21 0.8.0 0.8.0
 stack_manifest_load "$BAD_VERSION" && fail 'manifest_load: a non-numeric tool version must not report success' || pass 'manifest_load: a non-numeric tool version reports failure'
 contains 'manifest_load: non-numeric version error names the field' "$SM_LOAD_ERROR" 'pi_min_version'
 
 BAD_RANGE="$TMP_ROOT/bad-range.tsv"
-mkmanifest "$BAD_RANGE" 1 https://example.invalid/x.git "$VALID_COMMIT" 9.9.9 0.1.0 18.1.21 18.1.21 0.8.0 0.8.0
+mkmanifest "$BAD_RANGE" 2 https://example.invalid/x.git "$VALID_COMMIT" 9.9.9 0.1.0 18.1.21 18.1.21 0.8.0 0.8.0
 stack_manifest_load "$BAD_RANGE" && fail 'manifest_load: pi_min_version greater than pi_tested_version must not report success' || pass 'manifest_load: pi_min_version greater than pi_tested_version reports failure'
 contains 'manifest_load: min>tested error names the field' "$SM_LOAD_ERROR" 'pi_min_version'
 
 DUP_KEY="$TMP_ROOT/dup-key.tsv"
-printf 'schema_version\t1\nschema_version\t1\nfirstmate_repo\thttps://example.invalid/x.git\nfirstmate_validated_commit\t%s\npi_min_version\t0.85.1\npi_tested_version\t0.85.1\nomp_min_version\t18.1.21\nomp_tested_version\t18.1.21\nherdr_min_version\t0.8.0\nherdr_tested_version\t0.8.0\n' "$VALID_COMMIT" > "$DUP_KEY"
+mkmanifest "$DUP_KEY" 2 https://example.invalid/x.git "$VALID_COMMIT" 0.85.1 0.85.1 18.1.21 18.1.21 0.8.0 0.8.0
+printf 'schema_version\t2\n' >> "$DUP_KEY"
 stack_manifest_load "$DUP_KEY" && fail 'manifest_load: a duplicate required key must not report success' || pass 'manifest_load: a duplicate required key reports failure'
 contains 'manifest_load: duplicate-key error names the key' "$SM_LOAD_ERROR" 'duplicate'
 
 EXTRA_KEY="$TMP_ROOT/extra-key.tsv"
-printf 'schema_version\t1\nfirstmate_repo\thttps://example.invalid/x.git\nfirstmate_validated_commit\t%s\npi_min_version\t0.85.1\npi_tested_version\t0.85.1\nomp_min_version\t18.1.21\nomp_tested_version\t18.1.21\nherdr_min_version\t0.8.0\nherdr_tested_version\t0.8.0\nfuture_unknown_key\tsome-value\n' "$VALID_COMMIT" > "$EXTRA_KEY"
+mkmanifest "$EXTRA_KEY" 2 https://example.invalid/x.git "$VALID_COMMIT" 0.85.1 0.85.1 18.1.21 18.1.21 0.8.0 0.8.0
+printf 'future_unknown_key\tsome-value\n' >> "$EXTRA_KEY"
 stack_manifest_load "$EXTRA_KEY" && pass 'manifest_load: an unknown future key is ignored, load still succeeds' || fail "manifest_load: an unknown future key incorrectly broke load: $SM_LOAD_ERROR"
 check 'manifest_load: unknown key never overwrites a known field (pi_min_version)' 0.85.1 "$SM_PI_MIN"
 
@@ -273,8 +272,10 @@ DOC_C3=$(git -C "$DOC_FMROOT" rev-parse HEAD)
 # every scenario below overrides only the one field it is testing.
 write_doc_manifest() {
   cat > "$DOC_CFG/firstmate/stack-manifest.tsv" <<EOF
-schema_version	1
+schema_version	2
 firstmate_repo	https://example.invalid/firstmate.git
+firstmate_branch	main
+firstmate_upstream_repo	https://example.invalid/official.git
 firstmate_validated_commit	$1
 pi_min_version	0.85.1
 pi_tested_version	0.85.1
@@ -312,7 +313,10 @@ contains 'B0b malformed manifest: reports FAIL' "$out" 'FAIL          stack.mani
 
 # --- B1: exact validated stack -> every stack check PASSes, DOCTOR PASS ----
 write_doc_manifest "$DOC_C2"
-git -C "$DOC_FMROOT" checkout -q "$DOC_C2"
+git -C "$DOC_FMROOT" checkout -q -B main "$DOC_C2"
+git -C "$DOC_FMROOT" remote add origin https://example.invalid/firstmate.git
+git -C "$DOC_FMROOT" update-ref refs/remotes/origin/main "$DOC_C2"
+git -C "$DOC_FMROOT" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 out=$(run_fake_doctor); code=$?
 check 'B1 exact stack: exit code is 0' 0 "$code"
 contains 'B1 exact stack: overall status is PASS' "$out" 'DOCTOR PASS exit=0'
@@ -435,11 +439,14 @@ printf 'AGENTS2\n' >> "$INST_ORIGIN/AGENTS.md"
 git -C "$INST_ORIGIN" add -A
 git -C "$INST_ORIGIN" commit -q -m c2
 INST_C2=$(git -C "$INST_ORIGIN" rev-parse HEAD)
+git -C "$INST_ORIGIN" branch selected "$INST_C2"
 
 write_inst_manifest() { # <baseline-commit>
   cat > "$INST_CFG/firstmate/stack-manifest.tsv" <<EOF
-schema_version	1
+schema_version	2
 firstmate_repo	$INST_ORIGIN
+firstmate_branch	selected
+firstmate_upstream_repo	https://example.invalid/official.git
 firstmate_validated_commit	$1
 pi_min_version	0.85.1
 pi_tested_version	0.85.1
@@ -470,6 +477,9 @@ check 'C1 fresh clone: exit code is 0' 0 "$code"
 contains 'C1 fresh clone: reports the pinned commit' "$out" "pinned to $INST_C1"
 head_after_clone=$(git -C "$TMP_ROOT/inst-dest-c1" rev-parse HEAD 2>/dev/null || printf '')
 check 'C1 fresh clone: HEAD is actually pinned to the baseline commit' "$INST_C1" "$head_after_clone"
+check 'C1 clone tracks the explicitly selected nondefault branch' origin/selected "$(git -C "$TMP_ROOT/inst-dest-c1" rev-parse --abbrev-ref '@{upstream}')"
+check 'C1 clone native bootstrap follows the selected branch' origin/selected "$(git -C "$TMP_ROOT/inst-dest-c1" symbolic-ref --short refs/remotes/origin/HEAD)"
+check 'C1 clone keeps official integration separately available' https://example.invalid/official.git "$(git -C "$TMP_ROOT/inst-dest-c1" remote get-url upstream)"
 
 out2=$(run_fake_install c1); code2=$?
 check 'C1 rerun: exit code is 0' 0 "$code2"

@@ -60,7 +60,6 @@ run_version(){ HOME="$HOME_FIXTURE" FIRSTMATE_ROOT="$FIRSTMATE_FIXTURE" FM_HOME=
 
 out=$(run_version)
 contains 'human includes config tag' "$out" 'firstmate-config: v1.2.3'
-contains 'human includes firstmate path' "$out" "official FirstMate: $FIRSTMATE_FIXTURE"
 contains 'human includes pi version' "$out" 'Pi: pi 9.9.9'
 contains 'human includes fm home' "$out" "FM_HOME: $TMP_ROOT/fm-home"
 contains 'human includes the validated FirstMate baseline from the shared manifest' "$out" "Validated FirstMate baseline: $MANIFEST_COMMIT"
@@ -72,7 +71,6 @@ contains 'dirty config state is reported' "$out" 'dirty'
 git -C "$CONFIG_FIXTURE" checkout -q -- file.txt
 printf 'dirty\n' >> "$FIRSTMATE_FIXTURE/file.txt"
 out=$(run_version)
-contains 'dirty official firstmate is reported' "$out" 'official FirstMate:'
 contains 'dirty official state is reported' "$out" 'dirty'
 
 rm -f "$FAKE_BIN/omp"

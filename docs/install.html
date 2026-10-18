@@ -41,7 +41,7 @@ cd firstmate-config
 <p>It works through nine numbered steps. Every step states a desired end state and changes only what differs:</p>
 <ol class="flow">
 <li><strong>Toolchain</strong> - the checks above.</li>
-<li><strong>Official FirstMate checkout</strong> - cloned to <code>FIRSTMATE_ROOT</code> and pinned to the validated commit <em>only if it is missing</em>. An existing checkout is reported against the baseline (<code>ok</code>, or a <code>warn</code> if ahead, behind, or diverged) and never modified.</li>
+<li><strong>FirstMate distribution checkout</strong> - clone manifest <code>firstmate_repo</code> on explicit <code>firstmate_branch</code> (<code>inkayat-main</code>) only if missing; verify pin membership, start at the exact validated pin on the tracked branch, set local <code>origin/HEAD</code> to it, and add official as <code>upstream</code>. Existing checkouts are report-only, including source migration warnings; see <a href="update.html#migration">migration</a>.</li>
 <li><strong>Operational home</strong> - creates <code>state</code>, <code>data</code>, <code>config</code>, and <code>projects</code> under <code>FM_HOME</code>.</li>
 <li><strong>Environment file</strong> - writes <code>~/.config/firstmate-config/env</code> with the resolved paths.</li>
 <li><strong>Runtime backend</strong> - sets <code>$FM_HOME/config/backend</code> to <code>herdr</code>.</li>
@@ -56,7 +56,7 @@ cd firstmate-config
   ok      git present
   ok      omp present
   ...
-2. official FirstMate checkout
+2. FirstMate distribution checkout
   ok      present at ~/Developer/tools/firstmate
   ok      matches the validated baseline commit <sha>
 ...
@@ -104,7 +104,7 @@ PREFLIGHT=ok</code></pre>
 <p>Three fields matter on a first run:</p>
 <ul>
 <li><code>SELECTED_MODEL</code> - the first startup candidate that is not known to be unavailable. If it differs from <code>PREFERRED_MODEL</code>, a <code>FALLBACK_REASON</code> line says why.</li>
-<li><code>CAPTAIN_CWD</code> - always the official FirstMate checkout, wherever you ran <code>fm</code> from.</li>
+<li><code>CAPTAIN_CWD</code> - always the selected FirstMate checkout, wherever you ran <code>fm</code> from.</li>
 <li><code>FM_FORK_ORIGIN_IS_PROJECT</code> - whether your launch directory is a Git project. It is used only as a default-project <em>hint</em>.</li>
 </ul>
 <p><code>fm --print-command</code> prints the same resolution plus the exact harness command line. Then start the Captain:</p>
@@ -122,7 +122,7 @@ by an explicit path or name, then FirstMate's registry (<code>data/projects.md</
 <ul>
 <li>Store a credential.</li>
 <li>Touch a project repository.</li>
-<li>Modify the official FirstMate checkout after it exists.</li>
+<li>Modify the FirstMate checkout after it exists.</li>
 <li>Overwrite a file at a link location that it does not own - it prints <code>warn ... leaving it alone</code> instead.</li>
 <li>Create or activate a bot - specs and the watcher check exist only after <code>fm bot create</code> and <code>fm bot check-install</code>.</li>
 </ul>

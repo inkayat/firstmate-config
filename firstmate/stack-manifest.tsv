@@ -1,8 +1,8 @@
 # firstmate-config stack compatibility manifest.
 #
 # The single source of truth for stable compatibility information across
-# OMP Captain -> official FirstMate -> Herdr -> Pi / OMP, on macOS and
-# Betao/Omarchy Linux. install.sh and bin/fm-doctor both read this file
+# Captain -> FirstMate distribution (official upstream retained) -> Herdr ->
+# Pi / OMP, on macOS and Betao/Omarchy Linux. Install/update/doctor/version read it
 # through firstmate/fm-stack-manifest.sh, the one parsing/comparison owner -
 # never duplicate these values as separate hardcoded constants in a script
 # or a test.
@@ -29,9 +29,11 @@
 # machine-local state.
 #
 # Format, tab-separated key<TAB>value:
-schema_version	1
-firstmate_repo	https://github.com/kunchenguid/firstmate.git
-firstmate_validated_commit	8b10b61e3feace8f275c6d0b3e490cdf7ab1f67d
+schema_version	2
+firstmate_repo	https://github.com/inkayat/firstmate.git
+firstmate_branch	inkayat-main
+firstmate_upstream_repo	https://github.com/kunchenguid/firstmate.git
+firstmate_validated_commit	e73653772c7bf7329e58d6425ad74752b5b2b8bf
 pi_min_version	0.85.1
 pi_tested_version	0.85.1
 omp_min_version	18.1.21

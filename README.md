@@ -1,10 +1,11 @@
 # firstmate-config
 
-A reproducible configuration layer for official
-[FirstMate](https://github.com/kunchenguid/firstmate): Captain startup, worker
-routing, roles, shared skills, and machine-local setup. It uses native extension
-points without forking or patching FirstMate. Project instructions stay
-project-owned; credentials and operational state stay outside this repository.
+A reproducible configuration layer for
+[FirstMate](https://github.com/kunchenguid/firstmate), distributed through the
+[inkayat fork](https://github.com/inkayat/firstmate) on `inkayat-main`: Captain
+startup, worker routing, roles, shared skills, and machine-local setup.
+Project instructions stay project-owned; credentials and operational state
+stay outside this repository.
 
 [Read the guide](https://inkayat.github.io/firstmate-config/) ·
 [Releases](https://github.com/inkayat/firstmate-config/releases)
@@ -32,10 +33,10 @@ skills, slash commands and OMP role agents, and installs `fm` and
 It also reconciles the pinned Pi Ponytail package, filters duplicate shared
 skills, and sets Ponytail's `defaultMode` to `off`.
 
-If official FirstMate is missing, installation clones it at the validated
-commit. An existing official checkout is reported, never updated by the
-installer. Re-running installation reconciles machine state; conflicting or
-foreign link destinations are reported rather than overwritten.
+If FirstMate is missing, installation clones the manifest's fork branch at the
+validated commit, tracks that branch, and preserves official as `upstream`.
+An existing checkout is reported, never updated or switched by the installer.
+Re-running installation reconciles machine state; foreign links are not overwritten.
 
 Check the installation, then launch:
 
@@ -89,7 +90,7 @@ FirstMate owns task lifecycle, delegation and worktree isolation; Herdr owns
 runtime sessions. Captain harness/model selection and worker routing are
 independent.
 
-The Captain runs inside the official FirstMate checkout, not the launch
+The Captain runs inside the FirstMate distribution checkout, not the launch
 directory. It is multi-project: each task resolves its project separately from
 an explicit path/name, the FirstMate registry, then the launch directory as a
 hint if it is a Git project. Project instructions and skills are not preloaded
@@ -126,11 +127,11 @@ but does not probe availability.
 ### Stack compatibility
 
 [`stack-manifest.tsv`](firstmate/stack-manifest.tsv) is the single source for
-the official repository, validated FirstMate commit, and Pi/OMP/Herdr minimum
+the distribution repository/explicit branch, official upstream, validated FirstMate commit, and Pi/OMP/Herdr minimum
 and tested versions. The recorded minimums currently equal tested versions:
 they are known-good points, not proof of a wider supported range.
 
-Doctor treats versions below minimum and an official checkout behind or
+Doctor treats versions below minimum and a FirstMate checkout behind or
 diverged from the baseline as failures. Newer versions or a checkout ahead of
 the baseline are warnings, not newly validated compatibility.
 
@@ -143,19 +144,25 @@ fm update
 ```
 
 [`bin/fm-update`](bin/fm-update) checks **both** checkouts before changing either,
-then fast-forwards official FirstMate, fast-forwards firstmate-config, and runs
-that configuration checkout's `install.sh` and `install.sh --verify`. No separate
-installation is needed after success.
+then fast-forwards the FirstMate distribution's explicit `inkayat-main` branch,
+fast-forwards firstmate-config, and runs that configuration checkout's
+`install.sh` and `install.sh --verify`.
 
 Both working trees must be clean and fast-forwardable with configured upstreams.
-Official FirstMate must use the manifest's exact origin URL and track origin's
-default branch, with no unfinished Git operation or local-only commits. Detached
-checkouts are refused. A fresh installer clone is pinned at a detached commit;
-it needs an intentional switch to the tracked default branch before `fm update`
-can manage it. See [update refusals and recovery](docs/update.html#refusals).
+FirstMate must use the manifest's exact fork origin, check out `firstmate_branch`,
+track `origin/inkayat-main`, and set local `origin/HEAD` to that same branch for
+native bootstrap consistency. No unfinished Git operation or local-only commits
+are accepted. `fm update --check` verifies local guards and prints the source,
+branch, target and pin without fetching, updating or installing; remote freshness
+is deliberately unverified. See [migration and refusals](docs/update.html).
+
+Official updates are a separate human integration: fetch `upstream/main`, merge
+it into a separate integration branch based on `inkayat-main`, test and review,
+then publish the approved result to the fork. Normal `fm update` never merges
+official or follows the fork's GitHub default `main`.
 
 Updates never force, stash, reset, rebase, push, or update project/secondmate
-checkouts. If the official checkout moved and a later stage fails, the command
+checkouts. If the distribution checkout moved and a later stage fails, the command
 reports `PARTIAL UPDATE`; there is no multi-repository rollback. Fix the stated
 error and re-run. Only `fm update complete` means every stage succeeded.
 

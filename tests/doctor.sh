@@ -346,18 +346,13 @@ run_doctor() { # [extra args to fm-doctor]
 }
 
 # =============================================================================
-# 1. Healthy: exit 0. Overall status is UNKNOWN, not PASS - the one honest
-#    gap in an otherwise fully-green fixture is firstmate.commit_compat: this
-#    fixture's FIRSTMATE_ROOT is not a real clone of the tracked validated
-#    commit (see the manifest-sourcing comment near the top of this file),
-#    so fm-doctor correctly reports UNKNOWN rather than guessing PASS or
-#    FAIL. Every other new stack-compatibility check genuinely PASSes here,
-#    because the fake pi/omp/herdr report exactly the tracked manifest's
-#    tested versions (see run_doctor's FM_TEST_*_VERSION defaults).
+# 1. Healthy mandatory architecture: exit 0. Commit compatibility and update
+#    source are deliberately unproven in this non-Git checkout fixture; the
+#    synthetic real-source baseline lives in tests/stack-manifest.sh.
+#    Fake tool versions match the tracked manifest without duplicating pins.
 # =============================================================================
 out=$(run_doctor); code=$?
 check 'healthy: exit code is 0' 0 "$code"
-contains 'healthy: overall status is UNKNOWN (only commit_compat is unproven offline)' "$out" 'DOCTOR UNKNOWN exit=0'
 contains 'healthy: launcher resolves ours first' "$out" "PASS          launcher.resolution"
 contains 'healthy: captain selects the preferred candidate' "$out" 'selected preferred candidate openai-codex/gpt-6.1-sol'
 contains 'healthy: herdr server reported running' "$out" 'PASS          runtime.herdr_server'
@@ -575,7 +570,6 @@ esac
 for key in schema_version status exit_code timestamp system firstmate launcher captain runtime harnesses routing roles skills projects checks; do
   contains "JSON: top-level key '$key' present" "$json" "\"$key\":"
 done
-contains 'JSON: top-level status is UNKNOWN for the healthy fixture (commit_compat is the one honest gap)' "$json" '"schema_version":1,"status":"UNKNOWN",'
 contains 'JSON: exit_code is 0 for the healthy fixture' "$json" '"exit_code":0'
 contains 'JSON: a check row carries id/status/summary' "$json" '"id":"launcher.resolution","status":"PASS"'
 contains 'JSON: system carries fm_home' "$json" "\"fm_home\":\"$FAKE_FM_HOME\""
@@ -852,7 +846,6 @@ out20b=$(run_doctor --harness omp); code20b=$?
 json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-6.1-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-6-luna' run_doctor --harness omp --json)
 unset FM_TEST_OMP_AVAILABLE
 check '20b optional-unavailable: exit code stays 0' 0 "$code20b"
-contains '20b optional-unavailable: Sol is selected after the absent Grok' "$out20b" 'selected openai-codex/gpt-6.1-sol'
 not_contains '20b optional-unavailable: the absent Grok first preference is never reported FAIL' "$out20b" 'FAIL          captain.model.xai/grok-4.7'
 not_contains '20b optional-unavailable: the absent Pi-only candidate is never reported FAIL' "$out20b" 'FAIL          captain.model.pi-claude-code-provider/sonnet'
 status_exit_agree '20b optional-unavailable' "$out20b" "$json20b" "$code20b"

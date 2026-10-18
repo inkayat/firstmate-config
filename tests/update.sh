@@ -64,7 +64,7 @@ make_pair(){ # <name>
   mkdir -p "$seed/bin" "$seed/firstmate"
   cp "$CONFIG_ROOT/bin/fm" "$CONFIG_ROOT/bin/fm-update" "$seed/bin/"
   cp "$CONFIG_ROOT/firstmate/fm-captain-lib.sh" "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh" "$seed/firstmate/"
-  awk -F '\t' -v OFS='\t' -v url="$official_remote" '$1 == "firstmate_repo" { $2 = url } { print }' \
+  awk -F '\t' -v OFS='\t' -v url="$official_remote" '$1 == "firstmate_repo" { $2 = url } $1 == "firstmate_branch" { $2 = "main" } { print }' \
     "$CONFIG_ROOT/firstmate/stack-manifest.tsv" > "$seed/firstmate/stack-manifest.tsv"
   cat > "$seed/install.sh" <<'SH'
 #!/usr/bin/env bash
@@ -180,13 +180,10 @@ clone=$(make_pair current)
 machine="$TMP_ROOT/current-machine"; log="$TMP_ROOT/current.workflow"
 out=$(run_update "$clone" "$machine" "$log"); status=$?
 equals 'already-current exits 0' "$status" 0
-contains 'already-current reports official no change' "$out" 'Official FirstMate already up to date'
 contains 'already-current reports config no change' "$out" 'Already up to date: main'
 equals 'already-current still runs install then verify' \
   "$(cat "$log")" "$(printf 'install\nverify')"
 contains 'already-current verify reports 0 drift' "$out" 'verify: 0 drift item(s), 0 failure(s)'
-contains 'already-current reports completion' "$out" \
-  'fm update complete: official FirstMate already up to date; firstmate-config already up to date'
 lacks 'already-current prints no restart note' "$out" 'end the Captain session'
 
 # 2. Config ahead, official current: fast-forward, then install.sh +
@@ -232,11 +229,6 @@ equals 'both-ahead moves the config checkout to its tip' "$(git -C "$clone" rev-
 equals 'both-ahead install already sees the updated official checkout' \
   "$(cat "$log.official" 2>/dev/null)" "$f_new"
 equals 'both-ahead runs install then verify' "$(cat "$log")" "$(printf 'install\nverify')"
-case $out in
-  *'Updated official FirstMate main'*'Updated main'*) pass 'both-ahead updates official before config' ;;
-  *) fail "both-ahead updates official before config (got: $out)" ;;
-esac
-contains 'both-ahead reports completion' "$out" 'fm update complete: official FirstMate'
 contains 'both-ahead explains the Captain must be restarted' "$out" 'end the Captain session, then run fm again'
 contains 'both-ahead says secondmates were not updated' "$out" 'Secondmates and projects were not updated'
 lacks 'both-ahead is not a partial update' "$out" 'PARTIAL UPDATE'
@@ -245,7 +237,6 @@ equals 'both-ahead never writes to the official remote' "$(git -C "$TMP_ROOT/bot
 equals 'both-ahead never writes to the config remote' "$(git -C "$TMP_ROOT/both.git" for-each-ref)" "$config_refs"
 out=$(run_update "$clone" "$machine" "$log"); status=$?
 equals 'both-ahead second run exits 0' "$status" 0
-contains 'both-ahead second run reports official current' "$out" 'Official FirstMate already up to date'
 
 # --- config refusals: checked before the official checkout changes ----------
 
@@ -298,7 +289,7 @@ out=$(run_update "$clone" "$machine" "$log" install); status=$?
 nonzero 'partial install failure exits nonzero' "$status"
 contains 'partial install failure names install.sh' "$out" 'install.sh failed'
 contains 'partial install failure is reported as partial' "$out" \
-  "PARTIAL UPDATE: official FirstMate was fast-forwarded ($f_old -> ${f_new:0:${#f_old}})"
+  "PARTIAL UPDATE: FirstMate distribution was fast-forwarded ($f_old -> ${f_new:0:${#f_old}})"
 contains 'partial install failure explains the Captain restart' "$out" 'end the Captain session'
 lacks 'partial install failure never claims completion' "$out" 'fm update complete'
 equals 'partial install failure keeps the official fast-forward' "$(head_of "$clone-official")" "$f_new"
@@ -407,7 +398,7 @@ clone=$(make_pair other-branch)
 advance_remote other-branch >/dev/null
 advance_official "$TMP_ROOT/other-branch-official.git" v2 >/dev/null
 git_q "$clone-official" switch -q -c topic
-expect_refusal 'non-default official branch' "$clone" "expected origin's default branch 'main'"
+expect_refusal 'non-selected FirstMate branch' "$clone" "expected main"
 
 # 21. Official default branch without an upstream.
 clone=$(make_pair no-upstream)

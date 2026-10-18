@@ -17,7 +17,7 @@
 <table>
 <thead><tr><th>Component</th><th>Boundary</th></tr></thead>
 <tbody>
-<tr><td class="wrap">Official FirstMate checkout</td><td class="wrap">Upstream-clean. Never modified, except by the fast-forward-only first stage of <code>fm update</code>. <code>install.sh</code> reports a modified checkout and leaves it alone.</td></tr>
+<tr><td class="wrap">FirstMate distribution checkout</td><td class="wrap">The verified fork, with official provenance preserved separately. Only the guarded fast-forward stage of <code>fm update</code> advances an existing checkout; install never switches or updates it.</td></tr>
 <tr><td class="wrap">Project repositories</td><td class="wrap">The installer never touches them. Project knowledge is never copied into this repository; it is resolved per task, in place.</td></tr>
 <tr><td class="wrap">Credentials</td><td class="wrap">Never stored. Authentication, sessions, and runtime records live outside the repository.</td></tr>
 <tr><td class="wrap">Existing files at link locations</td><td class="wrap">If a file or directory already sits where a symlink belongs, the installer warns and leaves it alone. An existing symlink that does not already reach the expected source inside this checkout or the skill cache is reported as a failure and never rewritten, whoever made it. In OMP's agent root it also leaves alone, with a warning, any <code>fm-&lt;role&gt;.md</code> symlink that does not point at a firstmate-config file, and never touches other agent files.</td></tr>
@@ -34,10 +34,10 @@
 
 <h2 id="update-safety">Update safety</h2>
 <ul>
-<li>The official checkout's <code>origin</code> must be exactly <code>firstmate_repo</code> from the manifest. A different URL, or an <code>insteadOf</code> rewrite, is refused <em>before</em> the remote is contacted.</li>
+<li>The distribution's configured/effective <code>origin</code> must exactly match manifest <code>firstmate_repo</code>. Wrong URLs or rewrites are refused before network access; branch, tracking and local <code>origin/HEAD</code> must select explicit <code>inkayat-main</code>, never GitHub's default or official upstream.</li>
 <li>Only fast-forwards. Nothing is forced, stashed, reset, merged, rebased, discarded, or pushed.</li>
 <li>Both checkouts are checked before either changes. A refusal leaves both exactly as they were.</li>
-<li>Failures after the official fast-forward are reported as a <code>PARTIAL UPDATE</code>, never as success.</li>
+<li>Failures after the distribution fast-forward are reported as a <code>PARTIAL UPDATE</code>, never as success.</li>
 </ul>
 <p>Details and recovery are on <a href="update.html">Update and recovery</a>.</p>
 

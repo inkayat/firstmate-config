@@ -73,7 +73,7 @@ DOCTOR PASS exit=0</code></pre>
 <h3>Exit status</h3>
 <p><code>0</code> when the mandatory architecture is healthy, even with <code>WARNING</code>, <code>UNKNOWN</code>, or <code>DEFERRED</code> present. <code>1</code> on a genuine mandatory break:</p>
 <ul>
-<li>the official FirstMate checkout is missing or broken, or at a known-incompatible commit (behind the validated baseline, or diverged);</li>
+<li>the FirstMate distribution checkout is missing or broken, or at a known-incompatible commit (behind the validated baseline, or diverged);</li>
 <li>the stack manifest, <code>captain-startup-models.tsv</code>, or <code>crew-dispatch.json</code> is missing or invalid;</li>
 <li>there is no usable Captain: missing executable or primary extensions, an empty chain, or every candidate unavailable;</li>
 <li>the Herdr CLI is missing, its server is unreachable, incompatible, or not running;</li>
@@ -90,19 +90,21 @@ fm version --json
 fm --harness pi version</code></pre>
 <p>A fast identity summary - not a health check, and it makes no availability probes. Use <code>fm doctor</code> for a verdict.</p>
 <pre class="out" data-label="output"><code>firstmate-config: v0.3.1 (5c9252f, clean) ~/src/firstmate-config
-official FirstMate: ~/Developer/tools/firstmate (a774c448, clean)
+FirstMate distribution: ~/Developer/tools/firstmate (e7365377, clean)
+Update source: https://github.com/inkayat/firstmate.git (branch inkayat-main)
+Official upstream: https://github.com/kunchenguid/firstmate.git
 Captain harness: omp
 Pi: 0.99.1
 OMP: omp/18.4.9
 Herdr: herdr 0.9.0
-Validated FirstMate baseline: &lt;full commit hash&gt; (stack manifest schema 1)
+Validated FirstMate baseline: &lt;full commit hash&gt; (stack manifest schema 2)
 FM_HOME: ~/.firstmate
 Platform: Darwin arm64</code></pre>
-<p>The versions shown are examples. <code>--json</code> returns the same facts as one object with <code>firstmate_config</code>, <code>firstmate</code>, <code>components</code>, <code>captain_harness</code>, <code>stack_manifest</code>, <code>fm_home</code>, <code>platform</code>, and <code>architecture</code>. Version strings read <code>unknown</code> when a tool is missing.</p>
+<p>The versions shown are examples. <code>--json</code> returns the same facts as one object with <code>firstmate_config</code>, <code>firstmate</code>, <code>distribution</code> (repo, branch and official upstream), <code>components</code>, <code>captain_harness</code>, <code>stack_manifest</code>, <code>fm_home</code>, <code>platform</code>, and <code>architecture</code>. Version strings read <code>unknown</code> when a tool is missing.</p>
 
 <h2 id="update">fm update</h2>
-<pre data-label="usage"><code>fm update</code></pre>
-<p>Takes no options other than <code>--help</code>. Fast-forwards the official FirstMate checkout, then this repository, then runs <code>./install.sh</code> and <code>./install.sh --verify</code>. Exits nonzero on a refusal or failure. The full behavior, the refusal table, and recovery are on <a href="update.html">Update and recovery</a>.</p>
+<pre data-label="usage"><code>fm update [--check]</code></pre>
+<p>Normal mode fast-forwards the manifest's FirstMate fork and explicit branch, then this repository, then runs <code>./install.sh</code> and <code>./install.sh --verify</code>. <code>--check</code> checks local guards and prints source, branch, target and pin without fetching, updating or installing; remote freshness remains unverified. Exits nonzero on a refusal or failure. The full behavior, migration steps and recovery are on <a href="update.html">Update and recovery</a>.</p>
 
 <h2 id="board">fm board</h2>
 <pre data-label="usage"><code>fm board
