@@ -1,284 +1,24 @@
 # firstmate-config
 
-**[Read the guide](https://inkayat.github.io/firstmate-config/)** — the
-navigable documentation site for installation, CLI, configuration, dispatch,
-safety, and updates.
+A reproducible configuration layer for official
+[FirstMate](https://github.com/kunchenguid/firstmate): Captain startup, worker
+routing, roles, shared skills, and machine-local setup. It uses native extension
+points without forking or patching FirstMate. Project instructions stay
+project-owned; credentials and operational state stay outside this repository.
 
-`firstmate-config` is an opinionated, reproducible configuration layer around
-the official [FirstMate](https://github.com/kunchenguid/firstmate) checkout. It
-selects the Captain runtime, worker routing, shared skills, and machine-local
-layout without forking or patching FirstMate.
-
-The official checkout remains upstream-clean. Tracked configuration lives here;
-operational state, credentials, sessions, and project registries stay outside
-the repository. See [GitHub Releases](https://github.com/inkayat/firstmate-config/releases)
-for the latest tagged version; `main` may contain newer reviewed changes.
-
-## Architecture
-
-```text
-fm
- └─ Pi Captain (default) or OMP Captain (--harness omp)
-     └─ FirstMate
-         └─ Herdr
-             ├─ Pi workers
-             └─ OMP workers
-```
-
-Pi is the default Captain harness, so a plain `fm` starts the Captain on Pi,
-preferring `openai-codex/gpt-6.1-sol` at high effort. OMP stays available explicitly:
-
-```sh
-fm --harness omp
-```
-
-The Captain harness and worker routing are separate decisions. FirstMate owns
-task lifecycle and delegation; Herdr provides the runtime; the tracked routing
-policy chooses worker harness, model, effort, and role by task semantics.
-
-## Highlights
-
-- Pi-first Captain (Grok 4.7 high first) with an explicit OMP option
-- Semantic task routing across ten dispatch categories plus a DEFAULT catch-all
-- Opus 5.5-biased routing: substantive work lands on Opus 5.5, bounded work
-  may stay on Sonnet 5.5, trivial work on Haiku 4.5 or GPT-6 Luna; GPT-6.1 Sol
-  is the everyday cross-family challenger and the same-effort GPT alternative
-  in IMPLEMENT and IMPLEMENT-LARGE, with Astra limited to each lane's most
-  extreme, exceptional escalation
-- Temporary routing/agent/workflow/skill trace in the Captain chat during the
-  debugging period (`firstmate/primary-policy.md` section 0)
-- Multi-project operation with per-task project resolution
-- Scoped `AGENTS.md` / `CLAUDE.md` context and project-local skills
-- Role files that double as OMP agent definitions and load their own default
-  skills (`autoloadSkills`) - core roles and an open set of specialists
-  (`security-engineer`, `code-reviewer`, `refactorist`, `django-pro`,
-  `frontend-master`, `scout`, `debugger`, `technical-writer`). `install.sh` links
-  every role file into OMP's user agent root as `fm-<role>`
-  (`firstmate/primary-policy.md` sections 4-5)
-- Reproducibly installed shared worker skills and external pins
-- Five declarative adaptive workflows, selected by the current blocking
-  condition rather than a mandatory specialist pipeline
-- Browser/manual validation policy for user-visible work
-- Review authority stays with the selected official FirstMate delivery path;
-  an explicitly requested separate review is a scoped, read-only knowledge
-  deliverable (see `firstmate/primary-policy.md` "Review under the selected
-  delivery path")
-- Read-only `fm doctor` and `fm version` diagnostics
-- Fast-forward-only `fm update` (official FirstMate checkout, then this repository) and deterministic, idempotent installation
-
-## Documentation
-
-A small, navigable guide lives in [`docs/`](docs/index.html): installation and
-first run, update and recovery, architecture and startup, roles and skills,
-dispatch routing, safety boundaries, configuration, the CLI, the
-task board, and bots. It is plain HTML with no build step; preview it locally by opening
-`docs/index.html` in a browser. This README and the files it links remain the
-source of truth.
-
-## Routing
-
-[`firstmate/crew-dispatch.json`](firstmate/crew-dispatch.json) is the source of
-truth. Categories describe semantic fit, not a simple size ladder; explicit
-Captain choices can override the table.
-
-| Category | Sub-lanes | Intent |
-| --- | --- | --- |
-| `QUICK` | OMP · Claude Haiku 4.5 low, or GPT-6 Luna low | Tiny edits, mechanical cleanup, quick factual work |
-| `EXPLORE` | Simple: OMP · Claude Haiku 4.5 low, or GPT-6 Luna low; hard: OMP · Claude Sonnet 5.5 medium | Read-only reconnaissance inside a repository |
-| `RESEARCH` | Ordinary: OMP · Claude Sonnet 5.5 medium; substantial/decision-heavy: OMP · Claude Opus 5.5 high; Pi-tooling advantage: Pi · GPT-6.1 Sol medium | External docs, APIs, standards, and upstream source |
-| `REVIEW` | Bounded: OMP · Claude Sonnet 5.5 high; substantive/cross-component: OMP · Claude Opus 5.5 high; critical/high-consequence: OMP · Claude Opus 5.5 xhigh, optionally plus a Pi · GPT-6.1 Sol xhigh cross-family second reviewer | Correctness and maintainability review |
-| `ARCHITECTURE` | OMP · Claude Opus 5.5 high; very difficult: xhigh; GPT-6 Astra xhigh only when ultra-exceptional | Boundaries, data models, migrations, structural decisions |
-| `TENTH-MAN` | Claude-authored work: Pi · GPT-6.1 Sol xhigh (GPT-6 Astra xhigh only when critical/unresolved after Sol); Astra/OpenAI-authored work: OMP · Claude Opus 5.5 xhigh | Independent adversarial challenge |
-| `IMPLEMENT` | Small/bounded: OMP · Claude Sonnet 5.5 high; substantive: OMP · Claude Opus 5.5 high; each with OMP · GPT-6.1 Sol at the same effort as its GPT alternative | Features, fixes, refactors, and tests |
-| `IMPLEMENT-LARGE` | OMP · Claude Opus 5.5 high; reasoning-heavy: xhigh; each with OMP · GPT-6.1 Sol at the same effort as its GPT alternative | Broad, mostly settled implementation |
-| `DEEP` | Scout and ship: OMP · Claude Opus 5.5 xhigh, with GPT-6.1 Sol xhigh only as an explicit escalation/second hypothesis and GPT-6 Astra xhigh as the last escalation | Hard root-cause and reasoning-heavy work |
-| `UI/BROWSER` | Normal: OMP · Claude Sonnet 5.5 high; complex/cross-layer: OMP · Claude Opus 5.5 high | Browser-visible behavior and end-to-end flows |
-| `DEFAULT` | OMP · Claude Opus 5.5 high (debugging period) | Work with no more specific category |
-
-Routing philosophy:
-
-- Substantive work - meaningful new behavior, nontrivial refactors,
-  multi-component work, or real cross-component regression risk - goes to
-  Opus 5.5. When unsure between Sonnet 5.5 and Opus 5.5 for substantive work,
-  choose Opus 5.5.
-- Small, bounded work may stay on Sonnet 5.5; trivial work on Haiku 4.5 or
-  GPT-6 Luna.
-- Sub-lanes are separate same-category rules, never new categories and
-  never quota peers of each other. Inside one rule's `use` array, only QUICK
-  and simple EXPLORE (Haiku with Luna) and the four IMPLEMENT/IMPLEMENT-LARGE
-  rules (the Claude candidate first, then GPT-6.1 Sol at the same effort)
-  list quota peers; every other rule has one candidate, so quota resolution
-  never picks a model ahead of an Opus 5.5 primary anywhere else.
-- TENTH-MAN enforces model-family diversity: a Claude-authored change is
-  challenged by Pi + GPT-6.1 Sol, escalating to Pi + GPT-6 Astra only for
-  critical cases Sol leaves unresolved; an Astra/OpenAI-authored change is
-  challenged by OMP + Opus 5.5.
-- Sonnet 5, Opus 5, Fable 5.1, GPT-5.5, GPT-5.6 Luna/Sol, and GPT-6 Sol are
-  retired.
-
-The complete conditions live in the tracked routing file and
-[`firstmate/primary-policy.md`](firstmate/primary-policy.md).
-
-During the debugging period the Captain prints a short `Routing:` /
-`Agent:` / `Workflow:` / `Skills:` block for each actually assigned worker
-and stage (primary-policy.md section 0). Selection lines contain names only:
-
-```text
-Agent: senior-fullstack
-Workflow: focused-delivery
-Skills: ponytail, test-driven-development, writing-good-tests
-```
-
-Use only actual selected names; `Skills: none` stands alone when appropriate.
-Routing stays unchanged. Full source paths, worker/native identity, current
-stage, authority and task-specific reasons remain inside the instructions/
-handoff, not these selection lines. Agent names the assigned role, not proof
-of native adoption. Do not spawn actors merely to display every recipe stage.
-Selecting an instruction or skill does not prove it was read or applied; workers still
-read and apply their assigned context and methods, run actual checks, and
-report observed outcomes and limits under the ordinary handoff/completion
-policy.
-`tests/routing-trace.sh check` compares a captured block with the real
-spawn axes, the matched rule's route (`#n`), and the brief's selected skills.
-Agent must agree with Routing's role; Workflow must name a catalogue recipe.
-Optional trailing `--brief <delivered-brief>` compares only the `Agent` name
-with `Assigned role:` and the `Workflow` name with `Workflow ID:`.
-Missing or contradictory names fail agreement; without a brief, assignment
-names are not compared. Selected skill/companion paths normalize to short
-names, so same-named local/shared sources cannot be distinguished.
-The diagnostic cannot compare hidden paths, worker/native identity or stage,
-or certify native adoption, instruction/skill application, outcome
-correctness, or category/rule choice.
-The Captain ends debugging by removing section 0's temporary trace/diagnostic
-and matching guide references, retaining ordinary role/workflow and useful
-stage/handoff policy. No flag, telemetry service, selector, new evidence
-database, dispatch hook or completion gate is added. No passing diagnostic
-installs or activates an isolated candidate.
-
-## Context and skills
-
-The intended precedence is:
-
-```text
-project-native instructions
-  > project-local skills
-  > role/task policy
-  > shared worker skills
-```
-
-Project-native context includes root and nested `AGENTS.override.md`,
-`AGENTS.md`, and `CLAUDE.md` files. Project-local skills live under tracked
-project directories such as `.agents/skills`, `.claude/skills`, or
-`.agent/skills`. Shared worker skills are installed under
-`~/.agents/skills` for Pi and OMP discovery.
-
-firstmate-config directly manages its own shared/core skills, installed
-under `~/.agents/skills` by `install.sh`. Project-local skills remain
-project-owned, living under each project's own tracked directories.
-
-Official FirstMate internal skills remain separate and are not installed as
-shared worker skills. Context and skill selection are policy and handoff
-mechanisms; they are not a formal proof of read order, compliance, or task
-completion.
-
-### Adaptive workflows and role selection
-
-[`firstmate/workflows.md`](firstmate/workflows.md) owns five alternative
-recipes: `focused-delivery` (including coherent mixed/generalist fallback),
-`evidence-first`, `design-then-deliver`, `coordinated-delivery`, and
-`scoped-assessment`. The compact hook in primary policy tells FirstMate to
-select automatically by actual deliverable, mutation authority, ambiguity
-and true dependencies, naming the workflow and fit in the brief. It does
-not ask for a specialist-versus-normal menu or dispatch every stage.
-
-For authorized design-and-implementation work, `design-then-deliver` makes
-the handoff sequence explicit: design, authorized implementation, the
-implementer's tests/verification, independent review supplied by the selected
-delivery path, then authorized fixes and repeated verification/re-review under
-that same owner. If the path supplies no independent review, disclose that
-instead of inventing one. FirstMate orchestrates; no duplicate reviewer,
-manual gate, delivery-mode switch or publication permission follows. Domain
-checks and cross-component proof match the change and project requirements,
-not a mandatory suite for every task.
-
-Category/rule still independently selects harness/model/effort.
-`architecture` and `tenth-man` retain their fixed categories; elsewhere
-FirstMate inspects role contracts and chooses the narrowest compatible
-whole-task fit. Mixed code/config/docs work can stay with senior-fullstack,
-with a task-specific reason; file count alone does not justify splitting.
-Debugger diagnoses with explicitly permitted local/test execution, never
-source fixes. Technical-writer documents settled behavior, not agent-behavior
-policy or code/config merely because its extension is Markdown.
-
-Frontend defaults to `frontend-ui-engineering` plus the owned transport-neutral
-`browser-verification`; the managed MCP-specific `browser-testing-with-devtools`
-remains conditional on an approved compatible capability. Technical-writer
-defaults to the same-pin external `documentation-and-adrs`, scoped to the
-assigned artifact, and tenth-man defaults to its existing owned method.
-All defaults/companions stay within two methods and one reference, subject
-to project-local precedence and explicit task overrides.
-
-These are instruction-level contracts, not an enforced selector, native
-role-adoption guarantee, sandbox or semantic certification. Workflow choice
-adds no review gate, helper, task/model spend or publication authority;
-the selected official delivery path still owns rigor. See the
-[role/skill guide](docs/roles-skills.html#workflows) for the handoff and limits.
-Adoption follows the existing [update and reopen-session path](#updating);
-editing an isolated candidate does not install or activate it globally.
-
-## Captain startup model
-
-`firstmate/captain-startup-models.tsv` is the ordered list of Captain startup
-candidates, tried in order and skipped on any authoritative `UNAVAILABLE`
-result: `openai-codex/gpt-6.1-sol` high, then a harness-scoped Claude Sonnet
-step, then `openai-codex/gpt-6-astra` xhigh. `bin/fm`, `fm doctor`, and
-`fm version` all resolve this chain through the one shared availability path
-in `firstmate/fm-captain-lib.sh`. Like every row, Sol is skipped only when the
-selected harness reports it `UNAVAILABLE`; the launch then falls back to the
-next row with a visible fallback reason.
-
-`fm --model codex|claude|grok` (either order with `--harness`) replaces the
-chain for one launch with a preset: `codex` is `openai-codex/gpt-6.1-sol` at
-high, `claude` is `anthropic/claude-sonnet-5-5` (Sonnet 5.5) at high,
-`grok` is `xai/grok-4.7` at high. The `codex` and `claude` ids are exact and
-version-pinned in OMP's native catalog and in Pi's built-in registry;
-`xai/grok-4.7` is the exact id Pi's registry lists, and on OMP it is checked
-through the same native catalog. Pi's `pi-claude-code-provider/sonnet` is an
-unversioned alias and is never used for the `claude` preset, so on Pi `claude`
-needs Anthropic credentials configured in Pi itself. The preset is used only
-when that same availability path reports its exact model and effort
-`AVAILABLE` on the selected harness.
-Any other value, or an unavailable or unverifiable preset, warns
-(`REQUESTED_MODEL_FALLBACK` in `--check`) and launches the unchanged chain -
-default model and effort - on the same harness; a raw model id is never passed
-through. Nothing is persisted, and chain/runtime blockers still stop the
-launch.
-
-The Sonnet fallback step is harness-scoped because the two harnesses expose
-Claude Sonnet under different, non-interchangeable ids: OMP's own native
-catalog carries `anthropic/claude-sonnet-5-5`; Pi's chain step instead uses
-the Claude Code provider extension's subscription-backed
-`pi-claude-code-provider/sonnet` alias, which is
-not an OMP model id and is never checked against OMP's catalog. Each TSV row
-carries an optional third `harness` column (`omp`, `pi`, or blank for both);
-a row whose harness column does not match the active Captain harness is
-skipped entirely, never probed and never selected, so an OMP Captain can
-never be launched with a Pi-only provider id and a Pi Captain never loses its
-own Sonnet fallback.
-
-The Pi id stays the unversioned alias: `pi-claude-code-provider` exposes only
-the `sonnet`, `fable`, `opus`, and `haiku` aliases and passes them to Claude
-Code, whose own alias table decides the served Sonnet version. It moves to
-Sonnet 5.5 when the installed Claude Code does, with no change here.
-
-Pi's own `auth check` does not load extension providers and reports
-`invalid_state` for `pi-claude-code-provider` even when the provider is
-perfectly usable, so availability for that one provider is checked through
-the provider's own zero-inference `claude auth status` preflight instead of
-the broker - see `firstmate/fm-captain-lib.sh` for the exact detector. Do not
-add a second detector or a paid probe for it.
+[Read the guide](https://inkayat.github.io/firstmate-config/) ·
+[Releases](https://github.com/inkayat/firstmate-config/releases)
 
 ## Install
+
+Use a persistent checkout: the installer links live commands and configuration
+back to it. **Do not install from a disposable task worktree.**
+
+Have `git`, `pi`, `omp`, and `herdr` on `PATH`; the installer checks them but
+does not install them. `jq`, `treehouse`, `gh`, and `bun` are needed for full
+fleet behavior. `python3` is needed for Pi Ponytail settings, board, and bot
+commands. Configure provider authentication in the harness you intend to use;
+the installer never stores credentials.
 
 ```sh
 git clone https://github.com/inkayat/firstmate-config.git
@@ -286,192 +26,267 @@ cd firstmate-config
 ./install.sh
 ```
 
-The installer checks the local toolchain, creates or verifies the official
-FirstMate checkout, writes machine-local resolution, installs tracked skills
-and slash commands (`~/.agents/skills`, `~/.agents/commands`), links each role
-file as an OMP agent (`~/.omp/agent/agents/fm-<role>.md`), and links commands
-into `~/.local/bin`. Running it again is the normal reconcile path and is
-idempotent.
+[`install.sh`](install.sh) creates the operational home, selects Herdr, links
+skills, slash commands and OMP role agents, and installs `fm` and
+`ponytail-update` links under `~/.local/bin`. Add that directory to `PATH`.
+It also reconciles the pinned Pi Ponytail package, filters duplicate shared
+skills, and sets Ponytail's `defaultMode` to `off`.
 
-Read-only drift check:
+If official FirstMate is missing, installation clones it at the validated
+commit. An existing official checkout is reported, never updated by the
+installer. Re-running installation reconciles machine state; conflicting or
+foreign link destinations are reported rather than overwritten.
+
+Check the installation, then launch:
 
 ```sh
-./install.sh --verify
+./install.sh --verify   # read-only drift report; inspect drift counts too
+fm doctor              # read-only health diagnostics
+fm --check             # resolve startup without launching the Captain
+fm
 ```
+
+`--check` and `--print-command` do not start a Captain, but their preflight can
+create missing operational-home directories. See
+[installation and first run](docs/install.html) for setup details.
 
 ## Daily commands
 
 | Command | Purpose |
 | --- | --- |
-| `fm` | Start the Pi Captain (GPT-6.1 Sol high) from any directory |
-| `fm --harness omp` | Start the Captain explicitly on OMP |
-| `fm --model codex\|claude\|grok [--harness omp\|pi]` | Start this Captain on GPT-6.1 Sol (high), Sonnet 5.5 (high), or Grok 4.7 (high), either flag order; any other value or an unavailable preset warns and uses the default startup chain |
-| `fm doctor` | Run read-only architecture, compatibility, routing, and installation diagnostics |
-| `fm version` | Print compact stack identity and version information |
-| `fm update` | Fast-forward the official FirstMate checkout (`FIRSTMATE_ROOT`), then the `firstmate-config` checkout, then reconcile and verify this machine via its own `install.sh`; check both checkouts before changing either, refuse anything that is not a clean, plain fast-forward, and report a failure after the official stage as a partial update |
-| `fm board` / `fm board --lavish` | Open the persistent Kanban board (terminal-browser by default, Lavish with `--lavish`); render a deterministically refreshed, LLM-free data projection with the same static template, keep re-rendering it while the viewer is open, and let the page re-read it every few seconds so transitions appear without a manual refresh |
-| `fm bot ...` | Manage home-local bot specs, evaluate daily/interval/remote occurrences, and file a due id with its dispatch plan; never dispatches (`bin/fm-bot --help`) |
-| `ponytail-update` | Prepare and validate a local Ponytail pin update without committing or pushing |
+| `fm` | Start the Pi Captain, preferring GPT-6.1 Sol high |
+| `fm --harness omp` | Use OMP explicitly; harness fallback is not automatic |
+| `fm --model claude` | Choose a model preset for this launch only; also accepts `codex` or `grok` |
+| `fm --check` / `fm --print-command` | Inspect startup resolution / the resolved command without launching |
+| `fm doctor` / `fm doctor --json` | Diagnose architecture, compatibility, routing and installation |
+| `fm version` / `fm version --json` | Show stack identity and versions, not a health verdict |
+| `fm update` | Fast-forward both checkouts, reconcile, and verify this machine |
+| `fm board` / `fm board --lavish` | Open the task board in terminal-browser / Lavish |
+| `fm bot --help` | Inspect bot spec, scheduling and filing commands; none dispatch workers |
+| `ponytail-update` | Prepare an uncommitted Ponytail pin update **and apply it locally** |
 
-`fm doctor --json` and `fm version --json` provide machine-readable output.
+Place `--harness pi` or `--harness omp` before a subcommand. Startup `--model`
+and `--harness` flags work in either order; `--model` is not a subcommand option.
+See the [CLI reference](docs/cli.html) for full usage.
 
-`bin/fm-board` owns the board's `add`/`update`/`move`/`list`/`show`/`summary`/`render` CLI. Its persistent files live under `$FM_HOME/data/board/` (`state.json`, append-only `events.jsonl`, generated `board-data.js`); actual FirstMate backlog and execution records (`data/backlog.md`, `state/home-summary.json`) remain authoritative, and the board is only their deterministic, LLM-free projection.
+### fm doctor
 
-Every card has a keyboard-reachable **Details** link (`board.html#task/<id>`) to that task's own detail view in the same page, in either viewer; **Back to board** or Escape returns to the board with focus on the card. At render time `bin/fm-board` adds one `fm-tasks-axi.sh show <id> --full` lookup per FirstMate task to `board-data.js` only (never `state.json`), plus the task's open decision and landed PR/report from `state/home-summary.json`, so the view shows body, notes, status and hold, dependencies, review context, worker summary, and links. A field its source reports as unset reads **None**; a field no source has (a manual row, a task the backlog no longer holds) reads as not available. Raw `.meta`/`.status` content is never shown. Under Lavish, turn **Annotate** off (⌘I / Ctrl+I) to follow links: in annotate mode Lavish captures clicks for annotations.
+Doctor never repairs, restarts, or makes a paid inference call. Exit `0` means
+the mandatory architecture is healthy, even if advisory findings remain; exit
+`1` means a mandatory break. Check individual findings, not only the exit code.
+Model availability means credentials/model configuration resolve, not that live
+credentials or quota are guaranteed. [`bin/fm-doctor`](bin/fm-doctor) owns the
+exact diagnostic and exit rules.
 
-Board columns follow FirstMate's structured state, never hold prose: **Todo** is queued or deferred work (plain queued rows, dated or aged captain deferrals, non-captain holds); **In Progress** is a live child that is working; **Waiting Review** is a finished worker awaiting review or landing, a no-mistakes gate or needs-decision (`parked`), or a live captain call (`captain_actionable`); **Blocked** is an unresolved dependency or a child that is `blocked`/`paused`/`failed`/unknown; **Completed** is only a landed backlog row. Rows FirstMate stops publishing are retired whenever its summary surfaces are provably complete, including while one local-only task awaits approval (`terminal_in_flight`); `bin/fm-board`'s `CREW_STATE_TO_BOARD`, `_queued_state`, and `_retirement_protected` own the exact rules.
+## Architecture
 
-**Daily bots (unchanged):**
+```text
+fm → Pi Captain (default) or OMP Captain (--harness omp)
+   → official FirstMate → Herdr → Pi / OMP workers
+```
 
-`bin/fm-bot` owns bot specs at `$FM_HOME/data/bots/<name>.md` (machine-local, never tracked) and their dry `due` evaluation. A bot is a spec plus one watcher check, never a process: `fm-bot check-install` writes `$FM_HOME/state/bots.check.sh` and binds it with the official `bin/fm-check-register.sh bots`, and that check prints `bot due: <name>-<YYYYMMDD> spec=… level=…` while a bot is inside its Europe/Stockholm window and its dated task id is not yet in the backlog, so filing that id silences it for the day; each filing is also kept in a durable `$FM_HOME/data/bots/.filed/<name>` marker, because the backlog prunes done rows into an archive `fm-tasks-axi.sh show` does not search, so a task finished and pruned the same day stays silent. The dispatch seam, `fm bot file <name>-<YYYYMMDD>`, records that marker at filing time, before anything is dispatched, so a task filed, finished, and pruned between two watcher polls still cannot re-fire; a dated id filed any other way (a raw `fm-tasks-axi.sh add`) is only seen at the next poll and keeps that gap. `file` refuses anything but today's due id, stores the dispatch plan for the effective level (kind, delivery, role file, route, the routine fields, and the stop rule) in the backlog row and prints it, prints it again only for a filing interrupted before it was printed while the row is still queued, files and holds an invalid bot (a symlinked, directory, or FIFO spec included, never followed) for the captain through the official `fm-captain-hold.sh` instead, and never spawns; `firstmate/primary-policy.md` section 8 is the Captain's instruction to use it. A missed window is never filed later, the same day or the next - the bot waits for its next scheduled occurrence - while recovering an id that was already filed is not a backfill; 02:xx times are refused because of DST; a `due --now` query writes nothing. Each spec stores and validates its routine - role, project, route, schedule, scope, access (`none` or a `secret:<ref>` name, never a secret), notify, wall-clock and optional candidate/file/line limits, excluded paths - for the Captain and workers to apply; fm-bot itself enforces only the schedule and the level gate. A spec's `level` (`local-proposal` < `local-commit` < `push`) is only an upper bound, never an authorization. `local-proposal`, the default, needs only an active, well-formed spec. `local-commit` and `push` need captain authorization words with their own scope, an authorized-on date and an unexpired `expires`, file and line limits, and a registered project whose posture allows the level (`local-only` at most `local-commit`); `push` also needs excluded paths, one remote, a branch prefix, one push per run, a non-`+yolo` project, and a dedicated `bot-authorization: <words>` line in `$FM_HOME/data/captain.md` holding exactly the authorization, which names the bot and project as whole words. The report-only `scout` role is never above `local-proposal`: `create` refuses it (`role-report-only`), and a scout spec that claims more later is invalid at `due` and `file`, held for the captain with no plan. Windows are at least ten minutes, and a bot records its route rule (`route_use`) so a changed rule, or a spec without one, is refused, never silently re-targeted. `create` refuses any gate failure; `due` re-checks the gate every time and runs an elevated bot whose gate fails that day at `local-proposal` with the reason. `fm bot list` shows each bot's last run, the newest `<name>-<YYYYMMDD>` id the backlog lists or the marker holds. Commits and pushes stay gated by FirstMate's own per-action captain approval.
+FirstMate owns task lifecycle, delegation and worktree isolation; Herdr owns
+runtime sessions. Captain harness/model selection and worker routing are
+independent.
 
-**Opt-in intervals and selected remote branches:** `--every-hours N` supports
-whole hours, minimum two (`--every-hours 3` for every three hours).
-`--on-remote NAME --on-branch BRANCH` watches an existing project's configured
-remote and exact branch. Both use the existing check → `fm bot file <id>` →
-ordinary FirstMate dispatch path, with unchanged role/route/permission gates.
-The requested `--wall-clock-min 1..60` is **advisory**, not a hard one-hour
-execution cap or provider-cancellation mechanism.
+The Captain runs inside the official FirstMate checkout, not the launch
+directory. It is multi-project: each task resolves its project separately from
+an explicit path/name, the FirstMate registry, then the launch directory as a
+hint if it is a Git project. Project instructions and skills are not preloaded
+as global authority at startup. The exact precedence belongs to
+[primary policy §1](firstmate/primary-policy.md#which-project).
 
-New modes share one atomic admission guard. A queued, held, busy or uncertain
-previous job **permanently skips** the current occurrence; finishing later
-does not replay it. Positive completion needs the matching unheld native
-backlog done row and stored plan, with either matching generation-bound native
-idle ownership or normal retirement of metadata, busy and pending-close records.
-Another job also waits
-at least two hours after that finish was first observed, measured by both UTC
-and monotonic clocks: a conservative spacing bound, not a native start receipt.
-A saved positive finish survives normal cleanup and later backlog pruning.
-A row pruned before any positive observation stays unknown: current native
-show/list does not query archives. Missing/corrupt continuity fails closed;
-no controller or forced stop is added.
-Intervals keep a UTC-seconds creation anchor, select only the latest elapsed
-boundary, survive restart/pause/DST, and never launch a missed-slot backlog.
+### Captain startup model
 
-Remote first observation establishes a baseline. Only a changed observed tip
-creates an event; repeated/restarted checks cannot duplicate it. Rapid changes
-coalesce to the latest observed tip, while skipped events stay skipped.
-Inspection never changes project refs. Eligible filing verifies and fetches
-the exact observed commit into a private depth-two bare artifact, and carries
-that artifact, branch and OID in the plan; it never substitutes a default branch
-or claims those bytes were reviewed. Workers must use that pinned source;
-automatic native-worker checkout at an arbitrary OID is not provided.
-Errors preserve observations and do not mark work successful.
-See [Bots](docs/bots.html#triggers) for exact timing, skip/recovery and Git limits.
-`python3 -B tests/bot-triggers.py` exercises real CLI/native backlog, busy/status
-and close/retain/replay record owners with local bare Git fixtures. It never
-launches workers or proves backend teardown/provider cancellation.
+[`captain-startup-models.tsv`](firstmate/captain-startup-models.tsv) owns the
+ordered chain: GPT-6.1 Sol high, a harness-specific Sonnet high fallback, then
+GPT-6 Astra xhigh. Rows for a different harness are ignored. Only an
+authoritative `UNAVAILABLE` skips a candidate; `UNKNOWN` remains eligible.
+Launch output explains fallback decisions.
 
-`skills/bot-builder` is the Captain's guide for "bot oluştur" / "create a bot": it collects the routine and level, refuses missing pieces (an elevated level without the captain's exact words, scope, and expiry; a mapped role with no `roles/<role>/ROLE.md`), and writes the spec only through `fm bot create`; it never activates the watcher check or dispatches. `commands/bots.md` is the read-only `/bots` prompt over `fm bot list`/`show`. `install.sh` step 7 links every `commands/*.md` into `~/.agents/commands` (OMP turns each into a slash command) the same way it links `skills/*` into `~/.agents/skills`, so both reach a primary Captain session only once they land on main and the primary checkout's `install.sh` runs; until then a primary Captain session cannot load `/bots` or `bot-builder`. `tests/bot-builder-trial.sh` (opt-in, `FM_LIVE_BOT_TRIAL=1`, real billable `omp` sessions) is evidence for the skill and command interaction only: it copies both into a disposable sandbox project's own `.agents/skills` and `.agents/commands` and runs a plain OMP session there against a disposable trial home, not a primary Captain session.
+The Sonnet fallback is `anthropic/claude-sonnet-5-5` on OMP and the unversioned
+`pi-claude-code-provider/sonnet` alias on Pi. Claude Code resolves that alias;
+it is not a version-pinned Sonnet selector. Its availability uses the provider's
+`claude auth status` preflight because Pi's broker does not load extension
+providers. OMP diagnostics use `models --json --no-extensions` to avoid writing
+FirstMate extension-load markers.
 
-`tests/bot-pilot.sh` (opt-in, `FM_LIVE_BOT_PILOT=1`, real billable `omp` workers) is the P8 pilot, simulated end to end in a disposable lab: a lab `FM_HOME` from the official `bin/fm-lab-home.sh`, a disposable sandbox repository, and an isolated non-default Herdr session that only the official `bin/fm-herdr-lab.sh` provisions, drives, and tears down. Over nine simulated Stockholm days (sweeping every 5 minutes through the registered check's official snapshot run, across the 2026-10-25 DST change) it plays Firstmate's part - `fm bot file`, a brief from the printed plan, done-and-prune or a captain hold - and asserts one due line, one filing, and one dated report per local-proposal morning with no branch, file, or commit change, and two local-commit runs that each stop uncommitted on their dated bot branch at `needs-decision [key=commit-approval]`. It does not prove real elapsed days, a live `fm-watch.sh` loop, a Captain session, `fm-spawn`/treehouse dispatch, the approve-then-commit step, or `push`. Its workers read this checkout's real `roles/refactorist/ROLE.md`; the local-commit bot's authorization is an explicit fixture-only placeholder, never captain words, so the pilot proves nothing about a real permission.
+`fm --model codex|claude|grok` selects, respectively,
+`openai-codex/gpt-6.1-sol`, `anthropic/claude-sonnet-5-5`, or `xai/grok-4.7`,
+all at high effort. A preset requires `AVAILABLE` for that exact model/effort.
+Invalid, unavailable or unverifiable presets warn and use the unchanged default
+chain on the same harness. Raw model ids are not accepted; nothing is persisted.
+On Pi, the `claude` preset needs Anthropic credentials in Pi, not just the
+subscription-backed fallback extension.
 
-`ponytail-update` checks the latest stable Ponytail release. If an update is
-available, it updates `skills/external.lock`, shows the diff, runs the Ponytail
-validation suites, reconciles the machine, verifies installed state, and checks
-again. It does not commit, merge, push, create branches, or tag releases.
+[`fm-captain-lib.sh`](firstmate/fm-captain-lib.sh) is the shared harness and
+availability owner for startup and doctor. `fm version` shares harness selection
+but does not probe availability.
 
-## Machine-local state
+### Stack compatibility
 
-`FM_HOME` defaults to `~/.firstmate` and holds operational data that does not
-belong in Git, including:
+[`stack-manifest.tsv`](firstmate/stack-manifest.tsv) is the single source for
+the official repository, validated FirstMate commit, and Pi/OMP/Herdr minimum
+and tested versions. The recorded minimums currently equal tested versions:
+they are known-good points, not proof of a wider supported range.
 
-- the project registry and per-project delivery posture
-- Captain preferences and local learnings
-- authentication, session, runtime, and task state
-- machine-specific tool or browser knowledge
-
-`~/.config/firstmate-config/env` records local path resolution. Credentials,
-host-specific paths, runtime records, and project data are not tracked here.
+Doctor treats versions below minimum and an official checkout behind or
+diverged from the baseline as failures. Newer versions or a checkout ahead of
+the baseline are warnings, not newly validated compatibility.
 
 ## Updating
 
-Update the official FirstMate checkout and the tracked configuration, then
-reconcile installed state:
+Run from the installed setup:
 
 ```sh
 fm update
 ```
 
-`fm update` runs in this order:
+[`bin/fm-update`](bin/fm-update) checks **both** checkouts before changing either,
+then fast-forwards official FirstMate, fast-forwards firstmate-config, and runs
+that configuration checkout's `install.sh` and `install.sh --verify`. No separate
+installation is needed after success.
 
-1. Check both checkouts before changing either: local state first, then
-   origin's default branch for the official checkout and a fetch of both
-   remotes (only remote-tracking refs move; the official side fetches only its
-   default branch and never prunes). Each checkout must equal, or be a plain
-   fast-forward behind, its upstream.
-2. Fast-forward the official FirstMate checkout (`FIRSTMATE_ROOT`) with
-   `git merge --ff-only`.
-3. Fast-forward the `firstmate-config` checkout to its remote tip.
-4. Run that checkout's own `./install.sh`, then `./install.sh --verify`.
+Both working trees must be clean and fast-forwardable with configured upstreams.
+Official FirstMate must use the manifest's exact origin URL and track origin's
+default branch, with no unfinished Git operation or local-only commits. Detached
+checkouts are refused. A fresh installer clone is pinned at a detached commit;
+it needs an intentional switch to the tracked default branch before `fm update`
+can manage it. See [update refusals and recovery](docs/update.html#refusals).
 
-It refuses in step 1, changing neither working tree, when:
+Updates never force, stash, reset, rebase, push, or update project/secondmate
+checkouts. If the official checkout moved and a later stage fails, the command
+reports `PARTIAL UPDATE`; there is no multi-repository rollback. Fix the stated
+error and re-run. Only `fm update complete` means every stage succeeded.
 
-- `FIRSTMATE_ROOT` is missing, is not the root of a Git checkout, or has no
-  `AGENTS.md`
-- the official checkout's `origin` has a configured or effective
-  (`insteadOf`-rewritten) URL that is not exactly `firstmate_repo` from
-  `firstmate/stack-manifest.tsv`
-- the official checkout is detached, on a branch other than origin's default
-  branch, or that branch does not track `origin/<default>`; or origin's
-  default branch cannot be determined or fetched as a fast-forward
-- the official checkout has uncommitted or untracked changes, an unfinished
-  merge, rebase, cherry-pick, revert, or bisect, or local commits not on
-  `origin/<default>` (ahead or diverged)
-- the `firstmate-config` checkout is dirty, diverged, detached, has no
-  upstream, or cannot be fetched
+A running Captain is not restarted or notified and keeps its loaded instructions
+and skills. End that session and run `fm` again to adopt updates. Landed source
+or an isolated candidate is not evidence of installation or activation on a host.
 
-After step 2 has moved the official checkout, any later failure (fast-forward,
-`install.sh`, `install.sh --verify` failure or drift) exits nonzero with a
-`PARTIAL UPDATE` line naming the official commits that landed; there is no
-multi-repository rollback, so fix the reported error and re-run `fm update`.
-Only a run that ends with `fm update complete` updated everything.
+For Ponytail pins, `ponytail-update` requires a clean `main`, pulls fast-forward
+only, and, when a newer stable release exists, changes
+[`skills/external.lock`](skills/external.lock), runs its validation suites, and
+reconciles/verifies the local machine. It does not commit or push; review the pin
+diff through the normal repository workflow. This is not a read-only command.
 
-Nothing is forced, stashed, reset, merged, rebased, or pushed, and no branch
-or file is deleted (the only pruning is `fm update`'s existing `fetch --prune`
-of stale `firstmate-config` remote-tracking refs). Secondmates and projects
-are never updated. A separate manual `./install.sh`
-is not required after a successful `fm update`; run it directly only when
-diagnosing installed state without pulling.
+## Routing
 
-A running Captain keeps the instructions, skills, and launch-time wiring it
-loaded at startup and is not restarted or notified: to adopt an official
-update, restart it through the official procedure (end the Captain session,
-then run `fm` again). Once the official checkout moves past the validated
-baseline commit, `fm doctor` and `install.sh` report it as ahead of that
-baseline (`WARNING`, not drift) until `firstmate/stack-manifest.tsv` is moved.
+[`crew-dispatch.json`](firstmate/crew-dispatch.json) owns ten semantic categories
+and a DEFAULT catch-all. Substantive work prefers Opus 5.5, bounded work may use
+Sonnet 5.5, and trivial work uses Haiku/Luna. GPT-6.1 Sol supplies cross-family
+routes and implementation alternatives; Astra is reserved for narrow worker
+escalations. Explicit Captain choices can override the profile.
 
-Prepare a Ponytail dependency update:
+Do not maintain a second routing table here: use the full `when`/`why` conditions
+in the profile and [primary policy §3](firstmate/primary-policy.md#3-routing).
+During the current debugging period, the Captain prints a short
+`Routing:` / `Agent:` / `Workflow:` / `Skills:` block per actual worker/stage.
+It is a diagnostic trace, not an enforcement or completion gate; see
+[policy §0](firstmate/primary-policy.md#0-routing-agent-workflow-and-skill-trace-temporary-debugging-period).
 
-```sh
-ponytail-update
-git diff -- skills/external.lock
-```
+## Context and skills
 
-Review and commit that pin change through the normal Git workflow. Other
-machines then converge with:
+### Worker context and skill classes
 
-```sh
-fm update
-```
+Precedence is project-native instructions → project-local skills → role/task
+policy → shared worker skills. Each task carries explicit instruction and skill
+paths resolved against its own worktree; Pi and OMP native discovery alone do
+not guarantee the same resolution.
 
-## Roadmap
+Keep three populations distinct: official FirstMate internal skills are
+Captain-only; this repository's shared worker skills are installed under
+`~/.agents/skills`; project-local skills remain in their project's tracked
+skill directories. [Primary policy §2](firstmate/primary-policy.md#2-before-delegating)
+owns the handoff, including revisiting context when a new subtree is selected.
 
-Everything in this section is planned or exploratory; none of it describes
-current runtime behavior.
+### Adaptive workflows and role selection
 
-### Later (exploratory)
+[`roles/`](roles/) defines worker contracts and OMP agent definitions; installation
+links them as `~/.omp/agent/agents/fm-<role>.md`.
+[`workflows.md`](firstmate/workflows.md) defines five alternative recipes selected
+by the current blocking condition, not a mandatory specialist pipeline. Role,
+workflow, skills and route remain separate choices. The retained `tenth-man` role
+is for deliberate adversarial challenge, not routine review. See
+[roles, skills and workflows](docs/roles-skills.html).
 
-- independent compliance and review specialists within a broader agentic system
-- routing and decision observability
-- a local Qwen lane when the 4090 environment is available and worth enabling
-- model/provider routing refinements based on observed usage
+### Bounded internal delegation
 
-## Design principles
+Only FirstMate owns macro orchestration. OMP's native bounded `task` helpers may
+work inside the same parent task/project/worktree and authority; the parent
+retains verification and completion responsibility. Pi has no bundled equivalent.
+[Policy §6](firstmate/primary-policy.md#6-orchestration-boundary) owns this boundary.
 
-- Keep official FirstMate upstream-clean.
-- Prefer configuration and native extension points over forks.
-- Let project context outrank global defaults.
-- Route by task semantics, not keywords alone.
-- Pin external dependencies, but update them explicitly and visibly.
-- Add machinery only after real usage demonstrates the need.
+### Completion evidence limits
+
+Context, roles, workflows, skill selection and passing fixture reports do not
+prove native adoption, read order, application, sandboxing or task completion.
+Workers report actual commands, observed outcomes and unverified limits;
+browser-visible changes need relevant real-flow evidence.
+
+The selected official FirstMate delivery path owns review, fixes and publication.
+This configuration adds no automatic reviewer or trusted completion gate, and no
+extra manual reviewer on top of `no-mistakes`. An explicitly requested separate
+review is scoped and read-only; selecting a workflow grants no publication
+authority. See [primary policy §7](firstmate/primary-policy.md#7-completion).
+
+## Machine-local state
+
+| Location | Purpose |
+| --- | --- |
+| This checkout | Tracked policy, routing, roles, skills, commands and launchers |
+| `FIRSTMATE_ROOT` (default `~/Developer/tools/firstmate`) | Official FirstMate checkout |
+| `FM_HOME` (default `~/.firstmate`) | Project registry, preferences, task/runtime/session state and local data |
+| `~/.config/firstmate-config/env` | Machine-local path resolution |
+
+### Boundaries
+
+Do not commit credentials, host paths, project knowledge or runtime data here.
+FirstMate remains upstream-clean; project instructions outrank global defaults.
+Detailed file ownership and environment overrides are in the
+[configuration reference](docs/config.html).
+
+### Board columns
+
+The board is a deterministic, LLM-free projection, not a competing task database.
+**Todo** is queued/deferred work; **In Progress** is a working child;
+**Waiting Review** includes finished workers, parked gates/decisions and live
+Captain calls; **Blocked** includes unresolved dependencies and blocked, paused,
+failed or unknown children; **Completed** means a landed backlog row only.
+
+FirstMate's published state remains authoritative. Absent FirstMate rows retire
+only when summary surfaces are provably complete; manual cards survive.
+`fm board` refreshes while its launched viewer runs, and the page reloads data
+periodically. Use [`bin/fm-board`](bin/fm-board) directly for list/show/render and
+manual-card commands. See [board usage and details](docs/board.html).
+
+### Bots
+
+Bots are **beta** home-local specs, not autonomous processes. Daily windows use
+Europe/Stockholm time; optional intervals (`--every-hours N`, minimum two whole
+hours) and selected remote branches (`--on-remote NAME --on-branch BRANCH`) are
+implemented but opt-in. Creation does not activate the watcher: registration via
+`fm bot check-install` is a separate explicit step. `fm bot file <id>` files a due
+occurrence and prints a plan; only ordinary FirstMate dispatch starts a worker.
+Permission levels are ceilings, never commit/push approvals.
+
+Missed daily windows are not backfilled. Interval/remote occurrences are skipped
+permanently while a predecessor is unfinished or uncertain, and require a
+two-hour spacing after positively observed completion. Wall-clock limits are
+advisory, not forced cancellation. Remote jobs carry a pinned commit artifact;
+automatic worker checkout at that OID is not provided. Simulated-clock pilots
+do not prove unattended consecutive-day operation or provider teardown. See
+[bots, triggers and limits](docs/bots.html).
+
+## Documentation
+
+The [guide](docs/index.html) is plain HTML with no build step; open it locally or
+use the hosted site. This README and linked command/configuration owners remain
+authoritative when guide examples lag behind source.
+
+- [Installation](docs/install.html) and [update/recovery](docs/update.html)
+- [CLI](docs/cli.html), [configuration](docs/config.html), and [safety](docs/safety.html)
+- [Dispatch details](docs/dispatch.html), [roles/skills](docs/roles-skills.html),
+  [board](docs/board.html), and [bots](docs/bots.html)
+
+Tagged versions are on [Releases](https://github.com/inkayat/firstmate-config/releases);
+`main` may contain newer changes. Exploratory work is not an installed capability.
