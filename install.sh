@@ -271,6 +271,24 @@ link_to() { # <target> <link> ; creates a missing link, never rewrites an existi
     failf "cannot link $link"
   fi
 }
+# Retire only a link proven to reach this checkout's removed catalogue.
+# Ordinary files and links into other trees have no ownership proof.
+legacy="$FM_HOME/config/workflows.md"
+if [ -L "$legacy" ] || [ -e "$legacy" ]; then
+  OWNED_ROOT=$(CDPATH='' cd -P "$CONFIG_ROOT" && pwd -P)
+  OWNED="$OWNED_ROOT/firstmate/workflows.md"
+  if [ -L "$legacy" ] && reaches_owned "$legacy"; then
+    if would "remove obsolete managed workflow link $legacy"; then
+      if rm "$legacy"; then changedf "removed obsolete managed workflow link $legacy"
+      else failf "cannot remove $legacy"; fi
+    fi
+  else
+    warn "$legacy has unknown ownership; leaving it alone; inspect and remove obsolete workflow references manually"
+  fi
+fi
+if [ -e "$CONFIG_ROOT/firstmate/workflows.md" ]; then
+  warn "$CONFIG_ROOT/firstmate/workflows.md is obsolete user/untracked content; leaving it alone; inspect and remove obsolete workflow references manually"
+fi
 
 link_to "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$FM_HOME/config/crew-dispatch.json"
 
@@ -283,6 +301,9 @@ elif would 'seed data/captain.md from the template'; then
   else
     failf "cannot write $captain"
   fi
+fi
+if [ -f "$captain" ] && grep -Eq 'firstmate/workflows[.]md|Workflow:|Workflow ID:' "$captain"; then
+  warn "$captain still references the removed config workflow layer; leaving it alone; edit those references manually without removing role/skill/bot preferences"
 fi
 
 # --- 7. global skills, commands, and role agents ------------------------------

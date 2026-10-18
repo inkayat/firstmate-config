@@ -5,20 +5,19 @@ captain works; it never overrides `AGENTS.md`, and it never overrides a
 project's own instructions. It is longer than one default read: page
 through to the end.
 
-## 0. Routing, agent, workflow and skill trace (temporary, debugging period)
+## 0. Routing, agent and skill trace (temporary, debugging period)
 
 Until the captain ends this debugging period, print a short trace in the
-Captain chat. It discloses decisions sections 3-5 and the workflow catalogue
-already made - never reasoning or chain-of-thought, never pasted into the
+Captain chat. It discloses decisions sections 3-5 already made -
+never reasoning or chain-of-thought, never pasted into the
 brief, never written to a file, board, or monitor.
 
 Before each delegation, one block per actually assigned worker and stage
 (including an authorized review/re-review). Never instantiate actors to fill
-a recipe or print prospective stages as if already dispatched:
+a display or print prospective stages as if already dispatched:
 
     Routing: <CATEGORY> [#n] | role <role> | <harness> | <provider/model> | <effort> | why: <short reason>
     Agent: <assigned role name>
-    Workflow: <workflow ID>
     Skills: <selected name>, <selected name>
 
 - `#n` is the matched rule's position within its category in
@@ -42,22 +41,20 @@ a recipe or print prospective stages as if already dispatched:
   select a fitting skill instead of rationalizing an omission.
 - `Agent` names only the assigned role, for example `senior-fullstack`.
   It is not a native agent identifier or proof of native adoption.
-- `Workflow` names only the selected catalogue ID, for example
-  `focused-delivery`, not a stage, dispatch category or success label.
   For several assigned workers or stages print each real assignment;
   deferred stages stay deferred. A stage change reports the changed
   assignment, not fictional new workers.
-- Keep Agent/Workflow/Skills lines names-only: no file paths, worker
+- Keep Agent/Skills lines names-only: no file paths, worker
   identity, native/adoption columns, stage or why/reason suffixes.
-  Full absolute instruction/role/skill/workflow paths, actual worker
+  Full absolute instruction/role/skill paths, actual worker
   identity distinct from native selection, current stage, authority,
   task-specific fit/reasons, input/output handoff, dependencies, scope
   and stop boundary stay inside the task instructions/handoff.
 
 End-of-period removal: when the captain ends debugging, remove this section
 0's temporary trace/diagnostic, fixtures and guide references. Retain ordinary
-role/workflow selection and useful stage/handoff policy in sections 2-6 and
-`workflows.md`. No new flag, service, selector, telemetry store or completion
+role selection and useful stage/handoff policy in sections 2-6.
+No new flag, service, selector, telemetry store or completion
 gate is introduced; do not remove debug early.
 
 A separately requested review stays separate from any automated pipeline:
@@ -67,9 +64,9 @@ A separately requested review stays separate from any automated pipeline:
 
 `tests/routing-trace.sh check` compares one captured block against the real
 spawn axes, the matched rule's route, and the brief's selected skills.
-Agent must agree with Routing's role; Workflow must name a catalogue recipe.
+Agent must agree with Routing's role.
 Optional trailing `--brief <delivered-brief>` compares only the `Agent`
-name with `Assigned role:` and the `Workflow` name with `Workflow ID:`.
+name with `Assigned role:`.
 Missing or contradictory names fail agreement. Without a brief, assignment
 names are not compared. Selected skill paths normalize to short names;
 same-named local/shared sources are indistinguishable in this display.
@@ -101,7 +98,7 @@ answers the question:
 Ask one concise question when the project is still ambiguous after those
 three steps. Never guess a project silently.
 
-This session always runs from the official FirstMate checkout, regardless of
+This session always runs from the FirstMate distribution checkout, regardless of
 where `fm` was launched, so session start loads only FirstMate's own
 `AGENTS.md` as the global orchestrator contract. No project's `AGENTS.md`,
 `CLAUDE.md`, or project-local skills are ever preloaded as global authority
@@ -292,18 +289,12 @@ ship. Neither mapping is fixed: a QUICK question can be a scout, a QUICK
 rename a ship; a DEEP diagnosis is naturally a scout, a DEEP fix naturally a
 ship. Judge the actual task, not the category label.
 
-**Workflow selection.** Read `$FM_CONFIG_ROOT/firstmate/workflows.md` and
-automatically select its smallest fitting recipe from the current blocking
-condition, ambiguity, authorized deliverable/mutation scope and true
-dependencies. Name its ID and one-line fit in `## Firstmate spec`, then hand
-off the current assigned stage, input/output artifacts, role and absolute
-role/workflow source paths, context/skills, acceptance and stop boundary.
-Keep the actual worker identity distinct from any native agent identifier;
-unobserved native selection/adoption is unknown, not implied by the role.
-The catalogue owns the five alternative recipes and fallback;
-it is not a mandatory menu or pipeline. Workflow selection never changes
-project resolution, category/route/effort, skill budgets, macro ownership
-or the selected delivery path's review/publication authority.
+**Task handoff.** Name the assigned role and absolute role source path,
+context/skills, input/output artifacts, acceptance, true dependencies,
+scope/mutation/validation limits and delivery/stop boundary in
+`## Firstmate spec`. Keep the actual worker identity distinct from any
+native agent identifier; unobserved native selection/adoption is unknown,
+not implied by the role.
 
 **Model catalog adoption.** Active routes use only `anthropic/claude-haiku-4-5`,
 `anthropic/claude-sonnet-5-5`, `anthropic/claude-opus-5-5`,
@@ -422,7 +413,7 @@ must, without exception:
   Firstmate-invented one. omp's bundled `task` tool is the currently
   verified example: `task.maxRecursionDepth` bounds nesting, and the
   tracked worker posture overlay (`.omp/fm-worker-overlay.yml` in the
-  official checkout) already applies to every Firstmate-launched omp
+  FirstMate checkout) already applies to every Firstmate-launched omp
   session, including one performing this micro-orchestration - no
   additional Firstmate-owned recursion controller is needed or wanted. Pi
   currently exposes no equivalent native mechanism (verified: its bundled

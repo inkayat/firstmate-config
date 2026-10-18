@@ -187,9 +187,9 @@ escalations. Explicit Captain choices can override the profile.
 Do not maintain a second routing table here: use the full `when`/`why` conditions
 in the profile and [primary policy §3](firstmate/primary-policy.md#3-routing).
 During the current debugging period, the Captain prints a short
-`Routing:` / `Agent:` / `Workflow:` / `Skills:` block per actual worker/stage.
+`Routing:` / `Agent:` / `Skills:` block per actual worker/stage.
 It is a diagnostic trace, not an enforcement or completion gate; see
-[policy §0](firstmate/primary-policy.md#0-routing-agent-workflow-and-skill-trace-temporary-debugging-period).
+[policy §0](firstmate/primary-policy.md#0-routing-agent-and-skill-trace-temporary-debugging-period).
 
 ## Context and skills
 
@@ -206,15 +206,13 @@ Captain-only; this repository's shared worker skills are installed under
 skill directories. [Primary policy §2](firstmate/primary-policy.md#2-before-delegating)
 owns the handoff, including revisiting context when a new subtree is selected.
 
-### Adaptive workflows and role selection
+### Automatic role selection
 
 [`roles/`](roles/) defines worker contracts and OMP agent definitions; installation
-links them as `~/.omp/agent/agents/fm-<role>.md`.
-[`workflows.md`](firstmate/workflows.md) defines five alternative recipes selected
-by the current blocking condition, not a mandatory specialist pipeline. Role,
-workflow, skills and route remain separate choices. The retained `tenth-man` role
-is for deliberate adversarial challenge, not routine review. See
-[roles, skills and workflows](docs/roles-skills.html).
+links them as `~/.omp/agent/agents/fm-<role>.md`. The Captain chooses the narrowest
+fitting role; coherent mixed work stays with `senior-fullstack`. Role, skills and
+route remain separate choices. The retained `tenth-man` role is for deliberate
+adversarial challenge, not routine review. See [roles and skills](docs/roles-skills.html).
 
 ### Bounded internal delegation
 
@@ -225,7 +223,7 @@ retains verification and completion responsibility. Pi has no bundled equivalent
 
 ### Completion evidence limits
 
-Context, roles, workflows, skill selection and passing fixture reports do not
+Context, roles, skill selection and passing fixture reports do not
 prove native adoption, read order, application, sandboxing or task completion.
 Workers report actual commands, observed outcomes and unverified limits;
 browser-visible changes need relevant real-flow evidence.
@@ -233,22 +231,22 @@ browser-visible changes need relevant real-flow evidence.
 The selected official FirstMate delivery path owns review, fixes and publication.
 This configuration adds no automatic reviewer or trusted completion gate, and no
 extra manual reviewer on top of `no-mistakes`. An explicitly requested separate
-review is scoped and read-only; selecting a workflow grants no publication
-authority. See [primary policy §7](firstmate/primary-policy.md#7-completion).
+review is scoped and read-only; no selection grants publication authority.
+See [primary policy §7](firstmate/primary-policy.md#7-completion).
 
 ## Machine-local state
 
 | Location | Purpose |
 | --- | --- |
 | This checkout | Tracked policy, routing, roles, skills, commands and launchers |
-| `FIRSTMATE_ROOT` (default `~/Developer/tools/firstmate`) | Official FirstMate checkout |
+| `FIRSTMATE_ROOT` (default `~/Developer/tools/firstmate`) | FirstMate distribution checkout |
 | `FM_HOME` (default `~/.firstmate`) | Project registry, preferences, task/runtime/session state and local data |
 | `~/.config/firstmate-config/env` | Machine-local path resolution |
 
 ### Boundaries
 
 Do not commit credentials, host paths, project knowledge or runtime data here.
-FirstMate remains upstream-clean; project instructions outrank global defaults.
+Official provenance remains separate from fork distribution; project instructions outrank global defaults.
 Detailed file ownership and environment overrides are in the
 [configuration reference](docs/config.html).
 

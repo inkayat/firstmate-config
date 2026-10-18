@@ -11,8 +11,8 @@
 #       Selected SKILL.md paths normalize to their parent directory name;
 #       required companion paths normalize to their filename without .md.
 #       The trace itself contains names only. Prints PASS/FAIL; exit 0 only
-#       when nothing FAILs. --brief compares Agent/Workflow names with
-#       Assigned role and Workflow ID in the delivered Firstmate spec.
+#       when nothing FAILs. --brief compares Agent with Assigned role in the
+#       delivered Firstmate spec.
 #       Hidden paths, worker/native identity and stage are not compared.
 #
 # This compares captured text with facts supplied by the caller. Routing
@@ -127,18 +127,11 @@ result(traced == selected, "Skills names exactly the selected skills %s (trace s
 
 # Compare only observable names, never infer hidden assignment identity.
 agents = [l for l in lines if l.startswith("Agent:")]
-workflows = [l for l in lines if l.startswith("Workflow:")]
-result(len(agents) == len(workflows) == 1, "exactly one Agent and Workflow line per assignment")
+result(len(agents) == 1, "exactly one Agent line per assignment")
 a = re.fullmatch(r"Agent: ([a-z0-9-]+)", agents[0]) if len(agents) == 1 else None
-w = re.fullmatch(r"Workflow: ([a-z0-9-]+)", workflows[0]) if len(workflows) == 1 else None
-result(a is not None and w is not None, "Agent and Workflow contain names only")
+result(a is not None, "Agent contains names only")
 if a:
     result(a[1] == role, "Agent role agrees with Routing role")
-if w:
-    # The existing catalogue owns IDs; no parallel workflow registry.
-    catalogue = open(os.path.join(os.path.dirname(roles_dir), "firstmate", "workflows.md"), encoding="utf-8").read()
-    result(w[1] in re.findall(r"^## ([a-z]+(?:-[a-z]+)+)$", catalogue, re.M),
-           "workflow ID exists in workflows.md")
 if brief_path is None:
     inspect("assignment names not compared: no delivered brief supplied")
 else:
@@ -147,7 +140,7 @@ else:
     except (OSError, UnicodeError) as e:
         result(False, "cannot read delivered brief: %s" % e)
         brief = []
-    for key, match in (("Assigned role", a), ("Workflow ID", w)):
+    for key, match in (("Assigned role", a),):
         values = [l[len(key) + 1:].strip() for l in brief if l.startswith(key + ":")]
         ok = len(values) == 1 and bool(values[0])
         result(ok, "exactly one brief field %s (name agreement unknown if missing/conflicting)" % key)
@@ -224,7 +217,6 @@ VBC=verification-before-completion
 # --- 1. Routing summary reflects the actual spawn axes ----------------------
 IMPL=$(t impl.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: multi-file behavior change
 Agent: senior-fullstack
-Workflow: focused-delivery
 Skills: $TDD, $VBC")
 expect 'substantive IMPLEMENT trace matches its spawn axes' pass "$IMPL" omp "$OPUS" high "$TDD,$VBC"
 expect 'trace naming Opus while the worker actually ran Sonnet is rejected' fail "$IMPL" omp "$SONNET" high "$TDD,$VBC"
@@ -233,35 +225,29 @@ expect 'trace harness differing from the actual spawn harness is rejected' fail 
 
 BOUNDED=$(t bounded.txt "Routing: IMPLEMENT #1 | role senior-fullstack | omp | $SONNET | high | why: one-function fix
 Agent: senior-fullstack
-Workflow: focused-delivery
 Skills: $TDD")
 expect 'bounded IMPLEMENT on Sonnet 5.5 high is an allowed route' pass "$BOUNDED" omp "$SONNET" high "$TDD"
 
 HAIKU_IMPL=$(t haiku-impl.txt "Routing: IMPLEMENT #1 | role senior-fullstack | omp | anthropic/claude-haiku-4-5 | low | why: cheap
 Agent: senior-fullstack
-Workflow: focused-delivery
 Skills: none")
 expect 'a model/effort outside the named category rules is rejected' fail "$HAIKU_IMPL" omp anthropic/claude-haiku-4-5 low none
 OVERRIDE=$(t override.txt "Routing: IMPLEMENT #1 | role senior-fullstack | omp | anthropic/claude-haiku-4-5 | low | why: captain override - captain asked for Haiku
 Agent: senior-fullstack
-Workflow: focused-delivery
 Skills: none")
 expect 'an explicit captain override outside the rules is accepted when the why names it' pass "$OVERRIDE" omp anthropic/claude-haiku-4-5 low none
 
 DEFAULT=$(t default.txt "Routing: DEFAULT | role senior-fullstack | omp | $OPUS | high | why: no specific category fits
 Agent: senior-fullstack
-Workflow: focused-delivery
 Skills: none")
 expect 'DEFAULT trace on Opus 5.5 high matches the debug-period catch-all' pass "$DEFAULT" omp "$OPUS" high none
 
 TENTH=$(t tenth.txt "Routing: TENTH-MAN #1 | role tenth-man | pi | $SOL | xhigh | why: challenge Claude-authored completion claim
 Agent: tenth-man
-Workflow: scoped-assessment
 Skills: none")
 expect 'TENTH-MAN against Claude output on Pi GPT-6.1 Sol xhigh is accepted' pass "$TENTH" pi "$SOL" xhigh none
 ARCH_WRONG_ROLE=$(t arch-role.txt "Routing: ARCHITECTURE #1 | role senior-fullstack | omp | $OPUS | high | why: module boundary
 Agent: senior-fullstack
-Workflow: design-then-deliver
 Skills: none")
 expect 'ARCHITECTURE trace must name role architecture' fail "$ARCH_WRONG_ROLE" omp "$OPUS" high none
 
@@ -269,22 +255,18 @@ expect 'ARCHITECTURE trace must name role architecture' fail "$ARCH_WRONG_ROLE" 
 # as role files; architecture/tenth-man stay fixed to their own categories.
 SEC=$(t sec-role.txt "Routing: REVIEW #2 | role security-engineer | omp | $OPUS | high | why: authz audit of one service
 Agent: security-engineer
-Workflow: scoped-assessment
 Skills: security-and-hardening, $VBC")
 expect 'a specialist role file on a non-fixed category is accepted' pass "$SEC" omp "$OPUS" high "security-and-hardening,$VBC"
 UNKNOWN_ROLE=$(t unknown-role.txt "Routing: REVIEW #2 | role pentester | omp | $OPUS | high | why: authz audit
 Agent: pentester
-Workflow: scoped-assessment
 Skills: none")
 expect_rejects 'a role with no role file is rejected' 'FAIL - role pentester' "$UNKNOWN_ROLE" omp "$OPUS" high none
 ARCH_SPECIALIST=$(t arch-specialist.txt "Routing: ARCHITECTURE #1 | role refactorist | omp | $OPUS | high | why: module boundary
 Agent: refactorist
-Workflow: design-then-deliver
 Skills: none")
 expect_rejects 'a specialist role cannot replace the fixed ARCHITECTURE role' 'FAIL - role refactorist' "$ARCH_SPECIALIST" omp "$OPUS" high none
 FIXED_ELSEWHERE=$(t fixed-elsewhere.txt "Routing: IMPLEMENT #1 | role tenth-man | omp | $SONNET | high | why: one-function fix
 Agent: tenth-man
-Workflow: focused-delivery
 Skills: none")
 expect_rejects 'a fixed role is rejected outside its own category' 'FAIL - role tenth-man' "$FIXED_ELSEWHERE" omp "$SONNET" high none
 MISSING=$(t missing.txt "Skills: none")
@@ -298,43 +280,35 @@ expect 'a block without a Routing line is rejected' fail "$MISSING" omp "$OPUS" 
 # high both passed).
 REVIEW_NO_RULE=$(t rev-norule.txt "Routing: REVIEW | role senior-fullstack | omp | $SONNET | high | why: release-critical security diff
 Agent: senior-fullstack
-Workflow: scoped-assessment
 Skills: none")
 expect 'a multi-rule category trace without its matched rule #n is rejected' fail "$REVIEW_NO_RULE" omp "$SONNET" high none
 REVIEW_CRIT_SONNET=$(t rev-crit-sonnet.txt "Routing: REVIEW #3 | role senior-fullstack | omp | $SONNET | high | why: release-critical security diff
 Agent: senior-fullstack
-Workflow: scoped-assessment
 Skills: none")
 expect 'critical REVIEW (#3) displayed on Sonnet 5.5 high contradicts its Opus 5.5 xhigh route and is rejected' fail "$REVIEW_CRIT_SONNET" omp "$SONNET" high none
 REVIEW_CRIT_OPUS=$(t rev-crit-opus.txt "Routing: REVIEW #3 | role senior-fullstack | omp | $OPUS | xhigh | why: release-critical security diff
 Agent: senior-fullstack
-Workflow: scoped-assessment
 Skills: none")
 expect 'critical REVIEW (#3) on Opus 5.5 xhigh is accepted' pass "$REVIEW_CRIT_OPUS" omp "$OPUS" xhigh none
 REVIEW_BOUNDED=$(t rev-bounded.txt "Routing: REVIEW #1 | role senior-fullstack | omp | $SONNET | high | why: one-file diff
 Agent: senior-fullstack
-Workflow: scoped-assessment
 Skills: none")
 expect 'bounded REVIEW (#1) on Sonnet 5.5 high is accepted' pass "$REVIEW_BOUNDED" omp "$SONNET" high none
 REVIEW_CRIT_OVERRIDE=$(t rev-crit-override.txt "Routing: REVIEW #3 | role senior-fullstack | omp | $SONNET | high | why: captain override - captain chose Sonnet for this critical review
 Agent: senior-fullstack
-Workflow: scoped-assessment
 Skills: none")
 expect_shows 'a named captain override of critical REVIEW is accepted and reported as an override' 'captain override' \
   "$REVIEW_CRIT_OVERRIDE" omp "$SONNET" high none
 REVIEW_BAD_RULE=$(t rev-badrule.txt "Routing: REVIEW #9 | role senior-fullstack | omp | $OPUS | xhigh | why: x
 Agent: senior-fullstack
-Workflow: scoped-assessment
 Skills: none")
 expect 'a rule number the category does not have is rejected' fail "$REVIEW_BAD_RULE" omp "$OPUS" xhigh none
 FALSE_CRIT_LABEL=$(t rev-false-crit.txt "Routing: REVIEW #1 critical | role senior-fullstack | omp | $SONNET | high | why: release-critical security diff
 Agent: senior-fullstack
-Workflow: scoped-assessment
 Skills: none")
 expect 'a free sub-lane label after #n (REVIEW #1 critical on Sonnet high) is rejected' fail "$FALSE_CRIT_LABEL" omp "$SONNET" high none
 FALSE_BOUNDED_LABEL=$(t rev-false-bounded.txt "Routing: REVIEW #3 bounded | role senior-fullstack | omp | $OPUS | xhigh | why: release-critical security diff
 Agent: senior-fullstack
-Workflow: scoped-assessment
 Skills: none")
 expect 'a free sub-lane label after #n (REVIEW #3 bounded on Opus xhigh) is rejected' fail "$FALSE_BOUNDED_LABEL" omp "$OPUS" xhigh none
 
@@ -345,13 +319,11 @@ expect 'zero selected skills with "Skills: none" is valid' pass "$DEFAULT" omp "
 expect 'absolute shared-skill paths from the brief normalize to their names' pass "$IMPL" omp "$OPUS" high "$HOME/.agents/skills/$TDD/SKILL.md,$HOME/.agents/skills/$VBC/SKILL.md"
 PROJECT=$(t project.txt "Routing: REVIEW #2 | role senior-fullstack | omp | $OPUS | high | why: cross-component diff
 Agent: senior-fullstack
-Workflow: scoped-assessment
 Skills: architecture-review, ponytail-review")
 expect 'project-local and shared skills display only selected names' pass "$PROJECT" omp "$OPUS" high '.agents/skills/architecture-review/SKILL.md,ponytail-review'
 expect 'same-named local and global sources cannot be distinguished by this display' pass "$PROJECT" omp "$OPUS" high 'architecture-review,ponytail-review'
 COMPANION=$(t companion.txt "Routing: IMPLEMENT #1 | role senior-fullstack | omp | $SONNET | high | why: bounded behavior change
 Agent: senior-fullstack
-Workflow: focused-delivery
 Skills: ponytail, $TDD, writing-good-tests")
 expect 'a required companion displays a short name, not its full path' pass \
   "$COMPANION" omp "$SONNET" high "ponytail,~/.agents/skills/$TDD/SKILL.md,~/.agents/skills/$TDD/writing-good-tests.md"
@@ -366,52 +338,36 @@ expect_rejects 'Skills none stands alone without a verbose reason line' 'no verb
 No skill: verbose explanation")" omp "$OPUS" high none
 
 # --- 3. Assignment name agreement, never hidden identity/adoption proof ------
-# Catch a trace contradicting the delivered role/workflow names or Routing.
+# Catch a trace contradicting the delivered role name or Routing.
 ASSIGN_BRIEF="$TMP/assignment-brief.md"
 # Name-comparison fixture, not a complete worker handoff.
 cat > "$ASSIGN_BRIEF" <<'EOF'
 ## Firstmate spec
 Assigned role: senior-fullstack
-Workflow ID: focused-delivery
 EOF
 ASSIGNED=$(t assigned.txt "Routing: IMPLEMENT #2 | role senior-fullstack | omp | $OPUS | high | why: coherent CLI and guide change
 Agent: senior-fullstack
-Workflow: focused-delivery
 Skills: none")
-expect 'compact assignment compares role and workflow names' pass \
+expect 'compact assignment compares role names without a recipe field' pass \
   "$ASSIGNED" omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
-expect_rejects 'a workflow differing from the delivered brief is rejected' 'Workflow ID name agrees with brief' \
-  "$(t assign-wrong-workflow.txt "$(sed 's/Workflow: focused-delivery/Workflow: evidence-first/' "$ASSIGNED")")" \
-  omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
 expect_rejects 'an Agent role differing from the delivered brief is rejected' 'Assigned role name agrees with brief' \
   "$(t assign-wrong-role.txt "$(sed 's/Agent: senior-fullstack/Agent: django-pro/' "$ASSIGNED")")" \
   omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
-expect_rejects 'a missing Agent or Workflow line is rejected without a compatibility fallback' 'exactly one Agent and Workflow' \
+expect_rejects 'a missing Agent line is rejected' 'exactly one Agent' \
   "$(t assign-missing.txt "$(sed '/^Agent:/d' "$ASSIGNED")")" omp "$OPUS" high none
 cp "$ASSIGN_BRIEF" "$TMP/contradictory-brief.md"
-printf 'Workflow ID: evidence-first\n' >> "$TMP/contradictory-brief.md"
-expect_rejects 'contradictory brief names fail rather than last-value-wins' 'exactly one brief field Workflow ID' \
+printf 'Assigned role: django-pro\n' >> "$TMP/contradictory-brief.md"
+expect_rejects 'contradictory brief names fail rather than last-value-wins' 'exactly one brief field Assigned role' \
   "$ASSIGNED" omp "$OPUS" high none --brief "$TMP/contradictory-brief.md"
 expect_rejects 'an Agent role cannot contradict Routing even without a brief' 'Agent role agrees with Routing role' \
   "$(t assign-role-conflict.txt "$(sed 's/Routing: IMPLEMENT #2 | role senior-fullstack/Routing: IMPLEMENT #2 | role django-pro/' "$ASSIGNED")")" \
   omp "$OPUS" high none
-sed '/^Workflow ID:/d' "$ASSIGN_BRIEF" > "$TMP/missing-workflow-brief.md"
-expect_rejects 'a missing workflow name is not defaulted to focused-delivery' 'exactly one brief field Workflow ID' \
-  "$ASSIGNED" omp "$OPUS" high none --brief "$TMP/missing-workflow-brief.md"
-expect_rejects 'two Agent lines cannot hide conflicting assignments' 'exactly one Agent and Workflow' \
+expect_rejects 'two Agent lines cannot hide conflicting assignments' 'exactly one Agent' \
   "$(t assign-duplicate.txt "$(cat "$ASSIGNED")
 Agent: django-pro")" omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
-expect_rejects 'a nonexistent workflow name is rejected even without a brief' 'workflow ID exists in workflows.md' \
-  "$(t assign-unknown-workflow.txt "$(sed 's/Workflow: focused-delivery/Workflow: imaginary-workflow/' "$ASSIGNED")")" \
-  omp "$OPUS" high none
 for extra in ' | path /fixture/ROLE.md' ' | native UNPROVEN' ' | worker fixture' ' | why: role fit'; do
-  expect_rejects 'Agent rejects expanded metadata instead of silently accepting it' 'Agent and Workflow contain names only' \
+  expect_rejects 'Agent rejects expanded metadata instead of silently accepting it' 'Agent contains names only' \
     "$(t assign-expanded.txt "$(sed "s@^Agent:.*@Agent: senior-fullstack$extra@" "$ASSIGNED")")" \
-    omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
-done
-for extra in ' | stage implement-and-verify' ' | path /fixture/workflows.md' ' | why: workflow fit'; do
-  expect_rejects 'Workflow rejects expanded metadata instead of silently accepting it' 'Agent and Workflow contain names only' \
-    "$(t workflow-expanded.txt "$(sed "s@^Workflow:.*@Workflow: focused-delivery$extra@" "$ASSIGNED")")" \
     omp "$OPUS" high none --brief "$ASSIGN_BRIEF"
 done
 
@@ -513,7 +469,6 @@ EOF
   selected=$(brief_skills "$BRIEF")
   CAPTAIN_TRACE=$(t seam-trace.txt "Routing: IMPLEMENT #2 | role senior-fullstack | $r_harness | $r_model | $r_effort | why: fixture multi-component change
 Agent: senior-fullstack
-Workflow: focused-delivery
 Skills: trace-canary, verification-before-completion")
 
   SEAM_TMUX=$(mktemp -d /tmp/fm-trace-tmux.XXXXXX) || exit 1
