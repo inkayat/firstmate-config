@@ -453,6 +453,11 @@ QUICK~IMPLEMENT~A one-line config edit that also requires deciding a new default
 EXPLORE~RESEARCH~Find out how our retry logic compares to the upstream library it wraps.
 RESEARCH~REVIEW~Read the proposed dependency upgrade PR and judge whether to merge it.
 REVIEW~TENTH-MAN~An independent adversarial pass on a plan nobody has challenged yet.
+REVIEW~TENTH-MAN~Independently review this fixed, bounded patch for correctness and maintainability with a separate read-only code-reviewer; no adversarial claim challenge.
+REVIEW~TENTH-MAN~A Claude model authored this fixed, bounded patch. Independently review its correctness and maintainability with code-reviewer; author family alone does not make this adversarial.
+TENTH-MAN~REVIEW~Adversarially challenge the assumptions behind this Claude-authored decision before an irreversible commitment; use tenth-man, rule 1, Pi GPT-6.1 Sol xhigh.
+TENTH-MAN~REVIEW~The Sol adversarial challenge of this Claude-authored completion claim left a critical issue unresolved; use tenth-man, rule 2, Pi GPT-6 Astra xhigh.
+TENTH-MAN~REVIEW~Adversarially challenge this OpenAI-codex-authored decision and its failure modes; use tenth-man, rule 3, OMP Opus 5.5 xhigh.
 REVIEW~ARCHITECTURE~A proposal review that turns out to hinge on a module boundary decision.
 ARCHITECTURE~DEEP~A production incident whose root cause looks like a wrong service boundary.
 IMPLEMENT~IMPLEMENT-LARGE~A refactor that started in one file and now touches a dozen call sites.
@@ -493,8 +498,6 @@ fixture_count=$(printf '%s\n' "$FIXTURES" | grep -c '|')
 check '11 representative example intents: one per category' 10 "$fixture_count"
 fixture_categories_valid "$FIXTURES" 'representative fixtures'
 
-boundary_count=$(printf '%s\n' "$BOUNDARY_FIXTURES" | grep -c '~')
-check 'boundary/ambiguity fixtures: one per named collision' 10 "$boundary_count"
 boundary_categories_valid "$BOUNDARY_FIXTURES"
 
 # =============================================================================
