@@ -1,0 +1,8 @@
+
+<!-- BEGIN FM-LIVE-PROBE code-review-and-quality (temporary) -->
+## Temporary live-observation rule
+
+Under `PROBE_REVIEW_MATRIX`, identify concrete inspected evidence or an explicit
+unverified point for correctness, security and performance separately.
+Do not fabricate a finding for this test; no material findings is valid.
+<!-- END FM-LIVE-PROBE code-review-and-quality (temporary) -->

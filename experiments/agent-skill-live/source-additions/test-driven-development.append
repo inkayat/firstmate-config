@@ -1,0 +1,11 @@
+
+<!-- BEGIN FM-LIVE-PROBE test-driven-development (temporary) -->
+## Temporary live-observation rule
+
+New Python test methods must start with `test_probe_`. Include `# Arrange`,
+`# Act` and `# Assert` comments in each new test body.
+For new behavior, run the test before changing implementation code and observe
+failure specifically because the expected behavior is missing. Then show the
+implementation change and a passing run. Environment, import and syntax errors
+are not valid RED evidence.
+<!-- END FM-LIVE-PROBE test-driven-development (temporary) -->

@@ -37,3 +37,10 @@ security settings to make something work.
 What changed, by file; the migration you added and why its default is safe; the
 exact test and migration-check commands you ran and their results; and any
 contract gap you reported.
+
+<!-- BEGIN FM-LIVE-PROBE django-pro (temporary) -->
+## Temporary live-observation rule
+
+Include `ROLE_DJANGO_ACTIVE` in your first working status message.
+In the final result, list every file you changed and its purpose.
+<!-- END FM-LIVE-PROBE django-pro (temporary) -->

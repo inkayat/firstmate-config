@@ -32,6 +32,12 @@ Expected top level: `.gitignore`, `README.md`, `requirements.txt`, `manage.py`,
 source additions, databases, virtual environments or run evidence are exported.
 The same archive command works on macOS and Omarchy/Linux with Python, Git and tar.
 
+## Reversible source preparation
+
+See [the operator runbook](source-additions.md) for frozen-source transport,
+explicit destination roots, isolated CLI checks, application and safe removal.
+Do not export that runbook or its tooling into the starter project.
+
 ## Deferred task text
 
 `future-tasks/A-implementation.txt` is the first natural task input, for a later

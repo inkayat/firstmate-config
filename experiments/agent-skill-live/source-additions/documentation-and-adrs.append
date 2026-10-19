@@ -1,0 +1,7 @@
+
+<!-- BEGIN FM-LIVE-PROBE documentation-and-adrs (temporary) -->
+## Temporary live-observation rule
+
+In the requested API document, include `PROBE_API_EXAMPLES` with an example
+request, expected response and error example matching the actual interface.
+<!-- END FM-LIVE-PROBE documentation-and-adrs (temporary) -->

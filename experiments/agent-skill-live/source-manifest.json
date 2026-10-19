@@ -1,0 +1,77 @@
+{
+  "sources": [
+    {
+      "root": "config",
+      "path": "roles/django-pro/ROLE.md",
+      "revision": "d5e6e1ca8385645c30f7825047e9df838162b474",
+      "sha256": "1e6e7320930dd4ba9fb8eb2fc08f9a462e4b8a2b0802b686d50573937ff24ea3",
+      "canonical": "roles/django-pro/ROLE.md",
+      "id": "django-pro"
+    },
+    {
+      "root": "config",
+      "path": "roles/code-reviewer/ROLE.md",
+      "revision": "d5e6e1ca8385645c30f7825047e9df838162b474",
+      "sha256": "45a297ff49533120d185b2aeb79044c8953301e7b53afd3bb2c087fc3f855626",
+      "canonical": "roles/code-reviewer/ROLE.md",
+      "id": "code-reviewer"
+    },
+    {
+      "root": "config",
+      "path": "roles/technical-writer/ROLE.md",
+      "revision": "d5e6e1ca8385645c30f7825047e9df838162b474",
+      "sha256": "0b28567a8bdadf0e9e405b861fad34e92eeadaa70b116607b2eac85fab53c265",
+      "canonical": "roles/technical-writer/ROLE.md",
+      "id": "technical-writer"
+    },
+    {
+      "root": "config",
+      "path": "skills/django-backend/SKILL.md",
+      "revision": "d5e6e1ca8385645c30f7825047e9df838162b474",
+      "sha256": "28909f97b8db1af545493547964e0ddd6b30aa2598fe62dc0d6e68cc76a40364",
+      "canonical": "skills/django-backend/SKILL.md",
+      "id": "django-backend"
+    },
+    {
+      "root": "superpowers",
+      "path": "skills/test-driven-development/SKILL.md",
+      "revision": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "sha256": "bf1b8216e523851a411e91d429a7c1c2a173e79d88957bc78e348218d50edd54",
+      "addition": "source-additions/test-driven-development.append",
+      "id": "test-driven-development"
+    },
+    {
+      "root": "addy",
+      "path": "skills/code-review-and-quality/SKILL.md",
+      "revision": "be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39",
+      "sha256": "8f3cabca581bbf7cb5f0add3f7454e7a4523f9d4353a6a4a217e6fa515309612",
+      "addition": "source-additions/code-review-and-quality.append",
+      "id": "code-review-and-quality"
+    },
+    {
+      "root": "addy",
+      "path": "skills/documentation-and-adrs/SKILL.md",
+      "revision": "be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39",
+      "sha256": "87ae44a0c7bb3eefc2131a9d11caabcc14e4d8dcb27d66a3a675551ee2ce1671",
+      "addition": "source-additions/documentation-and-adrs.append",
+      "id": "documentation-and-adrs"
+    }
+  ],
+  "companions": [
+    {
+      "root": "superpowers",
+      "path": "skills/test-driven-development/writing-good-tests.md",
+      "sha256": "51471c853306ff92ca8bb41dcaea05f31c0e46b03651f8f3c99754b7172f4ae1"
+    },
+    {
+      "root": "addy",
+      "path": "references/security-checklist.md",
+      "sha256": "963922cb36bc87b81e56c8f86ff8f6db813ed7efe88066914dceaf6adba2ac90"
+    },
+    {
+      "root": "addy",
+      "path": "references/performance-checklist.md",
+      "sha256": "40f564d1e62341e277c01ba42c42d95264b9ef3b8e5a23249dc6e121a7e70067"
+    }
+  ]
+}

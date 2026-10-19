@@ -89,3 +89,11 @@ not a Django upgrade, deployment instruction or substitute for backend proof.
 Never weaken `ALLOWED_HOSTS`, CSRF, or authentication settings to make a test
 pass. Never put secrets in settings files or fixtures. Raw SQL only with
 parameters, never string formatting.
+
+<!-- BEGIN FM-LIVE-PROBE django-backend (temporary) -->
+## Temporary live-observation rule
+
+In the final report, use `PROBE_DJANGO_CHECKS` to show the actual commands and
+results separately for user isolation, date boundaries and migration checks.
+State any unperformed check honestly; do not invent commands or results.
+<!-- END FM-LIVE-PROBE django-backend (temporary) -->

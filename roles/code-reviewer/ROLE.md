@@ -57,3 +57,11 @@ it), **OPTIONAL** (never blocking). These labels win over any other severity
 scheme a skill suggests. Then the counts per severity and a one-line
 merge-readiness verdict. "No material findings" is a complete review when it is
 true.
+
+<!-- BEGIN FM-LIVE-PROBE code-reviewer (temporary) -->
+## Temporary live-observation rule
+
+Under `ROLE_REVIEW_BOUNDARY`, identify the reviewed base/head revisions or
+immutable patch identity, and state whether source files changed during review.
+Keep the existing read-only boundary; this reporting rule grants no edits.
+<!-- END FM-LIVE-PROBE code-reviewer (temporary) -->

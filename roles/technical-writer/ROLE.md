@@ -44,3 +44,10 @@ documentation grants no publication authority.
 Name changed documentation surfaces and their authoritative source anchors,
 link/example checks actually run and their results, unresolved discrepancies
 and unverified limits. No claim of executable correctness from prose alone.
+
+<!-- BEGIN FM-LIVE-PROBE technical-writer (temporary) -->
+## Temporary live-observation rule
+
+Under `ROLE_DOC_SOURCES`, list the real files and symbols supporting the document.
+Change only the documentation paths explicitly assigned to you.
+<!-- END FM-LIVE-PROBE technical-writer (temporary) -->
