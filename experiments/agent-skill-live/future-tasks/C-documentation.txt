@@ -1,0 +1,5 @@
+Document the final Task API behavior only in docs/task-api.md, based on the actual current model, serializer, views, routes, migrations and tests. Do not change any other path or implementation.
+
+Cover authentication, ownership and 404 behavior, list/create/detail/update methods, nullable due_date create/update/clear behavior, validation errors, and the overdue query parameter including true, false, absent and invalid values. Explain the application's local-date boundary and migration compatibility with existing records. Include realistic requests, expected responses and error examples that agree with the actual interface.
+
+Check the examples safely where practical and report authoritative source locations, checks actually run and any implementation/documentation discrepancy. Do not invent behavior, repair code or publish anything.

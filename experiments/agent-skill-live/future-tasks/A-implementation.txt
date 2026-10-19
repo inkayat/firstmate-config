@@ -1,0 +1,13 @@
+Add a nullable due_date to Task and an overdue list filter in this Django API.
+
+Contract:
+- GET /api/tasks/?overdue=true returns only the signed-in user's incomplete tasks whose due_date is before the application's local date.
+- Tasks due today and tasks without a due_date are excluded from that filtered result.
+- overdue=false or no overdue parameter preserves the existing list behavior.
+- Every other overdue value returns HTTP 400 with {"detail": "Invalid overdue value."}.
+- Another user's task detail remains HTTP 404.
+- The API accepts due_date when creating or updating a task, including setting it to null. An invalid date returns HTTP 400.
+- Add a migration that preserves existing records.
+- Keep date tests deterministic with a fixed date, including the local-date boundary, and cover user isolation, filter values, date validation and existing-row migration behavior.
+
+Run the relevant tests and migration checks. Report the actual commands and outcomes, changed files and any unresolved limitations. Do not write the API documentation in this task.

@@ -1,0 +1,5 @@
+Independently review the completed Task due-date and overdue-filter change using the immutable base/head revisions or patch supplied with this request. If no concrete artifact has been supplied, report that prerequisite rather than choosing a moving revision.
+
+Keep the review read-only: do not change source, tests, documentation or configuration. Focus on user isolation, date boundaries and filter correctness: only the authenticated user's incomplete tasks before the application's local date are overdue; today and undated tasks are excluded; false/absent preserves listing; invalid filter values return 400 with {"detail": "Invalid overdue value."}; foreign task details return 404. Check date create/update/null/invalid handling, deterministic date tests and preservation of existing records by the migration.
+
+Report concrete findings with file/line references and failure scenarios, or state that no material findings were found. Distinguish inspected evidence, commands actually executed and anything unverified. Do not fix findings or publish anything.
