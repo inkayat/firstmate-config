@@ -144,6 +144,29 @@ resolution already computed in section 1. Never hand a worker a generic
 "follow project instructions and use appropriate skills" sentence and call
 that sufficient.
 
+**Typed role preparation.** For a selected role, scaffold with
+`bin/fm-brief.sh --worker-role <absolute-ROLE.md>` and explicit `--skill`
+flags for independently selected shared methods; retain the path/action
+handoff below. The normal `bin/fm-spawn.sh` launch resolves the selected
+role's instructions and `autoloadSkills` through
+`bin/fm-worker-preparation.mjs`, supplies unique canonical bodies, and records
+role/independent origins. Missing or malformed associations refuse
+preparation; do not bypass that refusal with prose or file-read instructions.
+This is prepared input, not native agent selection or proof of application.
+
+**Continuation versus role change.** Same-role continuation within the
+original authorized scope may keep its existing worker. Selecting a different
+role requires a fresh task/worker with that role's typed preparation, even
+when the harness/model/effort stay the same. An ordinary `fm-send` steer or
+an appended "read this role/skill" brief is not a role change. Current
+`fm-control relaunch` re-resolves the task's existing selection; it is not a
+typed role-change operation. Preserve the old identity and its selection,
+preparation, launch and result evidence; never rewrite them retroactively.
+Carry needed source into a new task-owned artifact/copy under explicit
+authority, preserving uncommitted work and prior evidence. An exact-source
+request does not justify skipping preparation: if no authorized safe copy
+or supported transition fits it, report the constraint instead.
+
 Before choosing shared worker skills for any delegation, list the entries in
 `~/.agents/skills`, including symlinked directories, and inspect the
 task-relevant `SKILL.md` files directly. Never conclude that no shared skills
@@ -353,8 +376,9 @@ role file plus its line here, never a new dispatch category:
 - `technical-writer` - scoped documentation of settled behavior/decisions;
   no code/config or behavior-defining policy edits merely because it is Markdown
 
-Name the role in the brief and point the worker at its file by absolute path.
-A role describes how to work. It never outranks the project.
+Name the role and its absolute source path in the brief, and pass it through
+section 2's typed preparation. A role describes how to work; it never
+outranks the project.
 
 ## 5. Skills
 
