@@ -56,6 +56,10 @@
 #                                                      gate version of this
 #                                                      exact scenario was
 #                                                      written and abandoned.
+#   tests/worker-context.sh role-change <directory>  characterize typed role
+#                                                      preparation without a
+#                                                      worker/model/backend;
+#                                                      retain private fixtures.
 #
 # `prepare` + `handoff` + `validate` are the deterministic interface for a
 # live acceptance run: prepare the fixture, hand `handoff`'s output to a real
@@ -803,12 +807,145 @@ fixture_openended_validate_live() {
   return $all_ok
 }
 
+# Characterizes the existing fm-brief -> preparation owner, not an LLM's
+# decision to use it. Catches lost autoloadSkills, canonical duplicates,
+# incorrect origins, and accidental writes to a prior task/source artifact.
+# No spawn, worktree allocation, endpoint control, or Herdr lifecycle.
+fixture_role_change() {
+  python3 - "$CONFIG_ROOT" "$FIRSTMATE_ROOT" "$1" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+config, core, root = map(Path, sys.argv[1:])
+root = root.resolve()
+root.mkdir(parents=True, exist_ok=False)
+home = root / "home"
+(home / "config").mkdir(parents=True)
+skills = root / "skills"
+roles = root / "roles"
+for name in ("django-backend", "verification-before-completion", "documentation-and-adrs"):
+    directory = skills / name
+    directory.mkdir(parents=True)
+    (directory / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: Synthetic method\n"
+        f"disable-model-invocation: true\n---\nBODY_{name}\n")
+for name in ("django-pro", "technical-writer"):
+    directory = roles / name
+    directory.mkdir(parents=True)
+    (directory / "ROLE.md").write_bytes((config / "roles" / name / "ROLE.md").read_bytes())
+source = root / "source-copy"
+source.mkdir()
+(source / "implementation.txt").write_text("Synthetic uncommitted implementation; preserve me.\n")
+env = dict(os.environ, HOME=str(home), FM_HOME=str(home),
+           FM_ROOT_OVERRIDE=str(core), FM_DATA_OVERRIDE=str(home / "data"),
+           FM_STATE_OVERRIDE=str(home / "state"), FM_CONFIG_OVERRIDE=str(home / "config"))
+commands = []
+
+def run(args, ok=True):
+    result = subprocess.run(list(map(str, args)), env=env, capture_output=True, text=True)
+    commands.append({"argv": list(map(str, args)), "exit": result.returncode,
+                     "stdout": result.stdout, "stderr": result.stderr})
+    (root / "commands.json").write_text(json.dumps(commands, indent=2) + "\n")
+    assert (result.returncode == 0) == ok, commands[-1]
+    return result
+
+def scaffold(task, role, *extra, ok=True):
+    return run(["bash", core / "bin/fm-brief.sh", task, "synthetic", "--mode", "local-only",
+                "--worker-role", roles / role / "ROLE.md", "--skill-root", skills,
+                "--skill", skills / "verification-before-completion/SKILL.md", *extra], ok)
+
+def prepare(task, output="worker-preparation.json", ok=True):
+    directory = home / "data" / task
+    result = run(["node", core / "bin/fm-worker-preparation.mjs", "prepare",
+                  directory / "worker-selection.json", directory / output], ok)
+    if ok:
+        (directory / (output + ".input.md")).write_text(result.stdout)
+    return result
+
+def hashes(directory):
+    return {str(p.relative_to(directory)): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(directory.rglob("*")) if p.is_file()}
+
+# Arrange: a genuinely prepared old task, not a prose-only role label.
+scaffold("implementation", "django-pro")
+old = prepare("implementation")
+old_dir = home / "data/implementation"
+assert json.loads((old_dir / "worker-preparation.json").read_text())["role"]["name"] == "fm-django-pro"
+before, source_before = hashes(old_dir), hashes(source)
+
+# Act: same-role preparation can retain its selection without rewriting old
+# evidence; a different role gets its own task and explicit independent method.
+same = run(["node", core / "bin/fm-worker-preparation.mjs", "prepare",
+            old_dir / "worker-selection.json", root / "same-role-preparation.json"])
+assert same.stdout == old.stdout
+scaffold("documentation", "technical-writer")
+new = prepare("documentation")
+new_dir = home / "data/documentation"
+manifest = json.loads((new_dir / "worker-preparation.json").read_text())
+
+# Assert: real role body and resolved methods, not a policy-source text check.
+assert manifest["role"]["name"] == "fm-technical-writer"
+assert manifest["role"]["associations"] == ["documentation-and-adrs"]
+assert (roles / "technical-writer/ROLE.md").read_text() in new.stdout
+assert "## Selected role: fm-django-pro" not in new.stdout
+resolved = {s["name"]: s for s in manifest["skills"]}
+assert set(resolved) == {"documentation-and-adrs", "verification-before-completion"}
+assert resolved["documentation-and-adrs"]["origins"] == ["role"]
+assert resolved["verification-before-completion"]["origins"] == ["independent"]
+for name, record in resolved.items():
+    assert record["path"] == str((skills / name / "SKILL.md").resolve())
+    assert record["sha256"] == hashlib.sha256(Path(record["path"]).read_bytes()).hexdigest()
+    assert new.stdout.count(f"BODY_{name}") == 1
+print("PASS fresh django-pro -> technical-writer: role body, autoloadSkills, independent origin")
+
+# Managed aliases must supply one canonical body with both origins.
+alias = root / "documentation-alias.md"
+alias.symlink_to(skills / "documentation-and-adrs/SKILL.md")
+scaffold("deduplicated", "technical-writer", "--skill", alias)
+duplicate = prepare("deduplicated")
+dedup = json.loads((home / "data/deduplicated/worker-preparation.json").read_text())
+assert duplicate.stdout.count("BODY_documentation-and-adrs") == 1
+assert dedup["skills"][0]["origins"] == ["role", "independent"]
+print("PASS canonical alias: unique body and merged role/independent origins")
+
+# Re-resolution must refuse a disappeared or malformed association without
+# publishing preparation output; initial selection must refuse it too.
+method = skills / "documentation-and-adrs/SKILL.md"
+method.rename(method.with_suffix(".missing"))
+assert "documentation-and-adrs" in prepare("documentation", "missing.json", ok=False).stderr
+assert not (new_dir / "missing.json").exists()
+scaffold("missing-selection", "technical-writer", ok=False)
+assert not (home / "data/missing-selection/brief.md").exists()
+role = roles / "technical-writer/ROLE.md"
+role.write_text("---\nname: fm-technical-writer\ndescription: Invalid fixture\n"
+                "autoloadSkills: false\n---\nInvalid role\n")
+assert "autoloadSkills" in prepare("documentation", "bad.json", ok=False).stderr
+assert not (new_dir / "bad.json").exists()
+print("PASS missing/bad association: refusal before prepared input is published")
+assert hashes(old_dir) == before
+assert hashes(source) == source_before
+(root / "preserved-hashes.json").write_text(json.dumps(
+    {"old_task": before, "source": source_before}, indent=2) + "\n")
+print("PASS old records/source unchanged; same-role prepared input unchanged")
+print("ROLE CHANGE PREPARATION PASS (characterization only; no live supervisor or worker)")
+PY
+}
+
 # =============================================================================
 # CLI dispatch - must run before any offline-suite scratch state (TMP_ROOT,
 # its EXIT trap) is created, so prepare/validate/handoff never depend on or
 # disturb the default suite's own temporary root.
 # =============================================================================
 case "${1:-}" in
+  role-change)
+    dir=${2:?"usage: $0 role-change <new-private-directory>"}
+    fixture_role_change "$dir"
+    exit $?
+    ;;
   prepare)
     dir=${2:?"usage: $0 prepare <directory>"}
     mkdir -p "$dir"
@@ -857,7 +994,7 @@ case "${1:-}" in
     ;;
   '') ;; # fall through to the offline suite below
   *)
-    printf 'usage: %s [prepare <directory>|handoff <repo-dir>|internal-prepare <directory>|internal-handoff <directory> <expected-worktree>|validate <worker-report> [expected-worktree]|scope-prepare <directory>|scope-handoff <repo-dir>|scope-validate <worker-report> [expected-worktree]]\n' "$0" >&2
+    printf 'usage: %s [role-change <new-private-directory>|prepare <directory>|handoff <repo-dir>|internal-prepare <directory>|internal-handoff <directory> <expected-worktree>|validate <worker-report> [expected-worktree]|scope-prepare <directory>|scope-handoff <repo-dir>|scope-validate <worker-report> [expected-worktree]]\n' "$0" >&2
     exit 2
     ;;
 esac
@@ -869,6 +1006,12 @@ esac
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-worker-context.XXXXXX") || exit 1
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd)
 trap 'rm -rf "$TMP_ROOT"' EXIT
+
+if [ -f "$FIRSTMATE_ROOT/bin/fm-worker-preparation.mjs" ]; then
+  fixture_role_change "$TMP_ROOT/role-change" || fail 'typed role-change preparation characterization'
+else
+  printf 'SKIP - typed role preparation: FirstMate preparation owner unavailable\n'
+fi
 
 # =============================================================================
 # 1. fixture_validate's own matcher logic, proven against synthetic
