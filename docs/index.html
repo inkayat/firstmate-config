@@ -72,8 +72,8 @@ everything configured here.</p>
 <div class="callout note"><span class="t">Check before you trust</span>
 <p>Run <code>fm doctor</code> after installing and after every <code>fm update</code>. It is read-only and tells you which
 part of the stack is outside what this configuration was validated against.</p></div>
-<div class="callout"><span class="t">A running Captain does not reload</span>
-<p>The Captain keeps the instructions and wiring it loaded at startup. After an update, end the session and run <code>fm</code> again.</p></div>
+<div class="callout"><span class="t">A running Captain keeps what it already loaded</span>
+<p>The Captain keeps the instructions and wiring it loaded at startup. After an update, end the session and run <code>fm</code> again. Files a running session reads afterwards, such as an active Ponytail mode's prompt, are already the updated ones.</p></div>
 <div class="callout warn"><span class="t">Planned work is not documented here</span>
 <p>The repository README has a roadmap. Nothing on it is current behavior, and this guide does not describe it.</p></div>
 </article></main>

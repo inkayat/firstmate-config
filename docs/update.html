@@ -36,8 +36,8 @@ To adopt the update later, end the Captain session, then run fm again.
 Secondmates and projects were not updated.</code></pre>
 <p>Already-current checkouts are reported; normal update still reconciles and verifies. Check-only never runs those steps.</p>
 
-<div class="callout note"><span class="t">The Captain does not hot-reload</span>
-<p>A running Captain keeps the instructions, skills, and launch-time wiring it loaded. To adopt an update, end the Captain session and run <code>fm</code> again.</p></div>
+<div class="callout note"><span class="t">A running Captain keeps what it already loaded</span>
+<p>A running Captain keeps the instructions, skills, and launch-time wiring it already loaded. To adopt an update, end the Captain session and run <code>fm</code> again. Files a running session reads afterwards are the updated ones: a Pi session whose own Ponytail mode is <code>lite</code>, <code>full</code> or <code>ultra</code> injects the new Ponytail prompt on its next turn, although the default stays <code>off</code>.</p></div>
 
 <h2 id="never-does">What it never does</h2>
 <ul>

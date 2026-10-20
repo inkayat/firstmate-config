@@ -176,8 +176,11 @@ checkouts. If the distribution checkout moved and a later stage fails, the comma
 reports `PARTIAL UPDATE`; there is no multi-repository rollback. Fix the stated
 error and re-run. Only `fm update complete` means every stage succeeded.
 
-A running Captain is not restarted or notified and keeps its loaded instructions
-and skills. End that session and run `fm` again to adopt updates. Landed source
+A running Captain is not restarted or notified. Instructions and skills it has
+already loaded stay as they are; end that session and run `fm` again to adopt
+updates. Files a running session reads afterwards are the updated ones: a Pi
+session whose own Ponytail mode is `lite`, `full` or `ultra` injects the new
+Ponytail prompt on its next turn, although the default stays `off`. Landed source
 or an isolated candidate is not evidence of installation or activation on a host.
 
 For Ponytail pins, `ponytail-update` requires a clean `main`, pulls fast-forward
