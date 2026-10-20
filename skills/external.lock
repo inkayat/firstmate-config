@@ -5,14 +5,16 @@
 # ~/.agents/skills/. Nothing is vendored into this repository, so their
 # licenses stay with their sources: all three are MIT.
 #
-# To move a pin: change the sha, rerun ./install.sh, and commit. Never track a
-# branch here - an unpinned global skill changes the behavior of every project
-# on this machine without a diff.
+# To move Ponytail's pin: scripts/update-ponytail.sh (see README.md).
+# For other sources, review the release diff, change the sha, then reinstall.
+# Never track a branch here: moving shared skills change every project's behavior.
 #
 # Format, tab-separated:
 #   <our-id> <repo> <commit> <path-in-repo> <installed-skill-name>
 #
-# Verified 2026-09-15 against api.github.com.
+# Reviewed 2026-10-20 against official upstream stable releases:
+# obra/superpowers v7.0.0; DietrichGebert/ponytail v5.3.2;
+# addyosmani/agent-skills 0.6.13. Exact commits below, never moving tags.
 #
 # Known deviations:
 #   - ponytail:implement does not exist upstream. The repository ships exactly
@@ -24,19 +26,19 @@
 #     outside their own directory, so install.sh also links ~/.agents/references
 #     at the parent that those relative paths resolve to.
 
-superpowers:debug	obra/superpowers	b36e0829c6d0140e93cfef2ca599b1b07d4a7797	skills/systematic-debugging	systematic-debugging
-superpowers:verify	obra/superpowers	b36e0829c6d0140e93cfef2ca599b1b07d4a7797	skills/verification-before-completion	verification-before-completion
-superpowers:tdd	obra/superpowers	b36e0829c6d0140e93cfef2ca599b1b07d4a7797	skills/test-driven-development	test-driven-development
-ponytail:implement	DietrichGebert/ponytail	1d95ff7d39de12d87014ea40d4e22201bddc501b	skills/ponytail	ponytail
-ponytail:review	DietrichGebert/ponytail	1d95ff7d39de12d87014ea40d4e22201bddc501b	skills/ponytail-review	ponytail-review
-addy:planning	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/planning-and-task-breakdown	planning-and-task-breakdown
-addy:incremental	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/incremental-implementation	incremental-implementation
-addy:context	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/context-engineering	context-engineering
-addy:api-design	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/api-and-interface-design	api-and-interface-design
-addy:security	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/security-and-hardening	security-and-hardening
-addy:code-review	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/code-review-and-quality	code-review-and-quality
-addy:simplify	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/code-simplification	code-simplification
-addy:spec	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/spec-driven-development	spec-driven-development
-addy:browser-testing	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/browser-testing-with-devtools	browser-testing-with-devtools
-addy:frontend	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/frontend-ui-engineering	frontend-ui-engineering
-addy:documentation	addyosmani/agent-skills	be4e44a9fbc5e8df0beaefadbb28bd22ee61cc39	skills/documentation-and-adrs	documentation-and-adrs
+superpowers:debug	obra/superpowers	bb92a77741419a4ab5f06e711a283343f1ada0c3	skills/systematic-debugging	systematic-debugging
+superpowers:verify	obra/superpowers	bb92a77741419a4ab5f06e711a283343f1ada0c3	skills/verification-before-completion	verification-before-completion
+superpowers:tdd	obra/superpowers	bb92a77741419a4ab5f06e711a283343f1ada0c3	skills/test-driven-development	test-driven-development
+ponytail:implement	DietrichGebert/ponytail	16352ac229eb08a9598dcae48fe9f2b342567d86	skills/ponytail	ponytail
+ponytail:review	DietrichGebert/ponytail	16352ac229eb08a9598dcae48fe9f2b342567d86	skills/ponytail-review	ponytail-review
+addy:planning	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/planning-and-task-breakdown	planning-and-task-breakdown
+addy:incremental	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/incremental-implementation	incremental-implementation
+addy:context	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/context-engineering	context-engineering
+addy:api-design	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/api-and-interface-design	api-and-interface-design
+addy:security	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/security-and-hardening	security-and-hardening
+addy:code-review	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/code-review-and-quality	code-review-and-quality
+addy:simplify	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/code-simplification	code-simplification
+addy:spec	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/spec-driven-development	spec-driven-development
+addy:browser-testing	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/browser-testing-with-devtools	browser-testing-with-devtools
+addy:frontend	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/frontend-ui-engineering	frontend-ui-engineering
+addy:documentation	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/documentation-and-adrs	documentation-and-adrs
