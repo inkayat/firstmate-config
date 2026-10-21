@@ -426,7 +426,8 @@ contains '11 control: a raw add that is pruned before a sweep re-fires' "$out" '
 out=$(run3 file seamcommit-20261012 --json --now 2026-10-12T01:10Z)
 check '11 local-commit plan: ship' "$(field "$out" kind)" ship
 check '11 local-commit plan: local-only' "$(field "$out" delivery)" local-only
-check '11 local-commit plan: dated bot branch' "$(field "$out" branch)" bot/seamcommit/20261012
+check '11 local-commit plan: full occurrence bot branch' "$(field "$out" branch)" bot/seamcommit/seamcommit-20261012
+check '11 local-commit plan: explicit native ship prefix' "$(field "$out" branch_prefix)" bot/seamcommit/
 contains '11 local-commit plan: stops uncommitted with needs-decision' "$(field "$out" stop_rule)" 'leave the change uncommitted, append needs-decision [key=commit-approval]'
 contains '11 local-commit plan: no commit without per-commit approval' "$(field "$out" approval)" 'per-commit captain approval'
 out=$(run3 file seamcommit-20270705 --json --now 2027-07-05T01:00Z)
@@ -435,7 +436,8 @@ check '11 expired local-commit: plan is a scout' "$(field "$out" kind)" scout
 check '11 expired local-commit: plan carries the reason' "$(field "$out" reason)" authorization-expired
 out=$(run3 file pushbot-20261012 --json --now 2026-10-12T01:10Z)
 check '11 push plan: delivery from the registered posture' "$(field "$out" delivery)" direct-PR
-check '11 push plan: branch under the scoped prefix' "$(field "$out" branch)" bot/pushbot/20261012
+check '11 push plan: full occurrence under the scoped prefix' "$(field "$out" branch)" bot/pushbot/pushbot-20261012
+check '11 push plan: retained native ship prefix' "$(field "$out" branch_prefix)" bot/pushbot/
 check '11 push plan: one push per run' "$(field "$out" push_max_per_run)" 1
 sed -i.bak 's/^role: senior-fullstack$/role: no-such-role/' "$H3/data/bots/seam.md"
 rm -f "$H3/data/bots/seam.md.bak"

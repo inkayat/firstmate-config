@@ -369,9 +369,9 @@ for d in $DAYS_B; do
     "$d 09:00 bot due: $id spec=data/bots/refactor-commit.md level=local-commit"
   check "b $d: plan is a local-only ship on the dated bot branch" \
     "$(python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); print(p["kind"], p["delivery"], p["branch"])' "$TMP_ROOT/runs/$id.plan.json")" \
-    "ship local-only bot/refactor-commit/${d//-/}"
+    "ship local-only bot/refactor-commit/$id"
   repo="$TMP_ROOT/runs/$id/repo"
-  check "b $d: worker is on the dated bot branch" "$(git -C "$repo" branch --show-current)" "bot/refactor-commit/${d//-/}"
+  check "b $d: worker is on the dated bot branch" "$(git -C "$repo" branch --show-current)" "bot/refactor-commit/$id"
   check "b $d: no commit on the branch" "$(git -C "$repo" rev-list --count origin/main..HEAD 2>/dev/null)" 0
   changed=$(project_changes "$repo" | grep -c . || true)
   if [ "$changed" -ge 1 ] && [ "$changed" -le 2 ]; then pass "b $d: an uncommitted change within the file limit ($changed)"; else fail "b $d: an uncommitted change within the file limit ($changed)"; fi

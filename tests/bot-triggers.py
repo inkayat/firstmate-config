@@ -71,7 +71,7 @@ class Triggers(unittest.TestCase):
     def git(self, *args):
         return self.command([GIT, *args]).stdout.strip()
 
-    def remote(self):
+    def remote(self, *args):
         self.project = self.fm / "projects/sandbox"
         self.project.mkdir(parents=True)
         self.origin = self.root / "origin.git"
@@ -84,7 +84,7 @@ class Triggers(unittest.TestCase):
         self.git("-C", self.project, "push", "origin", "HEAD:refs/heads/selected")
         # Deliberately unrelated default branch: observing HEAD is a bug.
         self.git("--git-dir", self.origin, "symbolic-ref", "HEAD", "refs/heads/unrelated")
-        self.create("--on-remote", "origin", "--on-branch", "selected")
+        self.create("--on-remote", "origin", "--on-branch", "selected", *args)
 
     def commit(self, text):
         (self.project / "fixture.txt").write_text(text)
@@ -99,6 +99,135 @@ class Triggers(unittest.TestCase):
 
     def file(self, ident, now, **kwargs):
         return self.bot("file", ident, "--json", "--now", now, **kwargs)
+
+    def shipping_args(self, level, name="scan", prefix="bot/scan/"):
+        quote = f"The {name} bot may change sandbox within the approved limits."
+        (self.fm / "data/projects.md").write_text("# Projects\n- sandbox [direct-PR] - disposable fixture\n")
+        (self.fm / "data/captain.md").write_text(f"bot-authorization: {quote}\n")
+        args = ["--level", level, "--authorization", quote, "--authorization-scope", "sandbox fixture only",
+                "--authorized-on", "2026-10-01", "--expires", "2027-01-01",
+                "--max-files", "2", "--max-lines", "40", "--exclude", ".env"]
+        if level == "push":
+            args += ["--push-remote", "origin", "--push-branch-prefix", prefix, "--push-max-per-run", "1"]
+        return args
+
+    def assert_ship_branch(self, plan, branch, prefix):
+        # Literals at each call are derived from the supported ship contract:
+        # fm-brief.sh/fm-spawn.sh --branch-prefix PREFIX creates PREFIX + full ID.
+        self.assertEqual(plan["branch"], branch)
+        self.assertEqual(plan["branch_prefix"], prefix)
+        self.assertIn(f"--branch-prefix {prefix}", plan["stop_rule"])
+        self.assertIn(f"Work only on branch {branch},", plan["stop_rule"])
+        self.git("check-ref-format", "--branch", branch)
+
+    def test_daily_push_uses_full_occurrence_id_and_retains_configured_prefix(self):
+        # Catches the reported firstmate-20261022 mismatch and a one-day special case.
+        args = self.shipping_args("push", "firstmate", "bot/firstmate/")
+        self.bot("create", "firstmate", *self.base, *args, "--at", "00:00", "--until", "00:15",
+                 "--route", "IMPLEMENT #2", "--now", "2026-10-21T01:00Z")
+        spec = (self.fm / "data/bots/firstmate.md").read_bytes()
+        for ident, now, branch in (
+            ("firstmate-20261022", "2026-10-21T22:00Z", "bot/firstmate/firstmate-20261022"),
+            ("firstmate-20261023", "2026-10-22T22:00Z", "bot/firstmate/firstmate-20261023"),
+        ):
+            with self.subTest(ident=ident):
+                plan = json.loads(self.file(ident, now).stdout)
+                self.assert_ship_branch(plan, branch, "bot/firstmate/")
+                self.assertEqual((plan["id"], plan["bot"], plan["kind"], plan["delivery"], plan["level"],
+                                  plan["role"], plan["route"], plan["push_remote"], plan["push_max_per_run"],
+                                  plan["max_files"], plan["max_lines"], plan["exclude"]),
+                                 (ident, "firstmate", "ship", "direct-PR", "push", "senior-fullstack",
+                                  "IMPLEMENT #2", "origin", "1", "2", "40", [".env"]))
+                self.assertIn("per-commit captain approval", plan["approval"])
+                self.assertIn("leave the change uncommitted", plan["stop_rule"])
+                self.assertIn("Never merge.", plan["stop_rule"])
+                row = self.command([FMROOT / "bin/fm-tasks-axi.sh", "show", ident, "--full"]).stdout
+                self.assertEqual(self.file(ident, now).stdout.strip(), f"already-filed: {ident}")
+                self.assertEqual(self.command([FMROOT / "bin/fm-tasks-axi.sh", "show", ident, "--full"]).stdout, row)
+        self.assertEqual((self.fm / "data/bots/firstmate.md").read_bytes(), spec)
+        self.assertFalse((self.fm / "state/bots.check.sh").exists())
+
+    def test_daily_local_ship_text_plan_uses_full_id(self):
+        self.create("--at", "03:00", "--until", "05:59", *self.shipping_args("local-commit"))
+        text = self.bot("file", "scan-20261025", "--now", "2026-10-25T02:00Z").stdout
+        plan = dict(line.split(":", 1) for line in text.splitlines())
+        plan = {key: value.strip() for key, value in plan.items()}
+        self.assert_ship_branch(plan, "bot/scan/scan-20261025", "bot/scan/")
+        self.assertEqual((plan["kind"], plan["delivery"]), ("ship", "local-only"))
+
+    def test_interval_local_ship_uses_full_id(self):
+        self.create("--every-hours", "3", *self.shipping_args("local-commit"))
+        plan = json.loads(self.file("scan-i20261025T010000Z", "2026-10-25T01:00Z").stdout)
+        self.assert_ship_branch(plan, "bot/scan/scan-i20261025T010000Z", "bot/scan/")
+
+    def test_interval_push_recovery_preserves_branch_and_receipt(self):
+        # Catches rebuilding a plan or duplicating filing after a marker failure.
+        self.create("--every-hours", "3", *self.shipping_args("push", prefix="automation/retained/"))
+        marker = self.fm / "data/bots/.filed"
+        decoy = self.root / "marker-decoy"
+        decoy.mkdir()
+        marker.symlink_to(decoy)
+        ident = "scan-i20261025T010000Z"
+        failed = self.file(ident, "2026-10-25T01:00Z", ok=False)
+        self.assertNotEqual(failed.returncode, 0)
+        row = self.command([FMROOT / "bin/fm-tasks-axi.sh", "show", ident, "--full"]).stdout
+        admission = self.fm / "data/bots/.admission/scan.json"
+        receipt = json.loads(admission.read_text())["last_job"]
+        marker.unlink()
+        plan = json.loads(self.file(ident, "2026-10-25T04:00Z").stdout)
+        self.assert_ship_branch(plan, "automation/retained/scan-i20261025T010000Z", "automation/retained/")
+        self.assertTrue(plan["already_filed"])
+        self.assertEqual(self.command([FMROOT / "bin/fm-tasks-axi.sh", "show", ident, "--full"]).stdout, row)
+        self.assertEqual(json.loads(admission.read_text())["last_job"], receipt)
+        self.assertEqual(self.file(ident, "2026-10-25T04:01Z").stdout.strip(), f"already-filed: {ident}")
+        self.assertEqual(self.verdict("2026-10-25T04:02Z")["verdict"], "skipped")
+
+    def test_remote_local_ship_uses_full_id(self):
+        self.remote(*self.shipping_args("local-commit"))
+        self.verdict("2026-10-24T22:00Z")
+        oid = self.publish("b")
+        plan = json.loads(self.file("scan-r000000000001", "2026-10-24T22:01Z").stdout)
+        self.assert_ship_branch(plan, "bot/scan/scan-r000000000001", "bot/scan/")
+        self.assertEqual((plan["trigger"]["branch"], plan["artifact"]["commit"]), ("selected", oid))
+
+    def test_remote_push_uses_retained_prefix_and_full_id(self):
+        self.remote(*self.shipping_args("push", prefix="automation/retained/"))
+        self.verdict("2026-10-24T22:00Z")
+        oid = self.publish("b")
+        plan = json.loads(self.file("scan-r000000000001", "2026-10-24T22:01Z").stdout)
+        self.assert_ship_branch(plan, "automation/retained/scan-r000000000001", "automation/retained/")
+        self.assertEqual((plan["trigger"]["branch"], plan["artifact"]["commit"]), ("selected", oid))
+
+    def test_legacy_daily_recovery_keeps_original_plan_and_never_backfills(self):
+        # A pre-cutover row is history, not permission to silently regenerate it.
+        self.create("--at", "03:00", "--until", "05:59", *self.shipping_args("local-commit"))
+        legacy = {
+            "id": "scan-20261024", "bot": "scan", "spec": "data/bots/scan.md", "project": "sandbox",
+            "role": "senior-fullstack", "role_file": str(ROOT / "roles/senior-fullstack/ROLE.md"),
+            "route": "EXPLORE #2", "level": "local-commit", "requested": "local-commit",
+            "scope": "Review selected project; report only", "access": "none", "notify": "report",
+            "wall_clock_min": "60", "max_candidates": None, "max_files": "2", "max_lines": "40",
+            "exclude": [".env"], "kind": "ship", "delivery": "local-only", "branch": "bot/scan/20261024",
+            "approval": "per-commit captain approval before any commit",
+            "stop_rule": "Work only on branch bot/scan/20261024, within the approved scope and limits; never push.",
+        }
+        body = "fm-bot dispatch plan (fm-bot.v1): dispatch exactly this, never widen it\n" + json.dumps(legacy) + "\n"
+        self.command([FMROOT / "bin/fm-tasks-axi.sh", "add", "scan-20261024", "Legacy fixture",
+                      "--kind", "ship", "--repo", "sandbox", "--body", body])
+        before = self.command([FMROOT / "bin/fm-tasks-axi.sh", "show", "scan-20261024", "--full"]).stdout
+        new = json.loads(self.file("scan-20261025", "2026-10-25T02:00Z").stdout)
+        self.assert_ship_branch(new, "bot/scan/scan-20261025", "bot/scan/")
+        markers = self.fm / "data/bots/.filed"
+        saved = {p.name: p.read_bytes() for p in markers.iterdir()}
+        recovered = json.loads(self.file("scan-20261024", "2026-10-25T02:01Z").stdout)
+        self.assertEqual(recovered, {**legacy, "already_filed": True, "dispatcher_gone": False})
+        self.assertEqual(self.command([FMROOT / "bin/fm-tasks-axi.sh", "show", "scan-20261024", "--full"]).stdout, before)
+        for name, content in saved.items():
+            self.assertEqual((markers / name).read_bytes(), content)
+        self.assertEqual(self.file("scan-20261024", "2026-10-25T02:02Z").stdout.strip(), "already-filed: scan-20261024")
+        missed = self.file("scan-20261023", "2026-10-25T02:03Z", ok=False)
+        self.assertNotEqual(missed.returncode, 0)
+        self.assertIn("refused (not-today)", missed.stderr)
 
     def owned(self, ident, state="busy"):
         worktree = self.root / "worker" / ident
