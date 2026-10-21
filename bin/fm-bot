@@ -74,6 +74,13 @@ also kept in a durable per-bot marker (`data/bots/.filed/<name>`); a dated
 task that is done and pruned to the archive later the same day stays filed.
 Only a real-clock evaluation (or `FM_BOT_TEST_CLOCK=1`) writes that marker,
 so a dry `--now` query never moves today's.
+
+New ship plans carry `branch_prefix` and `branch` = prefix + full occurrence
+id. Pass --branch-prefix to both fm-brief.sh and fm-spawn.sh as printed:
+local-commit uses bot/<name>/; push retains the validated configured prefix.
+Recovery preserves a legacy plan verbatim; a naming amendment requires
+explicit authority, never a duplicate filing or rewritten receipt.
+
 The dispatch seam closes the remaining gap: `file <name>-<YYYYMMDD>` is how a
 due bot's dated task is filed. It re-evaluates the bot at that instant,
 refuses anything but today's due id (no backfill), adds the row through the
@@ -1850,7 +1857,6 @@ def dispatch_plan(spec: dict, result: dict) -> dict:
     """What Firstmate dispatches for one due bot: everything comes from the
     re-validated spec and the effective level, nothing from the wake line."""
     level = result["level"]
-    date = result["id"].rsplit("-", 1)[1]
     plan = {
         "id": result["id"], "bot": spec["name"], "spec": spec_rel(spec["name"]),
         "project": spec["project"], "role": spec["role"],
@@ -1867,14 +1873,22 @@ def dispatch_plan(spec: dict, result: dict) -> dict:
         plan.update(kind="scout", delivery="report", report=f"data/{result['id']}/report.md",
                     approval="none: report only")
     elif level == "local-commit":
-        plan.update(kind="ship", delivery="local-only", branch=f"bot/{spec['name']}/{date}",
+        plan.update(kind="ship", delivery="local-only", branch_prefix=f"bot/{spec['name']}/",
                     approval="per-commit captain approval before any commit")
     else:
         mode, _yolo = project_posture(spec["project"])
-        plan.update(kind="ship", delivery=mode, branch=f"{spec['push_branch_prefix']}{date}",
+        plan.update(kind="ship", delivery=mode, branch_prefix=spec["push_branch_prefix"],
                     push_remote=spec["push_remote"], push_max_per_run=spec["push_max_per_run"],
                     approval="per-commit captain approval before any commit or push")
+    if plan["kind"] == "ship":
+        # Native ship branches are the explicit prefix plus the full occurrence id.
+        plan["branch"] = f"{plan['branch_prefix']}{plan['id']}"
     plan["stop_rule"] = STOP_RULES[level].format(**{k: v for k, v in plan.items() if v is not None})
+    if plan["kind"] == "ship":
+        plan["stop_rule"] = (
+            f"Pass --branch-prefix {plan['branch_prefix']} to both fm-brief.sh and fm-spawn.sh. "
+            + plan["stop_rule"]
+        )
     if trigger_mode(spec) != "daily":
         plan.update(trigger=result["trigger"], routine_identity=routine_identity(spec), duration_enforced=False,
                     duration_note="wall_clock_min is an advisory target; no forced stop or resource cancellation",
