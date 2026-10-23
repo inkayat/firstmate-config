@@ -26,9 +26,9 @@
 #   harness         Pi by default; --harness omp selects OMP explicitly.
 #   model chain     firstmate/captain-startup-models.tsv, applied only to this
 #                   Captain launch with availability-only fallback.
-#   --model PRESET  codex (openai-codex/gpt-6.1-sol, high), claude
-#                   (anthropic/claude-sonnet-5-5, high), or grok
-#                   (xai/grok-4.7, high) for this launch only, used only
+#   --model PRESET  codex (openai-codex/gpt-6.1-sol, medium), claude
+#                   (anthropic/claude-sonnet-5-5, medium), or grok
+#                   (xai/grok-4.7, medium) for this launch only, used only
 #                   when the selected harness reports that exact model and
 #                   effort AVAILABLE. Any other value, or an unavailable or
 #                   unverifiable preset, warns and uses the unchanged model
@@ -223,9 +223,9 @@ resolve_startup_model() {
   local model='' effort='' result state reason
   [ -n "$REQUESTED_MODEL" ] || { resolve_model_chain; return; }
   case $REQUESTED_MODEL in
-    codex) model=openai-codex/gpt-6.1-sol effort=high ;;
-    claude) model=anthropic/claude-sonnet-5-5 effort=high ;;
-    grok) model=xai/grok-4.7 effort=high ;;
+    codex) model=openai-codex/gpt-6.1-sol effort=medium ;;
+    claude) model=anthropic/claude-sonnet-5-5 effort=medium ;;
+    grok) model=xai/grok-4.7 effort=medium ;;
   esac
   if [ -z "$model" ]; then
     REQUESTED_MODEL_FALLBACK="is not a preset (expected codex, claude, or grok)"

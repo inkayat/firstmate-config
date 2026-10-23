@@ -242,10 +242,10 @@ Agent: senior-fullstack
 Skills: none")
 expect 'DEFAULT trace on Opus 5.5 high matches the debug-period catch-all' pass "$DEFAULT" omp "$OPUS" high none
 
-TENTH=$(t tenth.txt "Routing: TENTH-MAN #1 | role tenth-man | pi | $SOL | xhigh | why: challenge Claude-authored completion claim
+TENTH=$(t tenth.txt "Routing: TENTH-MAN #1 | role tenth-man | pi | $SOL | high | why: challenge Claude-authored completion claim
 Agent: tenth-man
 Skills: none")
-expect 'TENTH-MAN against Claude output on Pi GPT-6.1 Sol xhigh is accepted' pass "$TENTH" pi "$SOL" xhigh none
+expect 'TENTH-MAN against Claude output on Pi GPT-6.1 Sol high is accepted' pass "$TENTH" pi "$SOL" high none
 ARCH_WRONG_ROLE=$(t arch-role.txt "Routing: ARCHITECTURE #1 | role senior-fullstack | omp | $OPUS | high | why: module boundary
 Agent: senior-fullstack
 Skills: none")

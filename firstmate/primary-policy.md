@@ -326,7 +326,7 @@ not implied by the role.
 through xhigh support; every Claude route is OMP. `openai-codex/gpt-6.1-sol`
 is also the OMP GPT alternative in all four IMPLEMENT/IMPLEMENT-LARGE rules
 (same effort as each rule's Claude candidate) and the first
-Captain-startup candidate in `captain-startup-models.tsv` (high effort);
+Captain-startup candidate in `captain-startup-models.tsv` (medium effort);
 that chain's Claude Sonnet fallback step is harness-scoped (OMP's own
 `anthropic/claude-sonnet-5-5` versus Pi's unversioned
 `pi-claude-code-provider/sonnet` alias) - see README.md "Captain startup

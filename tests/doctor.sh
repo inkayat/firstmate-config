@@ -846,7 +846,7 @@ out20b=$(run_doctor --harness omp); code20b=$?
 json20b=$(FM_TEST_OMP_AVAILABLE='openai-codex/gpt-6.1-sol,openai-codex/gpt-6-astra,anthropic/claude-sonnet-5-5,anthropic/claude-opus-5-5,anthropic/claude-haiku-4-5,openai-codex/gpt-6-luna' run_doctor --harness omp --json)
 unset FM_TEST_OMP_AVAILABLE
 check '20b optional-unavailable: exit code stays 0' 0 "$code20b"
-not_contains '20b optional-unavailable: the absent Grok first preference is never reported FAIL' "$out20b" 'FAIL          captain.model.xai/grok-4.7'
+not_contains '20b optional-unavailable: absent Grok is not a startup failure' "$out20b" 'FAIL          captain.model.xai/grok-4.7'
 not_contains '20b optional-unavailable: the absent Pi-only candidate is never reported FAIL' "$out20b" 'FAIL          captain.model.pi-claude-code-provider/sonnet'
 status_exit_agree '20b optional-unavailable' "$out20b" "$json20b" "$code20b"
 

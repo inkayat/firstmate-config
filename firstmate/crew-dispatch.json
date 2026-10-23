@@ -125,7 +125,7 @@
         {
           "harness": "pi",
           "model": "openai-codex/gpt-6.1-sol",
-          "effort": "xhigh"
+          "effort": "high"
         }
       ],
       "why": "openai-codex/gpt-6.1-sol on Pi is REVIEW's cross-family second reviewer, reached for only when the critical case above genuinely needs an independent, differently-sourced check in addition to the Opus 5.5 primary review, never as a routine substitute for it."
@@ -161,10 +161,10 @@
         {
           "harness": "pi",
           "model": "openai-codex/gpt-6-astra",
-          "effort": "xhigh"
+          "effort": "high"
         }
       ],
-      "why": "openai-codex/gpt-6-astra on Pi at xhigh is reached for only on this narrowest, most consequential tier of architecture decision, once Opus 5.5 at xhigh above is not enough. Astra stays limited to this and this configuration's other genuinely exceptional lanes; it is never a routine architecture default."
+      "why": "openai-codex/gpt-6-astra on Pi at high is reached for only on this narrowest, most consequential tier of architecture decision, once Opus 5.5 at xhigh above is not enough. Astra stays limited to this and this configuration's other genuinely exceptional lanes; it is never a routine architecture default."
     },
     {
       "category": "TENTH-MAN",
@@ -173,7 +173,7 @@
         {
           "harness": "pi",
           "model": "openai-codex/gpt-6.1-sol",
-          "effort": "xhigh"
+          "effort": "high"
         }
       ],
       "why": "Model-family diversity is the whole point: when the primary author is a Claude/Anthropic model, the challenger runs on Pi with GPT-6.1 Sol, a different provider and a different harness from the OMP session that likely produced the work, at the lowest cost that still satisfies family diversity. GPT-6 Astra remains available as a separate, more specific escalation below for the most critical or unresolved cases, never a routine default. TENTH-MAN versus DEEP: DEEP investigates why something is broken; TENTH-MAN challenges whether a plan or a completion claim actually holds, broken or not."
@@ -185,7 +185,7 @@
         {
           "harness": "pi",
           "model": "openai-codex/gpt-6-astra",
-          "effort": "xhigh"
+          "effort": "high"
         }
       ],
       "why": "openai-codex/gpt-6-astra on Pi is reached for only as the most critical or unresolved escalation once the Sol challenge above is not enough, preserving TENTH-MAN's Claude-primary family-diversity route while keeping Astra an explicit, rarely-selected escalation rather than a routine default."
@@ -197,10 +197,10 @@
         {
           "harness": "omp",
           "model": "anthropic/claude-opus-5-5",
-          "effort": "xhigh"
+          "effort": "high"
         }
       ],
-      "why": "When the primary author is Astra or another OpenAI-codex model, the challenger switches to OMP with Opus 5.5 at xhigh so the reviewer's model family never matches the author's. This enforces the same independence TENTH-MAN's Claude-primary rule enforces, just from the other direction."
+      "why": "When the primary author is Astra or another OpenAI-codex model, the challenger switches to OMP with Opus 5.5 at high so the reviewer's model family never matches the author's. This enforces the same independence TENTH-MAN's Claude-primary rule enforces, just from the other direction."
     },
     {
       "category": "IMPLEMENT",
