@@ -273,7 +273,7 @@ check_array_length REVIEW 4 1
 check_rule_use REVIEW 1 1 omp anthropic/claude-sonnet-5-5 high
 check_rule_use REVIEW 2 2 omp anthropic/claude-opus-5-5 high
 check_rule_use REVIEW 3 3 omp anthropic/claude-opus-5-5 xhigh
-check_rule_use REVIEW 4 4 pi openai-codex/gpt-6.1-sol xhigh
+check_rule_use REVIEW 4 4 pi openai-codex/gpt-6.1-sol high
 check_lane_when REVIEW 4 'not by default' 'REVIEW rule 4: cross-family second review is an explicit escalation, not a default'
 
 # ARCHITECTURE: ordinary rule (Opus 5.5 high), a very-difficult rule (Opus
@@ -284,7 +284,7 @@ check_array_length ARCHITECTURE 2 1
 check_array_length ARCHITECTURE 3 1
 check_rule_use ARCHITECTURE 1 1 omp anthropic/claude-opus-5-5 high
 check_rule_use ARCHITECTURE 2 2 omp anthropic/claude-opus-5-5 xhigh
-check_rule_use ARCHITECTURE 3 3 pi openai-codex/gpt-6-astra xhigh
+check_rule_use ARCHITECTURE 3 3 pi openai-codex/gpt-6-astra high
 check_lane_when ARCHITECTURE 3 'ultra-exceptional' 'ARCHITECTURE rule 3: Astra ultra-exceptional is an explicit escalation, not a default'
 
 # TENTH-MAN: three rules enforcing model-family diversity via explicit,
@@ -294,9 +294,9 @@ check_lane_when ARCHITECTURE 3 'ultra-exceptional' 'ARCHITECTURE rule 3: Astra u
 check_array_length TENTH-MAN 1 1
 check_array_length TENTH-MAN 2 1
 check_array_length TENTH-MAN 3 1
-check_rule_use TENTH-MAN 1 1 pi openai-codex/gpt-6.1-sol xhigh
-check_rule_use TENTH-MAN 2 2 pi openai-codex/gpt-6-astra xhigh
-check_rule_use TENTH-MAN 3 3 omp anthropic/claude-opus-5-5 xhigh
+check_rule_use TENTH-MAN 1 1 pi openai-codex/gpt-6.1-sol high
+check_rule_use TENTH-MAN 2 2 pi openai-codex/gpt-6-astra high
+check_rule_use TENTH-MAN 3 3 omp anthropic/claude-opus-5-5 high
 check_lane_when TENTH-MAN 1 'Claude' 'TENTH-MAN rule 1: when-text names Claude as the triggering author family (text only, no classifier runs this)'
 check_lane_when TENTH-MAN 2 'unresolved' 'TENTH-MAN rule 2: Astra escalation is explicitly critical/unresolved, not a default'
 check_lane_when TENTH-MAN 3 'Astra' 'TENTH-MAN rule 3: when-text names Astra/OpenAI-codex as the triggering author family (text only, no classifier runs this)'

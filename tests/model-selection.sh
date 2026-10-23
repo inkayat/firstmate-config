@@ -126,33 +126,33 @@ run_fm() {
 
 out=$(run_fm 2>&1) || { fail "healthy startup command failed: $out"; printf '\nMODEL SELECTION FAIL\n'; exit 1; }
 check 'healthy startup selects GPT-6.1 Sol' 'openai-codex/gpt-6.1-sol' "$(field "$out" SELECTED_MODEL)"
-check 'healthy startup keeps high effort' 'high' "$(field "$out" SELECTED_EFFORT)"
+check 'healthy startup keeps medium effort' 'medium' "$(field "$out" SELECTED_EFFORT)"
 check 'preferred model is observable' 'openai-codex/gpt-6.1-sol' "$(field "$out" PREFERRED_MODEL)"
-check 'preferred effort is observable' 'high' "$(field "$out" PREFERRED_EFFORT)"
+check 'preferred effort is observable' 'medium' "$(field "$out" PREFERRED_EFFORT)"
 check 'Pi command carries the selected model' 'openai-codex/gpt-6.1-sol' "$(printf '%s\n' "$(field "$out" COMMAND)" | awk '{for (i=1;i<=NF;i++) if ($i=="--model") print $(i+1)}')"
-check 'Pi command carries selected effort' 'high' "$(printf '%s\n' "$(field "$out" COMMAND)" | awk '{for (i=1;i<=NF;i++) if ($i=="--thinking") print $(i+1)}')"
+check 'Pi command carries selected effort' 'medium' "$(printf '%s\n' "$(field "$out" COMMAND)" | awk '{for (i=1;i<=NF;i++) if ($i=="--thinking") print $(i+1)}')"
 
 out=$(FM_TEST_SOL_THINKING=no run_fm 2>&1) || { fail "Sol without thinking command failed: $out"; out=''; }
-check 'Sol without high thinking is skipped, never downgraded' 'pi-claude-code-provider/sonnet' "$(field "$out" SELECTED_MODEL)"
-contains 'Sol unsupported effort reason is visible' "$(field "$out" FALLBACK_REASON)" 'unsupported configured effort high'
+check 'Sol without medium thinking is skipped, never downgraded' 'pi-claude-code-provider/sonnet' "$(field "$out" SELECTED_MODEL)"
+contains 'Sol unsupported effort reason is visible' "$(field "$out" FALLBACK_REASON)" 'unsupported configured effort medium'
 
 out=$(FM_TEST_AVAILABLE='pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra' run_fm 2>&1) || { fail "fallback to Sonnet command failed: $out"; out=''; }
 check 'unavailable Sol selects usable Claude Sonnet despite broker invalid_state' 'pi-claude-code-provider/sonnet' "$(field "$out" SELECTED_MODEL)"
-check 'Claude Sonnet keeps high effort' 'high' "$(field "$out" SELECTED_EFFORT)"
+check 'Claude Sonnet keeps medium effort' 'medium' "$(field "$out" SELECTED_EFFORT)"
 contains 'fallback reason is visible' "$(field "$out" FALLBACK_REASON)" 'openai-codex/gpt-6.1-sol'
 
-out=$(FM_TEST_AVAILABLE='pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra' FM_TEST_SONNET_AUTH=unavailable run_fm 2>&1) || { fail "authoritative Sonnet auth failure command failed: $out"; out=''; }
-check 'authoritative Claude Sonnet auth failure skips to Astra' 'openai-codex/gpt-6-astra' "$(field "$out" SELECTED_MODEL)"
-contains 'authoritative Sonnet auth failure remains visible' "$(field "$out" FALLBACK_REASON)" 'pi-claude-code-provider/sonnet'
+out=$(FM_TEST_AVAILABLE='pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra' FM_TEST_SONNET_AUTH=unavailable run_fm 2>&1); rc=$?
+check 'authoritative Claude Sonnet auth failure exhausts startup even with Astra available' 1 "$rc"
+contains 'authoritative Sonnet auth failure remains visible' "$out" 'Claude Code is not logged in'
 
 out=$(FM_TEST_AVAILABLE='pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra' FM_TEST_SONNET_AUTH=unknown run_fm 2>&1) || { fail "unknown Sonnet auth command failed: $out"; out=''; }
 check 'unknown non-authoritative Sonnet auth does not reject an installed catalog model' 'pi-claude-code-provider/sonnet' "$(field "$out" SELECTED_MODEL)"
 check 'unknown Sonnet selection exposes its availability state' 'UNKNOWN' "$(field "$out" SELECTED_AVAILABILITY)"
 
-out=$(FM_TEST_AVAILABLE='openai-codex/gpt-6-astra' run_fm 2>&1) || { fail "fallback to Astra command failed: $out"; out=''; }
-check 'unavailable Sol and Sonnet selects Astra' 'openai-codex/gpt-6-astra' "$(field "$out" SELECTED_MODEL)"
-check 'Astra keeps xhigh effort' 'xhigh' "$(field "$out" SELECTED_EFFORT)"
-contains 'both unavailable candidates are named' "$(field "$out" FALLBACK_REASON)" 'pi-claude-code-provider/sonnet'
+out=$(FM_TEST_AVAILABLE='openai-codex/gpt-6-astra' run_fm 2>&1); rc=$?
+check 'Astra alone cannot rescue unavailable Sol and Sonnet' 1 "$rc"
+contains 'exhausted chain refuses startup clearly' "$out" 'no configured captain startup model is available'
+contains 'both unavailable candidates are named' "$out" 'pi-claude-code-provider/sonnet'
 
 if out=$(FM_TEST_AVAILABLE='' run_fm 2>&1); then
   fail 'all unavailable candidates should fail startup'
@@ -161,13 +161,12 @@ else
   contains 'all-unavailable failure is clear' "$out" 'no configured captain startup model is available'
   contains 'all-unavailable failure names Sol' "$out" 'openai-codex/gpt-6.1-sol'
   contains 'all-unavailable failure names Sonnet' "$out" 'pi-claude-code-provider/sonnet'
-  contains 'all-unavailable failure names Astra' "$out" 'openai-codex/gpt-6-astra'
 fi
 
 out=$(FM_TEST_AVAILABLE='openai-codex/gpt-6.1-sol,pi-claude-code-provider/sonnet,openai-codex/gpt-6-astra' FM_TEST_SOL_THINKING=no run_fm 2>&1) || { fail "unsupported effort fallback command failed: $out"; out=''; }
 check 'unsupported effort does not downgrade and skips candidate' 'pi-claude-code-provider/sonnet' "$(field "$out" SELECTED_MODEL)"
-check 'next candidate effort remains high' 'high' "$(field "$out" SELECTED_EFFORT)"
-contains 'unsupported effort reason is visible' "$(field "$out" FALLBACK_REASON)" 'unsupported configured effort high'
+check 'next candidate effort remains medium' 'medium' "$(field "$out" SELECTED_EFFORT)"
+contains 'unsupported effort reason is visible' "$(field "$out" FALLBACK_REASON)" 'unsupported configured effort medium'
 
 before=$(shasum -a 256 "$CONFIG_ROOT/firstmate/crew-dispatch.json" | awk '{print $1}')
 run_fm >/dev/null 2>&1 || true

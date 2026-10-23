@@ -55,7 +55,7 @@ create missing operational-home directories. See
 
 | Command | Purpose |
 | --- | --- |
-| `fm` | Start the Pi Captain, preferring GPT-6.1 Sol high |
+| `fm` | Start the Pi Captain, preferring GPT-6.1 Sol medium |
 | `fm --harness omp` | Use OMP explicitly; harness fallback is not automatic |
 | `fm --model claude` | Choose a model preset for this launch only; also accepts `codex` or `grok` |
 | `fm --check` / `fm --print-command` | Inspect startup resolution / the resolved command without launching |
@@ -100,8 +100,8 @@ as global authority at startup. The exact precedence belongs to
 ### Captain startup model
 
 [`captain-startup-models.tsv`](firstmate/captain-startup-models.tsv) owns the
-ordered chain: GPT-6.1 Sol high, a harness-specific Sonnet high fallback, then
-GPT-6 Astra xhigh. Rows for a different harness are ignored. Only an
+ordered chain: GPT-6.1 Sol medium, then a harness-specific Sonnet medium fallback.
+There is no Astra startup candidate. Rows for a different harness are ignored. Only an
 authoritative `UNAVAILABLE` skips a candidate; `UNKNOWN` remains eligible.
 Launch output explains fallback decisions.
 
@@ -114,7 +114,7 @@ FirstMate extension-load markers.
 
 `fm --model codex|claude|grok` selects, respectively,
 `openai-codex/gpt-6.1-sol`, `anthropic/claude-sonnet-5-5`, or `xai/grok-4.7`,
-all at high effort. A preset requires `AVAILABLE` for that exact model/effort.
+all at medium effort. A preset requires `AVAILABLE` for that exact model/effort.
 Invalid, unavailable or unverifiable presets warn and use the unchanged default
 chain on the same harness. Raw model ids are not accepted; nothing is persisted.
 On Pi, the `claude` preset needs Anthropic credentials in Pi, not just the

@@ -63,14 +63,12 @@ Captain that never loaded it would not be a FirstMate Captain. Two consequences:
 <table>
 <thead><tr><th>#</th><th>Model</th><th>Effort</th><th>Harness</th></tr></thead>
 <tbody>
-<tr><td>1</td><td><code>xai/grok-4.7</code></td><td>high</td><td>both</td></tr>
-<tr><td>2</td><td><code>openai-codex/gpt-6.1-sol</code></td><td>medium</td><td>both</td></tr>
-<tr><td>3</td><td><code>anthropic/claude-sonnet-5-5</code></td><td>high</td><td>OMP only</td></tr>
-<tr><td>3</td><td><code>pi-claude-code-provider/sonnet</code></td><td>high</td><td>Pi only</td></tr>
-<tr><td>4</td><td><code>openai-codex/gpt-6-astra</code></td><td>xhigh</td><td>both</td></tr>
+<tr><td>1</td><td><code>openai-codex/gpt-6.1-sol</code></td><td>medium</td><td>both</td></tr>
+<tr><td>2</td><td><code>anthropic/claude-sonnet-5-5</code></td><td>medium</td><td>OMP only</td></tr>
+<tr><td>2</td><td><code>pi-claude-code-provider/sonnet</code></td><td>medium</td><td>Pi only</td></tr>
 </tbody>
 </table>
-<p>So an OMP Captain tries Grok 4.7, then Sol 6.1, then Claude Sonnet 5.5, then Astra; a Pi Captain tries Grok 4.7, then Sol 6.1, then the Claude Code provider's Sonnet alias, then Astra. Grok 4.7 at high is the manually configured first preference; a harness that reports it unavailable falls back to the next row.</p>
+<p>An OMP Captain tries Sol 6.1, then Claude Sonnet 5.5; a Pi Captain tries Sol 6.1, then the Claude Code provider's Sonnet alias. All startup candidates use medium effort. Astra is not a startup candidate; Grok remains available only through the explicit preset below.</p>
 <ul>
 <li>A row whose harness column does not match the active Captain harness is skipped entirely - never probed, never selected. An OMP Captain can never be launched with a Pi-only provider id.</li>
 <li>Probing is non-billable. Only an authoritative <code>UNAVAILABLE</code> skips a candidate; <code>AVAILABLE</code> and <code>UNKNOWN</code> both stay eligible.</li>
@@ -101,8 +99,8 @@ fm --model grok --harness pi</code></pre>
 <thead><tr><th>Preset</th><th>OMP</th><th>Pi</th><th>Effort</th></tr></thead>
 <tbody>
 <tr><td><code>codex</code></td><td><code>openai-codex/gpt-6.1-sol</code></td><td><code>openai-codex/gpt-6.1-sol</code></td><td>medium</td></tr>
-<tr><td><code>claude</code></td><td><code>anthropic/claude-sonnet-5-5</code></td><td><code>anthropic/claude-sonnet-5-5</code></td><td>high</td></tr>
-<tr><td><code>grok</code></td><td><code>xai/grok-4.7</code></td><td><code>xai/grok-4.7</code></td><td>high</td></tr>
+<tr><td><code>claude</code></td><td><code>anthropic/claude-sonnet-5-5</code></td><td><code>anthropic/claude-sonnet-5-5</code></td><td>medium</td></tr>
+<tr><td><code>grok</code></td><td><code>xai/grok-4.7</code></td><td><code>xai/grok-4.7</code></td><td>medium</td></tr>
 </tbody>
 </table>
 <p>The <code>codex</code> and <code>claude</code> ids are exact, version-pinned entries in OMP's native catalog and in Pi's built-in registry; <code>xai/grok-4.7</code> is the exact id Pi's registry lists and is checked on OMP through the same native catalog. Pi's <code>pi-claude-code-provider/sonnet</code> is an unversioned Claude Code alias and is never used for <code>claude</code>, so a Pi Captain needs Anthropic credentials configured in Pi for this preset.</p>
