@@ -272,7 +272,9 @@ Captain calls; **Blocked** includes unresolved dependencies and blocked, paused,
 failed or unknown children; **Completed** means a landed backlog row only.
 
 FirstMate's published state remains authoritative. Absent FirstMate rows retire
-only when summary surfaces are provably complete; manual cards survive.
+from provably complete summary surfaces; a truncated summary additionally needs
+absence from the official full local backlog/metadata inventory. Unknown or
+incomplete input retains cards; manual cards survive.
 `fm board` refreshes while its launched viewer runs, and the page reloads data
 periodically. Use [`bin/fm-board`](bin/fm-board) directly for list/show/render and
 manual-card commands. See [board usage and details](docs/board.html).
