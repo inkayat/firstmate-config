@@ -45,7 +45,7 @@ fm board --lavish   # the same static page through Lavish</code></pre>
 <tr><td><code>$FM_HOME/data/board/board-data.js</code></td><td class="wrap">Generated data the static page reads.</td></tr>
 </tbody>
 </table>
-<p>FirstMate's backlog and execution records (<code>data/backlog.md</code>, <code>state/home-summary.json</code>) stay authoritative. Cards for finished FirstMate work are retired when FirstMate stops publishing them, but only when its summary surfaces are provably complete. Cards you added by hand are never retired.</p>
+<p>FirstMate's backlog and execution records (<code>data/backlog.md</code>, <code>state/home-summary.json</code>) stay authoritative. Absent FirstMate cards retire when summary surfaces are provably complete. If the summary is truncated, retirement additionally requires absence from the official <code>fm-fleet-snapshot.sh --contribution-input</code> full local backlog/metadata inventory. Missing, failed, malformed or unstructured inventory retains cards, as do surface-hiding summary invalidities. Omitted-but-existing tasks and cards you added by hand are never retired by this fallback.</p>
 
 <h2 id="fm-board">fm-board commands</h2>
 <p>The board script has more subcommands than <code>fm board</code> exposes. <code>fm board [--lavish]</code> runs <code>fm-board open</code>. The script lives in the firstmate-config checkout at <code>bin/fm-board</code> and is not linked onto <code>PATH</code> by the installer, so call it by path.</p>

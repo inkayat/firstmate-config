@@ -699,14 +699,9 @@ if kill -0 "$OPEN_PID" 2>/dev/null; then fail '21 open: exits promptly once the 
 wait "$OPEN_PID" 2>/dev/null
 
 # =============================================================================
-# Scenario 10: a Firstmate-sourced row whose id leaves every surface of a
-# complete, valid home summary is retired (deleted); manual rows, and rows
-# missing only because the ledger is invalid or has truncated a surface, are
-# left exactly as they were. Regression coverage for the captain-reported
-# board bug: a task that finishes and is torn down (backlog prune / landed
-# window aging out) disappears from every Firstmate surface, so an
-# upsert-only reconcile froze it at its last-seen `in_progress`/`done` state
-# forever.
+# Scenario 10: absent Firstmate rows retire from a complete summary. Partial
+# summaries alone cannot prove deletion; Scenario 13 adds an authoritative
+# inventory read to distinguish deleted rows from omitted-but-existing work.
 # =============================================================================
 HOME10="$TMP_ROOT/home10"; FIRSTMATE10="$TMP_ROOT/firstmate10"
 mkdir -p "$HOME10/state" "$FIRSTMATE10/bin"
@@ -746,14 +741,12 @@ check '22 retire: still-present row kept' "$(state_of10 q-live-1)" todo
 if run10 show a-1 >/dev/null 2>&1; then fail '22 retire: show of a retired id fails nonzero'; else pass '22 retire: show of a retired id fails nonzero'; fi
 if grep -q '"event": "retire"' "$HOME10/data/board/events.jsonl"; then pass '22 retire: retirement recorded in events.jsonl'; else fail '22 retire: retirement recorded in events.jsonl'; fi
 
-# v3: partial publication must never retire. Re-seed a-1 via a valid ledger,
-# then publish an invalid ledger, a ledger that truncated a surface, and a
-# ledger from an older producer with no `valid` key at all - none without a-1.
+# Partial/unknown publications without an authoritative inventory cannot retire.
 summary10 true '[]' a-1 ''; run10 list >/dev/null
 summary10 false '[]' '' ''; run10 list >/dev/null
 check '23 guard: invalid ledger with no invalidity kind retires nothing' "$(state_of10 a-1)" in_progress
 summary10 true '[{"surface": "landed", "count": 3}]' '' ''; run10 list >/dev/null
-check '23 guard: truncated ledger retires nothing' "$(state_of10 a-1)" in_progress
+check '23 guard: truncated ledger without authoritative inventory retires nothing' "$(state_of10 a-1)" in_progress
 python3 - "$HOME10/state/home-summary.json" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -909,5 +902,129 @@ printf 'Edited body\n' > "$HOME12/data/backlog.md"
 if file_contains_within "$HOME12/data/board/board-data.js" "Edited body" 50; then pass '28 details: a backlog edit reaches the open board'; else fail '28 details: a backlog edit reaches the open board'; fi
 touch "$VIEWER_GATE12"
 wait "$OPEN_PID12" 2>/dev/null
+
+# =============================================================================
+# Scenario 13: truncation is not deletion, but must not retain genuinely removed
+# rows forever. The official snapshot's contribution-input mode publishes the
+# complete local backlog + metadata inventory without observing workers.
+# Breaks caught: treating omission as absence; ignoring authoritative absence;
+# accepting an unavailable/partial inventory; losing narrow-show or idempotence.
+# =============================================================================
+HOME13="$TMP_ROOT/home13"; FIRSTMATE13="$TMP_ROOT/firstmate13"
+mkdir -p "$HOME13/state" "$FIRSTMATE13/bin"
+cat > "$FIRSTMATE13/bin/fm-fleet-snapshot.sh" <<'SH'
+#!/usr/bin/env bash
+[ "$#" = 1 ] && [ "$1" = --contribution-input ] || exit 64
+cat "$FM_HOME/inventory.json"
+[ ! -e "$FM_HOME/inventory-failed" ]
+SH
+chmod +x "$FIRSTMATE13/bin/fm-fleet-snapshot.sh"
+run13() { FM_HOME="$HOME13" FIRSTMATE_ROOT="$FIRSTMATE13" PATH="/usr/bin:/bin" "$BOARD" "$@"; }
+seed13() {
+  cat > "$HOME13/state/home-summary.json" <<'JSON'
+{"valid":true,"omitted":[],"queued":[
+ {"id":"removed-list","repo":"proj-r","title":"Removed from backlog"},
+ {"id":"removed-show","repo":"proj-r","title":"Removed requested row"},
+ {"id":"kept-queued","repo":"proj-q","title":"Omitted queued task"},
+ {"id":"kept-held","repo":"proj-h","title":"Omitted captain hold","hold_kind":"captain","captain_actionable":true},
+ {"id":"kept-live","repo":"proj-l","title":"Omitted live task"},
+ {"id":"protected","repo":"proj-p","title":"Inventory mismatch"}
+],"endpoints":[],"active_children":[],"landed":[],"holds":[],"decisions_open":[]}
+JSON
+  run13 list >/dev/null
+}
+partial13() {
+  cat > "$HOME13/state/home-summary.json" <<'JSON'
+{"valid":false,"invalidity":{"kind":"orphan_in_flight","ids":["protected"]},
+ "omitted":[{"surface":"queued","count":83},{"surface":"endpoints","count":63},{"surface":"decisions_open","count":1}],
+ "queued":[],"endpoints":[{"id":"seen-active","repo":"proj-a","name":"Active task","state":"working"}],
+ "active_children":[],"landed":[],"holds":[],"decisions_open":[]}
+JSON
+}
+inventory13='{"backlog":{"present":true,"records":[
+ {"structured":true,"id":"kept-queued","state":"queued"},
+ {"structured":true,"id":"kept-held","state":"in_flight"}
+]},"tasks":[{"id":"kept-live","kind":"ship"}]}'
+printf '%s\n' "$inventory13" > "$HOME13/inventory.json"
+seed13
+run13 add --project manual --title "Manual row" --id kept-manual --note "keep this" >/dev/null
+cp "$HOME13/data/board/state.json" "$HOME13/before.json"
+partial13
+out=$(run13 show removed-show --json 2>&1); rc=$?
+check '29 truncated show: authoritative deletion returns missing' "$rc" 1
+if python3 - "$HOME13/data/board/state.json" <<'PY'
+import json, sys
+tasks = json.load(open(sys.argv[1]))["tasks"]
+assert "removed-show" not in tasks, tasks
+assert "removed-list" in tasks, tasks
+PY
+then pass '29 truncated show: only requested deleted row retires'; else fail '29 truncated show: only requested deleted row retires'; fi
+json=$(run13 list --json)
+if python3 - "$json" "$HOME13/before.json" "$HOME13/data/board/state.json" "$HOME13/data/board/events.jsonl" <<'PY'
+import json, sys
+listed = {t["id"]: t for t in json.loads(sys.argv[1])}
+assert set(listed) == {"kept-queued","kept-held","kept-live","protected","seen-active","kept-manual"}, listed
+assert listed["seen-active"]["state"] == "in_progress", listed
+before, after = [json.load(open(p))["tasks"] for p in sys.argv[2:4]]
+for tid in ("kept-queued", "kept-held", "kept-live", "protected", "kept-manual"):
+    assert after[tid] == before[tid], (tid, before[tid], after[tid])
+events = [json.loads(line) for line in open(sys.argv[4])]
+assert [e["ids"] for e in events if e["event"] == "retire"] == [["removed-show"], ["removed-list"]], events
+PY
+then pass '29 truncated list: deletes only absent rows; preserves omitted/manual/protected identity and records events'; else fail '29 truncated list: deletes only absent rows; preserves omitted/manual/protected identity and records events'; fi
+cp "$HOME13/data/board/state.json" "$HOME13/after.json"
+cp "$HOME13/data/board/events.jsonl" "$HOME13/events-before.jsonl"
+run13 list >/dev/null
+run13 show kept-held >/dev/null
+if cmp -s "$HOME13/after.json" "$HOME13/data/board/state.json" && cmp -s "$HOME13/events-before.jsonl" "$HOME13/data/board/events.jsonl"; then
+  pass '29 truncated idempotence: unchanged state and events remain byte-identical'
+else fail '29 truncated idempotence: unchanged state and events remain byte-identical'; fi
+
+# Unknown, malformed, missing, unstructured, or failed authoritative reads
+# cannot prove absence. Each starts from the same genuinely stale card.
+for bad in 'not json' '{}' 'null' \
+  '{"backlog":{"present":false,"records":[]},"tasks":[]}' \
+  '{"backlog":{"present":true},"tasks":[]}' \
+  '{"backlog":{"present":true,"records":[]} }' \
+  '{"backlog":{"present":true,"records":[{"structured":false,"id":null}]},"tasks":[]}' \
+  '{"backlog":{"present":true,"records":[{"structured":true}]},"tasks":[]}' \
+  '{"backlog":{"present":true,"records":[]},"tasks":{}}' \
+  '{"backlog":{"present":true,"records":[{"structured":true,"id":"kept-queued","state":"unknown"}]},"tasks":[]}' \
+  '{"backlog":{"present":true,"records":[],"omitted":[{"count":1}]},"tasks":[]}' \
+  '{"backlog":{"present":true,"records":[]},"tasks":[{}]}'; do
+  seed13; partial13
+  printf '%s\n' "$bad" > "$HOME13/inventory.json"
+  json=$(run13 show removed-list --json)
+  if python3 -c 'import json,sys; assert json.loads(sys.argv[1])["id"]=="removed-list"' "$json"; then
+    pass "30 incomplete inventory retains absent card: $bad"
+  else fail "30 incomplete inventory retains absent card: $bad"; fi
+done
+printf '%s\n' "$inventory13" > "$HOME13/inventory.json"
+touch "$HOME13/inventory-failed"
+check '30 failed inventory retains absent card despite valid-looking stdout' "$(run13 show removed-list --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')" removed-list
+rm "$HOME13/inventory-failed"
+chmod -x "$FIRSTMATE13/bin/fm-fleet-snapshot.sh"
+check '30 unreadable inventory command retains absent card' "$(run13 show removed-list --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')" removed-list
+chmod +x "$FIRSTMATE13/bin/fm-fleet-snapshot.sh"
+mv "$HOME13/inventory.json" "$HOME13/inventory-saved.json"
+check '30 missing inventory retains absent card' "$(run13 show removed-list --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')" removed-list
+
+# Even a usable inventory must not bypass surface-hiding/unknown summary guards.
+cp "$HOME13/inventory-saved.json" "$HOME13/inventory.json"
+for kind in missing_backlog unstructured_current unknown ''; do
+  partial13
+  python3 - "$HOME13/state/home-summary.json" "$kind" <<'PY'
+import json, sys
+path, kind = sys.argv[1:]
+ledger = json.load(open(path))
+ledger["invalidity"] = {"kind": kind, "ids": []}
+json.dump(ledger, open(path, "w"))
+PY
+  check "31 unsafe summary retains absent card: $kind" "$(run13 show removed-list --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')" removed-list
+done
+printf 'not json\n' > "$HOME13/state/home-summary.json"
+check '31 corrupt summary retains absent card' "$(run13 show removed-list --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')" removed-list
+mv "$HOME13/state/home-summary.json" "$HOME13/summary-corrupt.json"
+check '31 missing summary retains absent card' "$(run13 show removed-list --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')" removed-list
 
 [ "$failed" -eq 0 ] || exit 1

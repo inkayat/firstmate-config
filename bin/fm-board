@@ -12,15 +12,14 @@ competing task database. `reconcile()` upserts board records for every task
 id found in Firstmate's own state (`$FM_HOME/state/home-summary.json`,
 `$FIRSTMATE_ROOT/bin/fm-crew-state.sh`, `$FM_HOME/state/<id>.meta`) and
 classifies each from structured fields only (landed > live child > backlog
-row; `CREW_STATE_TO_BOARD` and `_queued_state` own the exact mapping). When
-the ledger's surfaces are provably complete - `valid: true`, or an
-inventory-mismatch-only invalidity (`_retirement_protected`), and no
-`omitted` surface - it also retires (deletes) any `source: firstmate` row
-whose id is absent from every summary surface, since Firstmate itself has
-stopped tracking it. A truncated or surface-hiding ledger never retires
-anything, and manually added tasks (`source: manual`, used for throwaway
-verification) are always preserved untouched. An unchanged projection is not
-rewritten, so `updated_at` marks the last real transition.
+row; `CREW_STATE_TO_BOARD` and `_queued_state` own the exact mapping). With
+`valid: true` or an inventory-mismatch-only invalidity, it retires Firstmate
+rows absent from every summary surface. For a truncated summary it also
+requires absence from the official snapshot's full local backlog/metadata
+inventory (`--contribution-input`); unavailable or incomplete inventory
+retains cards. Surface-hiding invalidities never retire anything. Manually
+added tasks (`source: manual`) are always preserved untouched. An unchanged
+projection is not rewritten, so `updated_at` marks the last real transition.
 
 No step here calls an LLM. `list`/`show`/`summary`/`render`/`open` perform a
 bounded, deterministic reconcile against already-published Firstmate state;
@@ -620,12 +619,8 @@ SURFACES_COMPLETE_INVALIDITY = frozenset({
 
 
 def _retirement_protected(ledger: dict) -> set | None:
-    """Ids that must survive retirement even when absent from every surface,
-    or None when this publication cannot prove its surfaces are complete
-    (so nothing may be retired). A truncated surface (`omitted`) always
-    means None."""
-    if ledger.get("omitted"):
-        return None
+    """Ids protected by inventory mismatches, or None when the publication
+    can hide live ids for reasons other than bounded surface truncation."""
     if ledger.get("valid") is True:
         return set()
     invalidity = ledger.get("invalidity")
@@ -633,6 +628,42 @@ def _retirement_protected(ledger: dict) -> set | None:
             and invalidity.get("kind") in SURFACES_COMPLETE_INVALIDITY:
         return {i for i in invalidity.get("ids") or [] if i}
     return None
+
+
+def _retirement_inventory() -> set[str] | None:
+    """Full local ownership inventory, via the official parser, not worker
+    observations or cross-home collection. Unknown input cannot prove absence."""
+    script = os.path.join(firstmate_root(), "bin", "fm-fleet-snapshot.sh")
+    try:
+        out = subprocess.run(
+            [script, "--contribution-input"], capture_output=True, text=True, timeout=15,
+            env={**os.environ, "FM_HOME": fm_home()},
+        )
+        if out.returncode != 0:
+            return None
+        inventory = json.loads(out.stdout)
+        if not isinstance(inventory, dict) or inventory.get("omitted"):
+            return None
+        backlog = inventory.get("backlog")
+        if not isinstance(backlog, dict) or backlog.get("present") is not True \
+                or backlog.get("omitted"):
+            return None
+        records, tasks = backlog.get("records"), inventory.get("tasks")
+        if not isinstance(records, list) or not isinstance(tasks, list):
+            return None
+        ids = set()
+        for record in records:
+            if not isinstance(record, dict) or record.get("structured") is not True \
+                    or record.get("state") not in ("queued", "in_flight", "done"):
+                return None
+        for record in records + tasks:
+            if not isinstance(record, dict) or not isinstance(record.get("id"), str) \
+                    or not record["id"]:
+                return None
+            ids.add(record["id"])
+        return ids
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
 
 
 def _hold_note(q: dict) -> str | None:
@@ -783,11 +814,8 @@ def reconcile(only_id: str | None = None) -> None:
             fields.pop("project", None)
         updates[tid] = fields
 
-    # Retire Firstmate-sourced rows Firstmate no longer tracks on any surface.
-    # Only a publication whose surfaces are provably complete may retire (see
-    # _retirement_protected): a truncated or surface-hiding ledger can omit
-    # live ids, so it leaves the board untouched. Manual rows
-    # (source != "firstmate") are never retired.
+    # Summary omission is not deletion. A truncated publication needs the full
+    # authoritative local inventory too; manual and mismatch-protected ids stay.
     retire: list[str] = []
     protected = _retirement_protected(ledger)
     if protected is not None:
@@ -797,6 +825,9 @@ def reconcile(only_id: str | None = None) -> None:
         retire = [tid for tid, t in existing_tasks.items()
                   if t.get("source") == "firstmate" and tid not in present
                   and (not only_id or tid == only_id)]
+        if retire and ledger.get("omitted"):
+            inventory = _retirement_inventory()
+            retire = [] if inventory is None else [tid for tid in retire if tid not in inventory]
 
     def differs(task: dict | None, fields: dict) -> bool:
         return task is None or any(task.get(k) != fields[k]
