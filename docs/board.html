@@ -19,18 +19,18 @@ fm board --lavish   # the same static page through Lavish</code></pre>
 <p>Each open refreshes the data first. While the viewer it launched is running, <code>fm board</code> keeps re-rendering, and the page re-reads its data file every few seconds, so a status change appears without a manual reload. The selected tab is preserved.</p>
 
 <h2 id="columns">Columns</h2>
-<p>Columns come from FirstMate's structured state fields only, never from the prose of a hold or note.</p>
+<p>Columns come from FirstMate's structured state fields only, never from the prose of a hold or note. Every row of FirstMate's complete local backlog is classified, read through the official <code>fm-fleet-snapshot.sh --contribution-input</code> inventory; only when that is unavailable do the bounded <code>state/home-summary.json</code> surfaces stand in.</p>
 <table>
 <thead><tr><th>Column</th><th>Contains</th></tr></thead>
 <tbody>
-<tr><td><code>todo</code> Todo</td><td class="wrap">Queued or deferred work: plain queued rows, dated or aged Captain deferrals, and non-Captain holds.</td></tr>
+<tr><td><code>todo</code> Todo</td><td class="wrap">Queued, deferred or set-aside work: plain queued rows, dated or aged Captain deferrals, and future, load or parked holds.</td></tr>
 <tr><td><code>in_progress</code> In Progress</td><td class="wrap">A live child that is working.</td></tr>
 <tr><td><code>waiting_review</code> Waiting Review</td><td class="wrap">A finished worker awaiting review or landing, a gate or needs-decision that is parked, or a live Captain call.</td></tr>
-<tr><td><code>blocked</code> Blocked</td><td class="wrap">An unresolved dependency, or a child that is blocked, paused, failed, or unknown.</td></tr>
-<tr><td><code>done</code> Completed</td><td class="wrap">Only a landed backlog row.</td></tr>
+<tr><td><code>blocked</code> Blocked</td><td class="wrap">An unresolved dependency or an external hold, or a live child that is blocked, paused, failed, or unknown, including an in-flight worker row with no task metadata.</td></tr>
+<tr><td><code>done</code> Completed</td><td class="wrap">Only a closed backlog row.</td></tr>
 </tbody>
 </table>
-<p>A finished worker is therefore <em>Waiting Review</em>, not Completed, until its work has landed.</p>
+<p>A live child is an in-flight worker row, or a held row whose child is working again. A finished worker is therefore <em>Waiting Review</em>, not Completed, until FirstMate closes its row, and a task's preserved <code>.meta</code> never overrides a held or closed row.</p>
 
 <h2 id="details">Task details</h2>
 <p>Every card has a keyboard-reachable <strong>Details</strong> link (<code>board.html#task/&lt;id&gt;</code>) to that task's own view in the same page. <strong>Back to board</strong> or Escape returns to the board with focus on the card.</p>
@@ -45,7 +45,7 @@ fm board --lavish   # the same static page through Lavish</code></pre>
 <tr><td><code>$FM_HOME/data/board/board-data.js</code></td><td class="wrap">Generated data the static page reads.</td></tr>
 </tbody>
 </table>
-<p>FirstMate's backlog and execution records (<code>data/backlog.md</code>, <code>state/home-summary.json</code>) stay authoritative. Absent FirstMate cards retire when summary surfaces are provably complete. If the summary is truncated, retirement additionally requires absence from the official <code>fm-fleet-snapshot.sh --contribution-input</code> full local backlog/metadata inventory. Missing, failed, malformed or unstructured inventory retains cards, as do surface-hiding summary invalidities. Omitted-but-existing tasks and cards you added by hand are never retired by this fallback.</p>
+<p>FirstMate's backlog and execution records (<code>data/backlog.md</code>, <code>state/home-summary.json</code>) stay authoritative. Absent FirstMate cards retire when summary surfaces are provably complete, and additionally need absence from the official <code>fm-fleet-snapshot.sh --contribution-input</code> full local backlog/metadata inventory whenever it is available; a truncated summary without that inventory retires nothing. Missing, failed, malformed or unstructured inventory retains cards, as do surface-hiding summary invalidities. Omitted-but-existing tasks and cards you added by hand are never retired.</p>
 
 <h2 id="fm-board">fm-board commands</h2>
 <p>The board script has more subcommands than <code>fm board</code> exposes. <code>fm board [--lavish]</code> runs <code>fm-board open</code>. The script lives in the firstmate-config checkout at <code>bin/fm-board</code> and is not linked onto <code>PATH</code> by the installer, so call it by path.</p>
@@ -67,7 +67,7 @@ bin/fm-board move notes-1 in_progress</code></pre>
 <tr><td><code>open</code></td><td class="wrap"><code>--lavish</code></td></tr>
 </tbody>
 </table>
-<p>Task ids are explicit and never generated: lowercase letters, digits, and hyphens, starting with a letter or digit. Cards added with <code>add</code> are manual rows, never retired by a reconcile.</p>
+<p>Task ids are explicit and never generated: lowercase letters, digits, and hyphens, starting with a letter or digit. Cards added with <code>add</code> are manual rows, never retired or reclassified by a reconcile. A <code>move</code> of a FirstMate card lasts only until the next reconcile re-derives it from FirstMate's records.</p>
 </article></main>
 <noscript><p style="padding:2rem">This guide's navigation needs JavaScript. Start at <a href="index.html">index.html</a>.</p></noscript>
 </body>
