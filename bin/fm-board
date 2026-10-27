@@ -8,26 +8,31 @@ and every CLI read depend on current state, never on replaying events.
 
 Firstmate's own backlog and execution records remain authoritative for real
 work; this board is their persistent, machine-readable projection, not a
-competing task database. `reconcile()` upserts board records for every task
-id found in Firstmate's own state (`$FM_HOME/state/home-summary.json`,
-`$FIRSTMATE_ROOT/bin/fm-crew-state.sh`, `$FM_HOME/state/<id>.meta`) and
-classifies each from structured fields only (landed > live child > backlog
-row; `CREW_STATE_TO_BOARD` and `_queued_state` own the exact mapping). With
+competing task database. `reconcile()` upserts a board record for every row
+of the official snapshot's complete local backlog inventory
+(`$FIRSTMATE_ROOT/bin/fm-fleet-snapshot.sh --contribution-input`) and every
+published child, classifying each from structured fields only: a closed row
+is done; an In-flight worker row, or a held row whose child works again,
+takes its child's `fm-crew-state.sh` state; any other queued or held row is
+decided by its blocker and hold fields (`CREW_STATE_TO_BOARD` and
+`_queued_state` own the exact mapping). A preserved task .meta never
+overrides its row. When the inventory is unavailable or incomplete, the
+bounded `$FM_HOME/state/home-summary.json` surfaces stand in. With
 `valid: true` or an inventory-mismatch-only invalidity, it retires Firstmate
-rows absent from every summary surface. For a truncated summary it also
-requires absence from the official snapshot's full local backlog/metadata
-inventory (`--contribution-input`); unavailable or incomplete inventory
-retains cards. Surface-hiding invalidities never retire anything. Manually
-added tasks (`source: manual`) are always preserved untouched. An unchanged
-projection is not rewritten, so `updated_at` marks the last real transition.
+rows absent from every summary surface and, when available, from the
+inventory; a truncated summary without a usable inventory retires nothing.
+Surface-hiding invalidities never retire anything. Manually added tasks
+(`source: manual`) are always preserved untouched. An unchanged projection is
+not rewritten, so `updated_at` marks the last real transition.
 
 No step here calls an LLM. `list`/`show`/`summary`/`render`/`open` perform a
-bounded, deterministic reconcile against already-published Firstmate state;
-none of them invoke a model, a daemon, or a network service beyond the
-existing `fm-crew-state.sh` and `fm-tasks-axi.sh` (both LLM-free and already
-used by Firstmate). `render` also adds each Firstmate task's full backlog
-record, open decision, and landing links to board-data.js (never state.json)
-for the page's per-task detail view (`board.html#task/<id>`).
+bounded, deterministic reconcile against Firstmate's own state; none of them
+invoke a model, a daemon, or a network service beyond the existing
+`fm-fleet-snapshot.sh --contribution-input`, `fm-crew-state.sh` and
+`fm-tasks-axi.sh` (all LLM-free and already used by Firstmate). `render`
+also adds each Firstmate task's full backlog record, open decision, and
+landing links to board-data.js (never state.json) for the page's per-task
+detail view (`board.html#task/<id>`).
 `open` re-renders while the viewer it launched is running, and the page
 itself re-reads board-data.js every few seconds, so an open board follows
 transitions without a manual refresh; both stop as soon as the viewer exits.
@@ -585,8 +590,8 @@ def _archived_identity(task_id: str) -> tuple[str | None, str | None]:
 # Deterministic crew-state -> board-state projection for a task with a live
 # child (fm-crew-state.sh's vocabulary). `done` means the worker finished and
 # is awaiting review/landing - never the board's own `done`, which is
-# reserved for a task Firstmate has actually landed (see landed handling
-# below). `parked` is a no-mistakes gate awaiting approval or an open
+# reserved for a row Firstmate has closed (its backlog Done section).
+# `parked` is a no-mistakes gate awaiting approval or an open
 # needs-decision: a decision or review is pending, not a technical obstacle.
 # `blocked`/`paused`/`failed` mean the agent cannot progress without an
 # outside change; `unknown` (endpoint gone, state unreadable) is never shown
@@ -630,9 +635,20 @@ def _retirement_protected(ledger: dict) -> set | None:
     return None
 
 
-def _retirement_inventory() -> set[str] | None:
-    """Full local ownership inventory, via the official parser, not worker
-    observations or cross-home collection. Unknown input cannot prove absence."""
+# The official parser's row vocabulary (bin/fm-fleet-snapshot.sh): a backlog
+# row's section state, and the normalized role of an In-flight row - a
+# `worker` owns a live child, a `held` row carries a structured hold, and a
+# `program` is an umbrella with no worker of its own.
+BACKLOG_STATES = ("queued", "in_flight", "done")
+IN_FLIGHT_ROLES = ("worker", "held", "program")
+
+
+def _backlog_inventory() -> tuple[dict, set] | None:
+    """The complete local backlog via the official parser
+    (`fm-fleet-snapshot.sh --contribution-input`), never worker observations
+    or cross-home collection: ({id: structured record}, metadata-owned ids).
+    None when it is unavailable, failed, malformed, or discloses an incomplete
+    or unstructured backlog - unknown input proves nothing."""
     script = os.path.join(firstmate_root(), "bin", "fm-fleet-snapshot.sh")
     try:
         out = subprocess.run(
@@ -651,17 +667,24 @@ def _retirement_inventory() -> set[str] | None:
         records, tasks = backlog.get("records"), inventory.get("tasks")
         if not isinstance(records, list) or not isinstance(tasks, list):
             return None
-        ids = set()
+        rows: dict = {}
         for record in records:
             if not isinstance(record, dict) or record.get("structured") is not True \
-                    or record.get("state") not in ("queued", "in_flight", "done"):
+                    or record.get("state") not in BACKLOG_STATES \
+                    or (record["state"] == "in_flight"
+                        and record.get("current_role") not in IN_FLIGHT_ROLES) \
+                    or not isinstance(record.get("id"), str) or not record["id"]:
                 return None
-        for record in records + tasks:
-            if not isinstance(record, dict) or not isinstance(record.get("id"), str) \
-                    or not record["id"]:
+            # A repeated id keeps its first row (In flight, Queued, then Done
+            # order), so a duplicate never manufactures completion.
+            rows.setdefault(record["id"], record)
+        meta_ids = set()
+        for task in tasks:
+            if not isinstance(task, dict) or not isinstance(task.get("id"), str) \
+                    or not task["id"]:
                 return None
-            ids.add(record["id"])
-        return ids
+            meta_ids.add(task["id"])
+        return rows, meta_ids
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
 
@@ -683,15 +706,16 @@ def _hold_note(q: dict) -> str | None:
 
 
 def _queued_state(q: dict) -> tuple[str, bool]:
-    """Board state and captain_review for a backlog row with no live child.
-    Decided from structured fields only, never hold prose:
-    - an unresolved blocker id is a real dependency blocker -> blocked;
+    """Board state and captain_review for a queued or held backlog row with
+    no live child. Decided from structured fields only, never hold prose:
+    - an unresolved blocker id is a real dependency blocker, and an
+      `external` hold waits on something outside the backlog -> blocked;
     - a captain hold Firstmate marks captain_actionable (undated, date
       reached, not aged, no open blocker - bearings' live captain call) is
       waiting on the captain -> waiting_review;
-    - anything else (plain queued, dated/aged captain deferral, a
-      non-captain `future` hold) is genuine not-yet-started work -> todo."""
-    if q.get("unresolved_blocker_ids"):
+    - anything else (plain queued, dated/aged captain deferral, a `future`,
+      `load` or `parked` hold) is not-yet-started or set-aside work -> todo."""
+    if q.get("unresolved_blocker_ids") or q.get("hold_kind") == "external":
         return "blocked", False
     if q.get("hold_kind") == "captain" and q.get("captain_actionable") is True:
         return "waiting_review", True
@@ -718,6 +742,48 @@ def _projection(tid: str, project: str | None, title: str | None, state: str,
     }
 
 
+def _child_projection(tid: str, child: dict, q: dict, known: dict,
+                      decision: dict | None, hold: dict | None) -> dict:
+    """Board record for a live child, from its crew state; `child` is its
+    published summary observation, `q` its backlog row, `known` the board's
+    existing record."""
+    # fm-crew-state.sh is the fresher read; the published child state is
+    # the fallback when it cannot answer.
+    crew = _crew_state(tid)
+    crew_state = crew[0] if crew else (child.get("state") or "unknown")
+    board_state = CREW_STATE_TO_BOARD.get(crew_state, "blocked")
+    detail = crew[1] if crew else (child.get("doing") or crew_state)
+    # A child-state hold only explains the obstacle; an open decision
+    # (captain hold or a worker's needs-decision) is what awaits the captain.
+    captain_review = board_state == "waiting_review" or (
+        board_state == "blocked" and decision is not None)
+    hold = decision or hold
+    hold_reason = None
+    if board_state != "in_progress" and hold:
+        hold_reason = hold.get("reason") or hold.get("summary")
+    repo = child.get("repo") or q.get("repo")
+    title = child.get("name") or q.get("title")
+    # Endpoint entries intentionally omit `repo`/`name` (minimal metadata).
+    # Recover durable identity from an existing board record first - a
+    # corrupted prior projection ("" / the bare id) does not count as known -
+    # and only fall back to the archive lookup when the board has never seen
+    # this id's identity either.
+    if not repo and known.get("project"):
+        repo = known["project"]
+    if not title and known.get("title") and known.get("title") != tid:
+        title = known["title"]
+    if not repo or not title:
+        arch_repo, arch_title = _archived_identity(tid)
+        repo = repo or arch_repo
+        title = title or arch_title
+    return _projection(
+        tid, repo, title,
+        board_state, child.get("kind") or q.get("kind"), agent=_agent_label(tid),
+        since=q.get("since"), running=detail, captain_review=captain_review,
+        hold_reason=hold_reason,
+    )
+
+
 def reconcile(only_id: str | None = None) -> None:
     if not os.path.isfile(home_summary_path()):
         return
@@ -726,96 +792,80 @@ def reconcile(only_id: str | None = None) -> None:
 
     holds_by_id = {h.get("id"): h for h in ledger.get("holds", []) if h.get("id")}
     decisions_by_id = {d.get("id"): d for d in ledger.get("decisions_open", []) if d.get("id")}
-    queued_by_id = {q.get("id"): q for q in ledger.get("queued", []) if q.get("id")}
     existing_tasks = read_state().get("tasks", {})
 
-    updates: dict[str, dict] = {}
+    # Backlog meaning per id. The official local inventory is complete and
+    # authoritative; the summary's `queued` (20 rows) and `landed` (Recently
+    # Landed deliveries only) surfaces are bounded selections of it, used only
+    # when that inventory is unavailable.
+    inventory = _backlog_inventory()
+    if inventory is not None:
+        rows, meta_ids = inventory
+    else:
+        meta_ids = set()
+        rows = {q.get("id"): {**q, "state": "queued"} for q in ledger.get("queued", []) if q.get("id")}
+        rows.update({e.get("id"): {**e, "state": "done"} for e in ledger.get("landed", []) if e.get("id")})
 
-    for q in ledger.get("queued", []):
-        tid = q.get("id")
-        if not tid or (only_id and tid != only_id):
-            continue
-        state, captain_review = _queued_state(q)
-        updates[tid] = _projection(
-            tid, q.get("repo"), q.get("title"), state,
-            q.get("kind"), since=q.get("since"), captain_review=captain_review,
-            hold_reason=_hold_note(q),
-        )
-
-    # One live child per id: `active_children` repeats working `endpoints`
-    # rows with richer identity (repo/name), `endpoints` covers every child.
+    # Child observations: `active_children` repeats working `endpoints` rows
+    # with richer identity (repo/name). `endpoints` lists every task .meta,
+    # including preserved children of held and closed rows, so it never
+    # decides which rows are live work - the backlog row does.
     children: dict[str, dict] = {}
     for child in ledger.get("endpoints", []) + ledger.get("active_children", []):
         tid = child.get("id")
-        if tid and (not only_id or tid == only_id):
+        if tid:
             children.setdefault(tid, {}).update({k: v for k, v in child.items() if v})
+    active_ids = {c.get("id") for c in ledger.get("active_children", []) if c.get("id")}
 
-    for tid, child in children.items():
-        # fm-crew-state.sh is the fresher read; the published child state is
-        # the fallback when it cannot answer.
-        crew = _crew_state(tid)
-        crew_state = crew[0] if crew else (child.get("state") or "unknown")
-        board_state = CREW_STATE_TO_BOARD.get(crew_state, "blocked")
-        detail = crew[1] if crew else (child.get("doing") or crew_state)
-        # A child-state hold only explains the obstacle; an open decision
-        # (captain hold or a worker's needs-decision) is what awaits the captain.
-        decision = decisions_by_id.get(tid)
-        hold = decision or holds_by_id.get(tid)
-        captain_review = board_state == "waiting_review" or (
-            board_state == "blocked" and decision is not None)
-        hold_reason = None
-        if board_state != "in_progress" and hold:
-            hold_reason = hold.get("reason") or hold.get("summary")
-        q = queued_by_id.get(tid, {})
-        repo = child.get("repo") or q.get("repo")
-        title = child.get("name") or q.get("title")
-        # Endpoint entries intentionally omit `repo`/`name` (minimal
-        # metadata). Recover durable identity from an existing board record
-        # first - a corrupted prior projection ("" / the bare id) does not
-        # count as known - and only fall back to the archive lookup when
-        # the board has never seen this id's identity either.
-        known = existing_tasks.get(tid, {})
-        if not repo and known.get("project"):
-            repo = known["project"]
-        if not title and known.get("title") and known.get("title") != tid:
-            title = known["title"]
-        if not repo or not title:
-            arch_repo, arch_title = _archived_identity(tid)
-            repo = repo or arch_repo
-            title = title or arch_title
-        updates[tid] = _projection(
-            tid, repo, title,
-            board_state, child.get("kind") or q.get("kind"), agent=_agent_label(tid),
-            since=q.get("since"), running=detail, captain_review=captain_review,
-            hold_reason=hold_reason,
-        )
-
-    for landed in ledger.get("landed", []):
-        tid = landed.get("id")
-        if not tid or (only_id and tid != only_id):
+    updates: dict[str, dict] = {}
+    for tid in set(rows) | set(children):
+        if only_id and tid != only_id:
             continue
-        completion = landed.get("completion") or {}
-        repo = landed.get("repo")
-        # landed entries omit `repo` in the real ledger shape; never let that
-        # stomp a project this id already carries on the board (a task that
-        # crossed from queued/active into landed). Only consult the archive
-        # lookup when the board has no prior project for this id either.
-        keep_known_project = False
-        if not repo:
-            if existing_tasks.get(tid, {}).get("project"):
-                keep_known_project = True
-            else:
-                repo, _title = _archived_identity(tid)
-        fields = _projection(
-            tid, repo, landed.get("title"), "done",
-            landed.get("kind"), since=completion.get("date"),
-        )
-        if keep_known_project:
-            fields.pop("project", None)
-        updates[tid] = fields
+        row = rows.get(tid)
+        state = row.get("state") if row else None
+        if state == "done":
+            # Closed backlog row. A summary `landed` entry omits `repo`; never
+            # let that stomp a project this id already carries on the board.
+            # Only consult the archive lookup when the board has no prior
+            # project for this id either.
+            completion = row.get("completion") or {}
+            repo = row.get("repo")
+            keep_known_project = False
+            if not repo:
+                if existing_tasks.get(tid, {}).get("project"):
+                    keep_known_project = True
+                else:
+                    repo, _title = _archived_identity(tid)
+            fields = _projection(
+                tid, repo, row.get("title"), "done",
+                row.get("kind"), since=completion.get("date"),
+            )
+            if keep_known_project:
+                fields.pop("project", None)
+            updates[tid] = fields
+        elif row is None or tid in active_ids or (
+                state == "in_flight" and row.get("current_role") == "worker"):
+            # A live child: an In-flight worker row (with or without
+            # metadata), a held row whose child is working again, or a
+            # published child no backlog row describes.
+            updates[tid] = _child_projection(
+                tid, children.get(tid, {}), row or {}, existing_tasks.get(tid, {}),
+                decisions_by_id.get(tid), holds_by_id.get(tid))
+        elif state == "in_flight" and row.get("current_role") == "program":
+            # An umbrella row has no worker of its own to observe and no
+            # backlog column of its own: left exactly as found.
+            continue
+        else:
+            board_state, captain_review = _queued_state(row)
+            updates[tid] = _projection(
+                tid, row.get("repo"), row.get("title"), board_state,
+                row.get("kind"), since=row.get("since"), captain_review=captain_review,
+                hold_reason=_hold_note(row),
+            )
 
-    # Summary omission is not deletion. A truncated publication needs the full
-    # authoritative local inventory too; manual and mismatch-protected ids stay.
+    # Summary omission is not deletion. Retirement also needs absence from the
+    # authoritative inventory whenever it is available, and is impossible for
+    # a truncated summary without it; manual and mismatch-protected ids stay.
     retire: list[str] = []
     protected = _retirement_protected(ledger)
     if protected is not None:
@@ -825,9 +875,10 @@ def reconcile(only_id: str | None = None) -> None:
         retire = [tid for tid, t in existing_tasks.items()
                   if t.get("source") == "firstmate" and tid not in present
                   and (not only_id or tid == only_id)]
-        if retire and ledger.get("omitted"):
-            inventory = _retirement_inventory()
-            retire = [] if inventory is None else [tid for tid in retire if tid not in inventory]
+        if inventory is not None:
+            retire = [tid for tid in retire if tid not in rows and tid not in meta_ids]
+        elif ledger.get("omitted"):
+            retire = []
 
     def differs(task: dict | None, fields: dict) -> bool:
         return task is None or any(task.get(k) != fields[k]

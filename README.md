@@ -266,15 +266,19 @@ Detailed file ownership and environment overrides are in the
 ### Board columns
 
 The board is a deterministic, LLM-free projection, not a competing task database.
-**Todo** is queued/deferred work; **In Progress** is a working child;
-**Waiting Review** includes finished workers, parked gates/decisions and live
-Captain calls; **Blocked** includes unresolved dependencies and blocked, paused,
-failed or unknown children; **Completed** means a landed backlog row only.
+Every row of FirstMate's complete local backlog is classified from structured
+fields: **Todo** is queued, deferred or parked work; **In Progress** is a working
+child; **Waiting Review** includes finished workers, parked gates/decisions and
+live Captain calls; **Blocked** includes unresolved dependencies, external holds
+and blocked, paused, failed or unknown children; **Completed** means a closed
+backlog row only. A preserved task `.meta` never overrides a held or closed row.
 
-FirstMate's published state remains authoritative. Absent FirstMate rows retire
-from provably complete summary surfaces; a truncated summary additionally needs
-absence from the official full local backlog/metadata inventory. Unknown or
-incomplete input retains cards; manual cards survive.
+FirstMate's records remain authoritative, read through the official full local
+backlog/metadata inventory; the bounded summary stands in only when that is
+unavailable. Absent FirstMate rows retire from provably complete summary
+surfaces and, whenever the inventory is available, only once it lacks them too;
+a truncated summary needs that inventory. Unknown or incomplete input retains
+cards; manual cards survive.
 `fm board` refreshes while its launched viewer runs, and the page reloads data
 periodically. Use [`bin/fm-board`](bin/fm-board) directly for list/show/render and
 manual-card commands. See [board usage and details](docs/board.html).

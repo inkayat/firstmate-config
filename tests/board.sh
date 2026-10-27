@@ -926,12 +926,14 @@ seed13() {
  {"id":"removed-list","repo":"proj-r","title":"Removed from backlog"},
  {"id":"removed-show","repo":"proj-r","title":"Removed requested row"},
  {"id":"kept-queued","repo":"proj-q","title":"Omitted queued task"},
- {"id":"kept-held","repo":"proj-h","title":"Omitted captain hold","hold_kind":"captain","captain_actionable":true},
+ {"id":"kept-held","repo":"proj-h","title":"Omitted captain hold","hold_kind":"captain","hold_reason":"captain decision pending","captain_actionable":true},
  {"id":"kept-live","repo":"proj-l","title":"Omitted live task"},
  {"id":"protected","repo":"proj-p","title":"Inventory mismatch"}
 ],"endpoints":[],"active_children":[],"landed":[],"holds":[],"decisions_open":[]}
 JSON
-  run13 list >/dev/null
+  # These cards predate the inventory below: seed them through the
+  # summary-only path, as an older reconcile would have.
+  touch "$HOME13/inventory-failed"; run13 list >/dev/null; rm -f "$HOME13/inventory-failed"
 }
 partial13() {
   cat > "$HOME13/state/home-summary.json" <<'JSON'
@@ -941,9 +943,13 @@ partial13() {
  "active_children":[],"landed":[],"holds":[],"decisions_open":[]}
 JSON
 }
+# The official parser's record shape: every structured row carries its
+# normalized current_role and hold fields alongside identity.
 inventory13='{"backlog":{"present":true,"records":[
- {"structured":true,"id":"kept-queued","state":"queued"},
- {"structured":true,"id":"kept-held","state":"in_flight"}
+ {"structured":true,"id":"kept-queued","state":"queued","current_role":"queued","title":"Omitted queued task","repo":"proj-q","kind":null,"since":null,
+  "hold_kind":null,"hold_reason":null,"hold_until":null,"hold_bucket":null,"captain_actionable":false,"blocked_by_ids":[],"unresolved_blocker_ids":[],"blocked_reason":null},
+ {"structured":true,"id":"kept-held","state":"in_flight","current_role":"held","title":"Omitted captain hold","repo":"proj-h","kind":null,"since":null,
+  "hold_kind":"captain","hold_reason":"captain decision pending","hold_until":null,"hold_bucket":"live","captain_actionable":true,"blocked_by_ids":[],"unresolved_blocker_ids":[],"blocked_reason":null}
 ]},"tasks":[{"id":"kept-live","kind":"ship"}]}'
 printf '%s\n' "$inventory13" > "$HOME13/inventory.json"
 seed13
@@ -1026,5 +1032,188 @@ printf 'not json\n' > "$HOME13/state/home-summary.json"
 check '31 corrupt summary retains absent card' "$(run13 show removed-list --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')" removed-list
 mv "$HOME13/state/home-summary.json" "$HOME13/summary-corrupt.json"
 check '31 missing summary retains absent card' "$(run13 show removed-list --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')" removed-list
+
+# =============================================================================
+# Scenario 14: full sync from the complete authoritative backlog. The published
+# summary bounds every surface, lists every task .meta as an endpoint whatever
+# its backlog row says, and its `landed` selects Recently-Landed deliveries
+# only. Breaks caught: rows outside a bounded surface never created or
+# refreshed; a preserved child overriding a held or closed backlog row; a
+# closed row that is not a landed delivery never reaching Completed; reopened
+# work stuck in Completed; external holds shown as Todo; crew state consulted
+# for preserved non-live children; losing narrow show, idempotence or manual
+# rows. Inventory records use the official parser's
+# (`fm-fleet-snapshot.sh --contribution-input`) real field shape.
+# =============================================================================
+HOME14="$TMP_ROOT/home14"; FIRSTMATE14="$TMP_ROOT/firstmate14"
+CREW_CALLS14="$TMP_ROOT/crew-calls14.log"
+mkdir -p "$HOME14/state" "$HOME14/data/board" "$FIRSTMATE14/bin"
+cat > "$FIRSTMATE14/bin/fm-fleet-snapshot.sh" <<'SH'
+#!/usr/bin/env bash
+[ "$#" = 1 ] && [ "$1" = --contribution-input ] || exit 64
+[ ! -e "$FM_HOME/inventory-failed" ] || exit 1
+cat "$FM_HOME/inventory.json"
+SH
+cat > "$FIRSTMATE14/bin/fm-crew-state.sh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$CREW_CALLS14"
+case "\$1" in
+  w-working-1|held-working-1) printf 'state: working . source: pane . harness busy\n' ;;
+  w-done-1) printf 'state: done . source: status-log . checks green\n' ;;
+  w-orphan-1) printf 'state: unknown . source: none . no metadata for w-orphan-1\n' ;;
+  *) printf 'state: unknown . source: none . backend target gone\n' ;;
+esac
+SH
+chmod +x "$FIRSTMATE14/bin/"*
+run14() { FM_HOME="$HOME14" FIRSTMATE_ROOT="$FIRSTMATE14" PATH="/usr/bin:/bin" "$BOARD" "$@"; }
+
+# Truncated, invalid publication: endpoints are the alphabetical first metas
+# (preserved children of held/closed rows), the actual workers are cut.
+cat > "$HOME14/state/home-summary.json" <<'JSON'
+{"schema":"fm-secondmate-home-summary.v1","valid":false,
+ "invalidity":{"kind":"orphan_in_flight","ids":["w-orphan-1"]},
+ "omitted":[{"surface":"queued","count":9},{"surface":"endpoints","count":3}],
+ "active_children":[
+  {"id":"held-working-1","kind":"ship","state":"working","repo":"proj-h","name":"Resumed held task","source":"pane","doing":"harness busy"},
+  {"id":"w-working-1","kind":"ship","state":"working","repo":"proj-w","name":"Working worker","source":"pane","doing":"harness busy"}],
+ "endpoints":[
+  {"id":"done-preserved-1","state":"done","source":"status-log"},
+  {"id":"held-captain-1","state":"unknown","source":"none"},
+  {"id":"held-parked-1","state":"unknown","source":"none"}],
+ "queued":[
+  {"id":"held-parked-1","repo":"proj-h","title":"Delivered and parked","kind":"scout","since":"2026-10-20","hold_kind":"parked","hold_reason":"preserve evidence","captain_actionable":false,"blocked_by_ids":[],"unresolved_blocker_ids":[]}],
+ "holds":[],"landed":[],
+ "decisions_open":[{"id":"held-captain-1","key":"held-captain-1","verb":"captain-hold","summary":"Held for the captain","reason":"pick one","source":"backlog"}]}
+JSON
+python3 - "$HOME14/inventory.json" <<'PY'
+import json, sys
+def rec(tid, state, role, title, repo, **extra):
+    r = {"structured": True, "id": tid, "state": state, "current_role": role, "title": title,
+         "repo": repo, "kind": "ship", "since": "2026-10-01", "hold_kind": None,
+         "hold_reason": None, "hold_until": None, "hold_bucket": None, "hold_age_days": None,
+         "captain_actionable": False, "blocked_by_ids": [], "unresolved_blocker_ids": [],
+         "blocked_reason": None, "requires_child_metadata": role == "worker",
+         "report_path": None, "pr_url": None, "local_note": None,
+         "completion": {"verb": None, "date": None}}
+    r.update(extra)
+    return r
+records = [
+    rec("q-new-1", "queued", "queued", "Never published queued task", "proj-q"),
+    rec("q-call-1", "queued", "queued", "Live captain call", "proj-q", hold_kind="captain",
+        hold_reason="pick a vendor", hold_bucket="live", captain_actionable=True),
+    rec("q-aged-1", "queued", "queued", "Aged captain hold", "proj-q", hold_kind="captain",
+        hold_reason="old question", hold_bucket="aged", hold_age_days=20),
+    rec("q-external-1", "queued", "queued", "Waits on upstream", "proj-q", hold_kind="external",
+        hold_reason="upstream fix pending"),
+    rec("q-dep-1", "queued", "queued", "Needs q-new-1", "proj-q", blocked_by_ids=["q-new-1"],
+        unresolved_blocker_ids=["q-new-1"]),
+    rec("held-parked-1", "in_flight", "held", "Delivered and parked", "proj-h", kind="scout",
+        since="2026-10-20", hold_kind="parked", hold_reason="preserve evidence"),
+    rec("held-captain-1", "in_flight", "held", "Held for the captain", "proj-h", hold_kind="captain",
+        hold_reason="pick one", hold_bucket="live", captain_actionable=True),
+    rec("held-working-1", "in_flight", "held", "Resumed held task", "proj-h", hold_kind="future",
+        hold_reason="later"),
+    rec("w-working-1", "in_flight", "worker", "Working worker", "proj-w"),
+    rec("w-done-1", "in_flight", "worker", "Finished worker", "proj-w"),
+    rec("w-orphan-1", "in_flight", "worker", "Worker without metadata", "proj-w"),
+    rec("done-preserved-1", "done", "done", "Accepted review", "proj-d", kind="scout",
+        report_path="data/done-preserved-1/report.md", completion={"verb": "reported", "date": "2026-10-27"}),
+    rec("done-ship-report-1", "done", "done", "Published with a report", "proj-d",
+        report_path="data/done-ship-report-1/report.md", completion={"verb": "reported", "date": "2026-10-27"}),
+    rec("done-captain-1", "done", "done", "Answered captain call", "proj-d", kind="captain",
+        hold_kind="captain", hold_reason="answered", completion={"verb": "done", "date": "2026-10-26"}),
+    rec("reopened-1", "queued", "queued", "Reopened task", "proj-r"),
+]
+metas = ["done-preserved-1", "held-captain-1", "held-parked-1", "held-working-1", "w-done-1", "w-working-1"]
+json.dump({"backlog": {"path": "data/backlog.md", "present": True, "records": records},
+           "tasks": [{"id": i, "kind": "ship", "pr": {"url": "", "head": ""}, "merge_authority": "attended"}
+                     for i in metas]}, open(sys.argv[1], "w"))
+PY
+# Cards an older reconcile left behind: frozen outside the bounded window, a
+# preserved child's state over a held/closed row, a reopened row still done.
+seed14() {
+  python3 - "$HOME14/data/board/state.json" <<'PY'
+import json, sys
+def card(tid, project, title, state, review=False, source="firstmate", note=None):
+    return {"id": tid, "project": project, "title": title, "state": state, "agent": None,
+            "kind": "ship", "source": source, "since": None, "running": None,
+            "captain_review": review, "hold_reason": None, "note": note,
+            "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z"}
+cards = [card("q-aged-1", "proj-q", "Aged captain hold", "waiting_review", True),
+         card("w-done-1", "proj-w", "Finished worker", "in_progress"),
+         card("done-preserved-1", "proj-d", "Accepted review", "waiting_review", True),
+         card("done-ship-report-1", "proj-d", "Published with a report", "todo"),
+         card("reopened-1", "proj-r", "Reopened task", "done"),
+         card("held-parked-1", "proj-h", "Delivered and parked", "blocked"),
+         card("manual-14", "proj-m", "Manual row", "in_progress", source="manual", note="keep me")]
+json.dump({"schema": "fm-board.v1", "tasks": {c["id"]: c for c in cards}}, open(sys.argv[1], "w"))
+PY
+}
+seed14
+rm -f "$CREW_CALLS14"
+json=$(run14 list --json)
+if python3 - "$json" <<'PY'
+import json, sys
+got = {t["id"]: (t["state"], t["captain_review"]) for t in json.loads(sys.argv[1])}
+want = {
+    "q-new-1": ("todo", False), "q-call-1": ("waiting_review", True), "q-aged-1": ("todo", False),
+    "q-external-1": ("blocked", False), "q-dep-1": ("blocked", False),
+    "held-parked-1": ("todo", False), "held-captain-1": ("waiting_review", True),
+    "held-working-1": ("in_progress", False), "w-working-1": ("in_progress", False),
+    "w-done-1": ("waiting_review", True), "w-orphan-1": ("blocked", False),
+    "done-preserved-1": ("done", False), "done-ship-report-1": ("done", False),
+    "done-captain-1": ("done", False), "reopened-1": ("todo", False),
+    "manual-14": ("in_progress", False),
+}
+bad = {k: (got.get(k), v) for k, v in want.items() if got.get(k) != v}
+assert not bad and set(got) == set(want), (bad, sorted(set(got) ^ set(want)))
+PY
+then pass '32 full sync: every backlog row takes the column its authoritative record and live child give it'
+else fail '32 full sync: every backlog row takes the column its authoritative record and live child give it'; fi
+json=$(run14 show q-new-1 --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert (o["project"], o["title"], o["source"]) == ("proj-q", "Never published queued task", "firstmate"), o' "$json"; then
+  pass '32 full sync: a row never published in a bounded surface carries its backlog identity'
+else fail '32 full sync: a row never published in a bounded surface carries its backlog identity'; fi
+json=$(run14 show manual-14 --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert (o["state"], o["note"], o["source"]) == ("in_progress", "keep me", "manual"), o' "$json"; then
+  pass '32 full sync: manual row untouched'
+else fail '32 full sync: manual row untouched'; fi
+check '32 full sync: crew state consulted only for live in-flight children' \
+  "$(sort -u "$CREW_CALLS14" 2>/dev/null | tr '\n' ' ')" 'held-working-1 w-done-1 w-orphan-1 w-working-1 '
+
+rm -f "$CREW_CALLS14"
+run14 show w-done-1 >/dev/null
+check '33 full sync narrow: show consults crew state for the requested id only' "$(sort -u "$CREW_CALLS14" 2>/dev/null | tr '\n' ' ')" 'w-done-1 '
+cp "$HOME14/data/board/state.json" "$HOME14/after.json"
+cp "$HOME14/data/board/events.jsonl" "$HOME14/events-after.jsonl"
+run14 list >/dev/null
+if cmp -s "$HOME14/after.json" "$HOME14/data/board/state.json" && cmp -s "$HOME14/events-after.jsonl" "$HOME14/data/board/events.jsonl"; then
+  pass '33 full sync idempotence: unchanged inputs leave state and events byte-identical'
+else fail '33 full sync idempotence: unchanged inputs leave state and events byte-identical'; fi
+
+# Without a usable inventory the summary still names held rows in `queued`;
+# a preserved child must not override that hold there either.
+seed14
+touch "$HOME14/inventory-failed"
+check '34 summary only: a queued held row keeps its hold over a preserved dead child' \
+  "$(run14 show held-parked-1 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')" todo
+rm -f "$HOME14/inventory-failed"
+
+# A complete, valid summary need not list a closed non-delivery row; the
+# inventory still has it, so it is neither retired nor recreated (which would
+# drop the note an operator put on the card).
+run14 list >/dev/null
+run14 update done-ship-report-1 --note "operator note" >/dev/null
+python3 - "$HOME14/state/home-summary.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+ledger = json.load(open(path))
+ledger.update(valid=True, invalidity={"kind": None, "ids": []}, omitted=[])
+json.dump(ledger, open(path, "w"))
+PY
+json=$(run14 show done-ship-report-1 --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert (o["state"], o["note"]) == ("done", "operator note"), o' "$json"; then
+  pass '35 complete summary: a row the inventory still has is not retired'
+else fail '35 complete summary: a row the inventory still has is not retired'; fi
 
 [ "$failed" -eq 0 ] || exit 1
