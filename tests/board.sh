@@ -1216,4 +1216,141 @@ if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert (o["state"], o
   pass '35 complete summary: a row the inventory still has is not retired'
 else fail '35 complete summary: a row the inventory still has is not retired'; fi
 
+# =============================================================================
+# Scenario 15: render's per-card detail lookups at full-backlog scale. The
+# authoritative reader has no bulk full read, so render looks up each of 160
+# FirstMate cards with its own `fm-tasks-axi.sh show <id> --full`. Breaks
+# caught: lookups serialized again (render then needs at least the sum of
+# every lookup), a record attached to the wrong card, a missing/failed or
+# foreign-id answer turned into a record, manual rows looked up, repeated or
+# dropped lookups, nondeterministic output across renders, columns disturbed,
+# and an unavailable reader breaking render.
+# =============================================================================
+HOME15="$TMP_ROOT/home15"; FIRSTMATE15="$TMP_ROOT/firstmate15"
+TASKS_AXI_CALLS15="$TMP_ROOT/tasks-axi-calls15.log"
+mkdir -p "$HOME15/state" "$FIRSTMATE15/bin"
+cat > "$FIRSTMATE15/bin/fm-fleet-snapshot.sh" <<'SH'
+#!/usr/bin/env bash
+[ "$#" = 1 ] && [ "$1" = --contribution-input ] || exit 64
+cat "$FM_HOME/inventory.json"
+SH
+printf '#!/usr/bin/env bash\nprintf "state: working . source: pane . harness busy\\n"\n' > "$FIRSTMATE15/bin/fm-crew-state.sh"
+# Each lookup takes 50 ms, so 160 serialized lookups need at least 8 s.
+cat > "$FIRSTMATE15/bin/fm-tasks-axi.sh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$TASKS_AXI_CALLS15"
+sleep 0.05
+case "\$2" in
+  *-missing) printf 'error: "Task not found in this backlog"\ncode: NOT_FOUND\n'; exit 1 ;;
+  *-failed) printf 'task:\n  id: someone-else\n  title: Not this task\n'; exit 3 ;;
+  done-*) printf 'task:\n  id: %s\n  state: done\n  closed: 2026-10-01\n  hold_reason: "-"\n  body: "Archived body of %s"\n' "\$2" "\$2" ;;
+  *) printf 'task:\n  id: %s\n  state: queued\n  deps: none\n  body: "Body of %s\\\\n<b>%s</b>"\n' "\$2" "\$2" "\$2" ;;
+esac
+SH
+chmod +x "$FIRSTMATE15/bin/"*
+python3 - "$HOME15/inventory.json" <<'PY'
+import json, sys
+def rec(tid, state, role, **extra):
+    r = {"structured": True, "id": tid, "state": state, "current_role": role, "title": "Title " + tid,
+         "repo": "proj-s", "kind": "ship", "since": "2026-10-01", "hold_kind": None,
+         "hold_reason": None, "hold_until": None, "hold_bucket": None, "hold_age_days": None,
+         "captain_actionable": False, "blocked_by_ids": [], "unresolved_blocker_ids": [],
+         "blocked_reason": None, "requires_child_metadata": role == "worker",
+         "report_path": None, "pr_url": None, "local_note": None,
+         "completion": {"verb": None, "date": None}}
+    r.update(extra)
+    return r
+records = []
+for i in range(20):
+    records += [
+        rec(f"queued-{i}", "queued", "queued"),
+        rec(f"call-{i}", "queued", "queued", hold_kind="captain", hold_reason="pick",
+            hold_bucket="live", captain_actionable=True),
+        rec(f"external-{i}", "queued", "queued", hold_kind="external", hold_reason="upstream"),
+        rec(f"dep-{i}", "queued", "queued", blocked_by_ids=[f"queued-{i}"], unresolved_blocker_ids=[f"queued-{i}"]),
+        rec(f"done-{i}", "done", "done", completion={"verb": "merged", "date": "2026-10-02"}),
+        rec(f"worker-{i}", "in_flight", "worker"),
+        rec(f"gone-{i}-missing", "queued", "queued"),
+        rec(f"broken-{i}-failed", "queued", "queued"),
+    ]
+json.dump({"backlog": {"path": "data/backlog.md", "present": True, "records": records},
+           "tasks": [{"id": f"worker-{i}", "kind": "ship"} for i in range(20)]}, open(sys.argv[1], "w"))
+PY
+cat > "$HOME15/state/home-summary.json" <<'JSON'
+{"valid": true, "omitted": [], "queued": [], "active_children": [], "endpoints": [], "holds": [],
+ "decisions_open": [{"id": "call-7", "verb": "captain-hold", "summary": "Pick a vendor", "reason": "pick"}],
+ "landed": [{"id": "done-3", "repo": "proj-s", "title": "Title done-3", "pr_url": "https://example.test/pr/3", "report_path": null, "local_note": null, "completion": {"verb": "merged", "date": "2026-10-02"}}]}
+JSON
+run15() { FM_HOME="$HOME15" FIRSTMATE_ROOT="$FIRSTMATE15" PATH="/usr/bin:/bin" "$BOARD" "$@"; }
+run15 add --project proj-m --title "Manual row" --id manual-15 >/dev/null
+run15 list >/dev/null
+rm -f "$TASKS_AXI_CALLS15"
+start15=$(python3 -c 'import time; print(time.time())')
+run15 render >/dev/null
+elapsed15=$(python3 -c 'import sys, time; print(round(time.time() - float(sys.argv[1]), 2))' "$start15")
+if python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) < 4 else 1)' "$elapsed15"; then
+  pass "36 render: 160 detail lookups overlap (${elapsed15}s, serialized floor 8s)"
+else fail "36 render: 160 detail lookups overlap (${elapsed15}s, serialized floor 8s)"; fi
+if python3 - "$TASKS_AXI_CALLS15" <<'PY'
+import sys
+calls = sorted(open(sys.argv[1]).read().splitlines())
+ids = [f"{c}-{i}" for i in range(20) for c in ("queued", "call", "external", "dep", "done", "worker")]
+ids += [f"gone-{i}-missing" for i in range(20)] + [f"broken-{i}-failed" for i in range(20)]
+assert calls == sorted(f"show {tid} --full" for tid in ids), calls
+PY
+then pass '36 render: exactly one full lookup per FirstMate card, none for manual rows'
+else fail '36 render: exactly one full lookup per FirstMate card, none for manual rows'; fi
+details15() {  # <board-data.js>: assert every card carries its own details
+  python3 - "$1" <<'PY'
+import json, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+tasks = {t["id"]: t for t in json.loads(text[text.index("{"):text.rindex("}") + 1])["tasks"]}
+assert len(tasks) == 161, len(tasks)
+for i in range(20):
+    for tid in (f"queued-{i}", f"call-{i}", f"external-{i}", f"dep-{i}", f"worker-{i}"):
+        b = tasks[tid]["details"]["backlog"]
+        assert b == {"id": tid, "state": "queued", "deps": "", "body": f"Body of {tid}\n<b>{tid}</b>"}, (tid, b)
+    b = tasks[f"done-{i}"]["details"]["backlog"]
+    assert b == {"id": f"done-{i}", "state": "done", "closed": "2026-10-01", "hold_reason": "",
+                 "body": f"Archived body of done-{i}"}, b
+    assert tasks[f"gone-{i}-missing"]["details"]["backlog"] is None
+    assert tasks[f"broken-{i}-failed"]["details"]["backlog"] is None
+assert tasks["manual-15"]["details"] == {"backlog": None, "decision": None, "landed": None}
+assert tasks["call-7"]["details"]["decision"] == {"verb": "captain-hold", "summary": "Pick a vendor", "reason": "pick"}
+assert tasks["done-3"]["details"]["landed"]["pr_url"] == "https://example.test/pr/3"
+assert sum(1 for t in tasks.values() if t["details"]["decision"]) == 1
+assert sum(1 for t in tasks.values() if t["details"]["landed"]) == 1
+PY
+}
+if details15 "$HOME15/data/board/board-data.js"; then pass '36 render: each card carries its own record; missing, failed and foreign answers stay null'
+else fail '36 render: each card carries its own record; missing, failed and foreign answers stay null'; fi
+sed 's/"generated_at": "[^"]*"//' "$HOME15/data/board/board-data.js" > "$HOME15/render1.js"
+run15 render >/dev/null
+sed 's/"generated_at": "[^"]*"//' "$HOME15/data/board/board-data.js" > "$HOME15/render2.js"
+if cmp -s "$HOME15/render1.js" "$HOME15/render2.js"; then pass '36 render: repeated renders produce byte-identical data'
+else fail '36 render: repeated renders produce byte-identical data'; fi
+columns15() {
+  run15 list --json | python3 -c '
+import json, sys
+want = {"queued": "todo", "call": "waiting_review", "external": "blocked", "dep": "blocked",
+        "done": "done", "worker": "in_progress", "gone": "todo", "broken": "todo"}
+got = {t["id"]: t["state"] for t in json.load(sys.stdin)}
+assert got.pop("manual-15") == "todo", got
+bad = {k: v for k, v in got.items() if v != want[k.split("-")[0]]}
+assert len(got) == 160 and not bad, (len(got), bad)'
+}
+if columns15; then pass '36 render: every card keeps its column'; else fail '36 render: every card keeps its column'; fi
+mv "$FIRSTMATE15/bin/fm-tasks-axi.sh" "$FIRSTMATE15/fm-tasks-axi.sh.unavailable"
+run15 render >/dev/null
+if python3 - "$HOME15/data/board/board-data.js" <<'PY'
+import json, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+tasks = json.loads(text[text.index("{"):text.rindex("}") + 1])["tasks"]
+assert len(tasks) == 161 and all(t["details"]["backlog"] is None for t in tasks), tasks
+PY
+then pass '36 render: an unavailable reader leaves every backlog record null'
+else fail '36 render: an unavailable reader leaves every backlog record null'; fi
+if columns15; then pass '36 render: an unavailable reader leaves every column unchanged'
+else fail '36 render: an unavailable reader leaves every column unchanged'; fi
+
 [ "$failed" -eq 0 ] || exit 1
