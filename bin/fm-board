@@ -12,11 +12,13 @@ competing task database. `reconcile()` upserts a board record for every row
 of the official snapshot's complete local backlog inventory
 (`$FIRSTMATE_ROOT/bin/fm-fleet-snapshot.sh --contribution-input`) and every
 published child, classifying each from structured fields only: a closed row
-is done; an In-flight worker row, or a held row whose child works again,
-takes its child's `fm-crew-state.sh` state; any other queued or held row is
-decided by its blocker and hold fields (`CREW_STATE_TO_BOARD` and
-`_queued_state` own the exact mapping). A preserved task .meta never
-overrides its row. When the inventory is unavailable or incomplete, the
+is done; an In-flight worker row, or a held row whose child works again
+(unless that row is a live captain call), takes its child's
+`fm-crew-state.sh` state; any other queued or held row is decided by its
+blocker and hold fields (`CREW_STATE_TO_BOARD` and `_queued_state` own the
+exact mapping). Only a live captain call is waiting_review. A preserved task
+.meta never overrides its row, nor demotes the Done card of a row archived
+out of the backlog. When the inventory is unavailable or incomplete, the
 bounded `$FM_HOME/state/home-summary.json` surfaces stand in. With
 `valid: true` or an inventory-mismatch-only invalidity, it retires Firstmate
 rows absent from every summary surface and, when available, from the
@@ -597,17 +599,18 @@ def _archived_identity(task_id: str) -> tuple[str | None, str | None]:
 
 # Deterministic crew-state -> board-state projection for a task with a live
 # child (fm-crew-state.sh's vocabulary). `done` means the worker finished and
-# is awaiting review/landing - never the board's own `done`, which is
-# reserved for a row Firstmate has closed (its backlog Done section).
-# `parked` is a no-mistakes gate awaiting approval or an open
-# needs-decision: a decision or review is pending, not a technical obstacle.
-# `blocked`/`paused`/`failed` mean the agent cannot progress without an
-# outside change; `unknown` (endpoint gone, state unreadable) is never shown
-# as work in progress, since nothing proves anything is executing.
+# its landing or closure is MAIN's next step: in progress, never the board's
+# own `done`, which is reserved for a row Firstmate has closed (its backlog
+# Done section). `parked` is a no-mistakes gate or a needs-decision the
+# worker addressed to MAIN; like `blocked`/`paused`/`failed` the agent cannot
+# progress without an outside answer. Neither is a captain call: only a live
+# captain hold on the backlog row is (`_queued_state`). `unknown` (endpoint
+# gone, state unreadable) is never shown as work in progress, since nothing
+# proves anything is executing.
 CREW_STATE_TO_BOARD = {
     "working": "in_progress",
-    "done": "waiting_review",
-    "parked": "waiting_review",
+    "done": "in_progress",
+    "parked": "blocked",
     "blocked": "blocked",
     "paused": "blocked",
     "failed": "blocked",
@@ -713,19 +716,25 @@ def _hold_note(q: dict) -> str | None:
     return note or reason
 
 
+def _captain_call(q: dict) -> bool:
+    """Firstmate's own current user call (bearings' Captain's Call): a
+    captain hold it marks captain_actionable - undated, date reached, not
+    aged, no open blocker."""
+    return q.get("hold_kind") == "captain" and q.get("captain_actionable") is True
+
+
 def _queued_state(q: dict) -> tuple[str, bool]:
     """Board state and captain_review for a queued or held backlog row with
     no live child. Decided from structured fields only, never hold prose:
     - an unresolved blocker id is a real dependency blocker, and an
       `external` hold waits on something outside the backlog -> blocked;
-    - a captain hold Firstmate marks captain_actionable (undated, date
-      reached, not aged, no open blocker - bearings' live captain call) is
-      waiting on the captain -> waiting_review;
+    - a live captain call (`_captain_call`) is waiting on the captain ->
+      waiting_review;
     - anything else (plain queued, dated/aged captain deferral, a `future`,
       `load` or `parked` hold) is not-yet-started or set-aside work -> todo."""
     if q.get("unresolved_blocker_ids") or q.get("hold_kind") == "external":
         return "blocked", False
-    if q.get("hold_kind") == "captain" and q.get("captain_actionable") is True:
+    if _captain_call(q):
         return "waiting_review", True
     return "todo", False
 
@@ -754,17 +763,17 @@ def _child_projection(tid: str, child: dict, q: dict, known: dict,
                       decision: dict | None, hold: dict | None) -> dict:
     """Board record for a live child, from its crew state; `child` is its
     published summary observation, `q` its backlog row, `known` the board's
-    existing record."""
+    existing record. Never a captain call: a worker's own needs-decision or
+    gate is addressed to MAIN, and a row the captain owes an answer on is
+    held for the captain instead (`_queued_state`)."""
     # fm-crew-state.sh is the fresher read; the published child state is
     # the fallback when it cannot answer.
     crew = _crew_state(tid)
     crew_state = crew[0] if crew else (child.get("state") or "unknown")
     board_state = CREW_STATE_TO_BOARD.get(crew_state, "blocked")
     detail = crew[1] if crew else (child.get("doing") or crew_state)
-    # A child-state hold only explains the obstacle; an open decision
-    # (captain hold or a worker's needs-decision) is what awaits the captain.
-    captain_review = board_state == "waiting_review" or (
-        board_state == "blocked" and decision is not None)
+    # An open decision or child-state hold only explains what the child
+    # waits on.
     hold = decision or hold
     hold_reason = None
     if board_state != "in_progress" and hold:
@@ -787,8 +796,7 @@ def _child_projection(tid: str, child: dict, q: dict, known: dict,
     return _projection(
         tid, repo, title,
         board_state, child.get("kind") or q.get("kind"), agent=_agent_label(tid),
-        since=q.get("since"), running=detail, captain_review=captain_review,
-        hold_reason=hold_reason,
+        since=q.get("since"), running=detail, hold_reason=hold_reason,
     )
 
 
@@ -851,11 +859,18 @@ def reconcile(only_id: str | None = None) -> None:
             if keep_known_project:
                 fields.pop("project", None)
             updates[tid] = fields
-        elif row is None or tid in active_ids or (
+        elif row is None and existing_tasks.get(tid, {}).get("state") == "done":
+            # A closed row archived out of the backlog keeps its Done card.
+            # Its preserved .meta - even a retained worker reporting busy -
+            # is no reopen: FirstMate dispatches only against a Queued or
+            # In-flight row, so real reopened work always has a row here.
+            continue
+        elif row is None or (tid in active_ids and not _captain_call(row)) or (
                 state == "in_flight" and row.get("current_role") == "worker"):
             # A live child: an In-flight worker row (with or without
-            # metadata), a held row whose child is working again, or a
-            # published child no backlog row describes.
+            # metadata), a held row whose child is working again (a live
+            # captain call stays the captain's), or a published child no
+            # backlog row describes.
             updates[tid] = _child_projection(
                 tid, children.get(tid, {}), row or {}, existing_tasks.get(tid, {}),
                 decisions_by_id.get(tid), holds_by_id.get(tid))
