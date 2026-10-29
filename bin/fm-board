@@ -499,9 +499,11 @@ def _which(binary: str) -> bool:
 
 def reconcile_if_possible(only_id: str | None = None) -> None:
     try:
-        reconcile(only_id=only_id)
+        coverage = reconcile(only_id=only_id)
     except Exception as exc:  # noqa: BLE001 - reconcile is best-effort/advisory
         print(f"fm-board: reconcile skipped ({exc})", file=sys.stderr)
+        coverage = "unavailable"
+    print(f"fm-board: reconcile coverage: {coverage}", file=sys.stderr)
 
 
 def _meta_value(meta_path: str, key: str) -> str | None:
@@ -800,9 +802,9 @@ def _child_projection(tid: str, child: dict, q: dict, known: dict,
     )
 
 
-def reconcile(only_id: str | None = None) -> None:
+def reconcile(only_id: str | None = None) -> str:
     if not os.path.isfile(home_summary_path()):
-        return
+        return "unavailable"
     with open(home_summary_path(), "r", encoding="utf-8") as f:
         ledger = json.load(f)
 
@@ -821,6 +823,7 @@ def reconcile(only_id: str | None = None) -> None:
         meta_ids = set()
         rows = {q.get("id"): {**q, "state": "queued"} for q in ledger.get("queued", []) if q.get("id")}
         rows.update({e.get("id"): {**e, "state": "done"} for e in ledger.get("landed", []) if e.get("id")})
+    coverage = "inventory" if inventory is not None else "fallback"
 
     # Child observations: `active_children` repeats working `endpoints` rows
     # with richer identity (repo/name). `endpoints` lists every task .meta,
@@ -910,7 +913,7 @@ def reconcile(only_id: str | None = None) -> None:
     # Unchanged projections are not rewritten: `updated_at` then records the
     # last real transition, and a re-render loop does not grow events.jsonl.
     if not retire and not any(differs(existing_tasks.get(t), f) for t, f in updates.items()):
-        return
+        return coverage
 
     changed: list[str] = []
     with locked_state() as data:
@@ -933,6 +936,7 @@ def reconcile(only_id: str | None = None) -> None:
         append_event({"event": "reconcile", "ids": sorted(changed)})
     if retire:
         append_event({"event": "retire", "ids": sorted(retire)})
+    return coverage
 
 
 # --- CLI wiring --------------------------------------------------------------

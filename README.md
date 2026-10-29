@@ -289,6 +289,17 @@ cards; manual cards survive.
 periodically. Use [`bin/fm-board`](bin/fm-board) directly for list/show/render and
 manual-card commands. See [board usage and details](docs/board.html).
 
+Board reads emit `fm-board: reconcile coverage: inventory` on **stderr** only
+after that reconciliation successfully used the full structured local inventory,
+including an empty inventory. `fm-board: reconcile coverage: fallback` means
+only the bounded summary was available; `fm-board: reconcile coverage: unavailable`
+means the summary was absent or reconciliation failed. Failures also report
+`reconcile skipped`. Neither fallback nor unavailable proves complete coverage,
+even with exit 0. Stdout, including the `list --json` array, is unchanged.
+The diagnostic establishes structured inventory coverage for that reconciliation,
+not semantic correctness of old holds, real-user intent, freshness, or delivery
+to a live receiver.
+
 ### Bots
 
 Bots are **beta** home-local specs, not autonomous processes. Daily windows use

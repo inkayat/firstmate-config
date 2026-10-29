@@ -1514,4 +1514,142 @@ then pass '38 summary only: archived Done card stays done; finished worker is no
 else fail '38 summary only: archived Done card stays done; finished worker is not a call; live call kept'; fi
 rm -f "$HOME16/inventory-failed"
 
+# =============================================================================
+# Scenario 17: coverage is evidence for this read, not exit 0 or cached success.
+# Breaks caught: bounded/error input called inventory, empty inventory rejected,
+# success printed before a later reconcile error, stale success on the next
+# command, and diagnostics breaking existing stdout-only JSON consumers.
+# =============================================================================
+HOME17="$TMP_ROOT/home17"; FIRSTMATE17="$TMP_ROOT/firstmate17"
+mkdir -p "$HOME17/state" "$FIRSTMATE17/bin"
+cat > "$FIRSTMATE17/bin/fm-fleet-snapshot.sh" <<'SH'
+#!/usr/bin/env bash
+[ "$#" = 1 ] && [ "$1" = --contribution-input ] || exit 64
+cat "$FM_HOME/inventory.json"
+[ ! -e "$FM_HOME/inventory-failed" ]
+SH
+chmod +x "$FIRSTMATE17/bin/fm-fleet-snapshot.sh"
+if FM_HOME="$HOME17" FIRSTMATE_ROOT="$FIRSTMATE17" PATH="/usr/bin:/bin" \
+  python3 - "$BOARD" <<'PY'
+import contextlib
+import copy
+import importlib.machinery
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+board = sys.argv[1]
+home = Path(os.environ["FM_HOME"])
+summary = home / "state/home-summary.json"
+inventory_path = home / "inventory.json"
+empty = {"backlog": {"present": True, "records": []}, "tasks": []}
+ledger = {"valid": True, "omitted": [], "queued": [], "active_children": [],
+          "endpoints": [], "landed": [], "holds": [], "decisions_open": []}
+row = {"structured": True, "id": "coverage-call", "state": "queued", "current_role": "queued",
+       "repo": "proj-c", "title": "Pick a vendor", "hold_kind": "captain",
+       "hold_reason": "pick one", "captain_actionable": True}
+full = copy.deepcopy(empty)
+full["backlog"]["records"] = [row]
+errors = []
+
+def write_json(path, value):
+    path.write_text(json.dumps(value))
+
+def check_read(name, want, expected_ids):
+    result = subprocess.run([board, "list", "--json"], text=True, capture_output=True)
+    try:
+        assert result.returncode == 0, result
+        tasks = json.loads(result.stdout)
+        assert isinstance(tasks, list), tasks
+        assert [t["id"] for t in tasks] == expected_ids, tasks
+        assert all(set(t) == {"id", "project", "title", "state", "agent", "kind", "source",
+                              "since", "running", "captain_review", "updated_at"} for t in tasks), tasks
+        lines = result.stderr.splitlines()
+        assert lines.count("fm-board: reconcile coverage: " + want) == 1, result.stderr
+        if want != "inventory":
+            assert "reconcile coverage: inventory" not in result.stderr, result.stderr
+        if tasks:
+            assert (tasks[0]["state"], tasks[0]["captain_review"]) == ("waiting_review", True), tasks
+    except (AssertionError, ValueError) as exc:
+        errors.append(name)
+        print(f"FAIL coverage {name}: {exc}", file=sys.stderr)
+    return result
+
+write_json(summary, ledger)
+write_json(inventory_path, full)
+check_read("full inventory", "inventory", ["coverage-call"])
+first = check_read("unchanged inventory", "inventory", ["coverage-call"])
+second = check_read("repeated stdout compatibility", "inventory", ["coverage-call"])
+assert first.stdout == second.stdout
+write_json(inventory_path, empty)
+check_read("legitimately empty inventory", "inventory", [])
+
+bounded = copy.deepcopy(ledger)
+bounded["queued"] = [row]
+bounded["omitted"] = [{"surface": "queued", "count": 50}]
+write_json(summary, bounded)
+(home / "inventory-failed").touch()
+check_read("nonzero helper with valid stdout", "fallback", ["coverage-call"])
+(home / "inventory-failed").unlink()
+for bad in ("not json", "null", "{}", '{"backlog":{"present":true,"records":[]},"tasks":{}}',
+            '{"backlog":{"present":false,"records":[]},"tasks":[]}',
+            '{"backlog":{"present":true,"records":[]},"tasks":[{}]}',
+            '{"backlog":{"present":true,"records":[{"id":"bad","structured":false}]},"tasks":[]}',
+            '{"backlog":{"present":true,"records":[]},"tasks":[],"omitted":[{"count":1}]}',
+            '{"backlog":{"present":true,"records":[],"omitted":[{"count":1}]},"tasks":[]}'):
+    inventory_path.write_text(bad)
+    check_read("malformed/partial helper " + bad, "fallback", ["coverage-call"])
+inventory_path.unlink()
+check_read("missing inventory", "fallback", ["coverage-call"])
+write_json(inventory_path, full)
+helper = Path(os.environ["FIRSTMATE_ROOT"]) / "bin/fm-fleet-snapshot.sh"
+helper.chmod(0o644)
+check_read("helper not executable", "fallback", ["coverage-call"])
+helper.chmod(0o755)
+check_read("success after fallback", "inventory", ["coverage-call"])
+summary.unlink()
+check_read("missing summary despite available inventory", "unavailable", ["coverage-call"])
+summary.write_text("not json")
+result = check_read("summary parse error", "unavailable", ["coverage-call"])
+assert "reconcile skipped" in result.stderr, result.stderr
+broken = copy.deepcopy(ledger)
+broken["endpoints"] = [None]  # Error after the inventory read succeeded.
+write_json(summary, broken)
+result = check_read("post-inventory reconcile error", "unavailable", ["coverage-call"])
+assert "reconcile skipped" in result.stderr, result.stderr
+
+# Repeat the actual command entry point in one interpreter: no module-global
+# success may leak into an error or an unavailable subsequent read.
+loader = importlib.machinery.SourceFileLoader("board_coverage", board)
+spec = importlib.util.spec_from_loader(loader.name, loader)
+module = importlib.util.module_from_spec(spec)
+loader.exec_module(module)
+for value, want in ((ledger, "inventory"), (bounded, "fallback"),
+                    (broken, "unavailable"), (None, "unavailable")):
+    if want == "fallback":
+        (home / "inventory-failed").touch()
+    else:
+        (home / "inventory-failed").unlink(missing_ok=True)
+    if value is None:
+        summary.unlink()
+    else:
+        write_json(summary, value)
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        assert module.main(["list", "--json"]) == 0
+    assert isinstance(json.loads(stdout.getvalue()), list)
+    lines = stderr.getvalue().splitlines()
+    if lines.count("fm-board: reconcile coverage: " + want) != 1 or (
+            want != "inventory" and "reconcile coverage: inventory" in stderr.getvalue()):
+        errors.append("same-process " + want)
+        print(f"FAIL coverage same-process {want}: {stderr.getvalue()!r}", file=sys.stderr)
+assert not errors, errors
+PY
+then pass '39 coverage: truthful per-read stderr, empty inventory, failures and unchanged JSON consumers'
+else fail '39 coverage: truthful per-read stderr, empty inventory, failures and unchanged JSON consumers'; fi
+
 [ "$failed" -eq 0 ] || exit 1
