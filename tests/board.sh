@@ -383,9 +383,9 @@ assert p["proj-a"]["todo"] == 3, p["proj-a"]
 assert p["proj-a"]["blocked"] == 1, p["proj-a"]
 assert p["proj-a"]["waiting_review"] == 1, p["proj-a"]
 assert p["proj-a"]["in_progress"] == 1, p["proj-a"]
-assert p["proj-b"]["in_progress"] == 1, p["proj-b"]
-assert p["proj-b"]["blocked"] == 2, p["proj-b"]
-assert p["proj-b"]["waiting_review"] == 2, p["proj-b"]
+assert p["proj-b"]["in_progress"] == 2, p["proj-b"]
+assert p["proj-b"]["blocked"] == 3, p["proj-b"]
+assert p["proj-b"]["waiting_review"] == 0, p["proj-b"]
 assert p["proj-c"]["done"] == 1, p["proj-c"]
 ' "$summary_json"; then pass '16 reconcile: lifecycle mapping matches counts per project'; else fail '16 reconcile: lifecycle mapping matches counts per project'; fi
 
@@ -432,10 +432,10 @@ else
 fi
 
 json=$(run6 show a-parked-1 --json)
-if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="waiting_review", o; assert o["captain_review"] is True, o; assert o["hold_reason"]=="needs captain decision", o' "$json"; then
-  pass '16 reconcile: crew-state parked (decision/gate pending) is waiting_review, not blocked'
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="blocked", o; assert o["captain_review"] is False, o; assert o["hold_reason"]=="needs captain decision", o' "$json"; then
+  pass '16 reconcile: crew-state parked with only a worker needs-decision is blocked, not a captain call'
 else
-  fail '16 reconcile: crew-state parked (decision/gate pending) is waiting_review, not blocked'
+  fail '16 reconcile: crew-state parked with only a worker needs-decision is blocked, not a captain call'
 fi
 
 json=$(run6 show a-blocked-1 --json)
@@ -453,10 +453,10 @@ else
 fi
 
 json=$(run6 show a-done-1 --json)
-if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="waiting_review", o; assert o["captain_review"] is True, o' "$json"; then
-  pass '16 reconcile: crew-state done maps to waiting_review, never board done'
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["state"]=="in_progress", o; assert o["captain_review"] is False, o' "$json"; then
+  pass '16 reconcile: crew-state done awaits MAIN closure in in_progress, never a captain call or board done'
 else
-  fail '16 reconcile: crew-state done maps to waiting_review, never board done'
+  fail '16 reconcile: crew-state done awaits MAIN closure in in_progress, never a captain call or board done'
 fi
 
 json=$(run6 show l-done-1 --json)
@@ -626,7 +626,7 @@ else
 fi
 
 summary_json=$(run8 summary --json)
-if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["projects"]["universal-wishlist"]["waiting_review"]==1, o' "$summary_json"; then
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["projects"]["universal-wishlist"]["in_progress"]==1, o' "$summary_json"; then
   pass '19 endpoint without repo/name: task groups under its real project, not Unassigned'
 else
   fail '19 endpoint without repo/name: task groups under its real project, not Unassigned'
@@ -1160,7 +1160,7 @@ want = {
     "q-external-1": ("blocked", False), "q-dep-1": ("blocked", False),
     "held-parked-1": ("todo", False), "held-captain-1": ("waiting_review", True),
     "held-working-1": ("in_progress", False), "w-working-1": ("in_progress", False),
-    "w-done-1": ("waiting_review", True), "w-orphan-1": ("blocked", False),
+    "w-done-1": ("in_progress", False), "w-orphan-1": ("blocked", False),
     "done-preserved-1": ("done", False), "done-ship-report-1": ("done", False),
     "done-captain-1": ("done", False), "reopened-1": ("todo", False),
     "manual-14": ("in_progress", False),
@@ -1352,5 +1352,166 @@ then pass '36 render: an unavailable reader leaves every backlog record null'
 else fail '36 render: an unavailable reader leaves every backlog record null'; fi
 if columns15; then pass '36 render: an unavailable reader leaves every column unchanged'
 else fail '36 render: an unavailable reader leaves every column unchanged'; fi
+
+# =============================================================================
+# Scenario 16: Waiting Review means a CURRENT captain call only. FirstMate's
+# own user-call signal is a captain hold it marks captain_actionable (bucket
+# `live`); a finished worker, a parked gate, or a worker's status
+# needs-decision is addressed to MAIN, not to the captain. Breaks caught:
+# finished/parked workers shown as "awaiting reply"; a worker decision raised
+# to a captain call; a true call lost when its child works again; deferrals
+# or external waits leaking into calls; unknown input turned into completion;
+# an archived Done card demoted by its preserved .meta (inventory and
+# summary-only), even when its retained worker reports busy - FirstMate only
+# dispatches against a Queued/In-flight row, so reopening needs a row; losing
+# a genuinely reopened row, the review counter, manual rows or idempotence.
+# =============================================================================
+HOME16="$TMP_ROOT/home16"; FIRSTMATE16="$TMP_ROOT/firstmate16"
+mkdir -p "$HOME16/state" "$HOME16/data/board" "$FIRSTMATE16/bin"
+cat > "$FIRSTMATE16/bin/fm-fleet-snapshot.sh" <<'SH'
+#!/usr/bin/env bash
+[ "$#" = 1 ] && [ "$1" = --contribution-input ] || exit 64
+[ ! -e "$FM_HOME/inventory-failed" ] || exit 1
+cat "$FM_HOME/inventory.json"
+SH
+cat > "$FIRSTMATE16/bin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  w-done-1|w-done-dec-1) printf 'state: done . source: status-log . checks green\n' ;;
+  w-parked-1) printf 'state: parked . source: run-step . needs-decision\n' ;;
+  w-blocked-dec-1) printf 'state: blocked . source: status-log . waiting on MAIN\n' ;;
+  *-working-1|arch-busy-1) printf 'state: working . source: pane . harness busy\n' ;;
+  w-nometa-1) printf 'garbled output\n' ;;
+  *) printf 'state: unknown . source: none . backend target gone\n' ;;
+esac
+SH
+chmod +x "$FIRSTMATE16/bin/"*
+python3 - "$HOME16/inventory.json" <<'PY'
+import json, sys
+def rec(tid, state, role, **extra):
+    r = {"structured": True, "id": tid, "state": state, "current_role": role, "title": "Title " + tid,
+         "repo": "proj-v", "kind": "ship", "since": "2026-10-01", "hold_kind": None,
+         "hold_reason": None, "hold_until": None, "hold_bucket": None, "hold_age_days": None,
+         "captain_actionable": False, "blocked_by_ids": [], "unresolved_blocker_ids": [],
+         "blocked_reason": None, "requires_child_metadata": role == "worker",
+         "report_path": None, "pr_url": None, "local_note": None,
+         "completion": {"verb": None, "date": None}}
+    r.update(extra)
+    return r
+live = dict(hold_kind="captain", hold_reason="pick one", hold_bucket="live", captain_actionable=True)
+records = [
+    rec("w-done-1", "in_flight", "worker"),
+    rec("w-done-dec-1", "in_flight", "worker"),
+    rec("w-parked-1", "in_flight", "worker"),
+    rec("w-blocked-dec-1", "in_flight", "worker"),
+    rec("w-nometa-1", "in_flight", "worker"),
+    rec("held-call-1", "in_flight", "held", **live),
+    rec("held-call-working-1", "in_flight", "held", **live),
+    rec("held-future-working-1", "in_flight", "held", hold_kind="future", hold_reason="later"),
+    rec("held-external-1", "in_flight", "held", hold_kind="external", hold_reason="user restarts runtime"),
+    rec("held-parked-1", "in_flight", "held", hold_kind="parked", hold_reason="delivered, preserved"),
+    rec("q-call-1", "queued", "queued", **live),
+    rec("q-dated-1", "queued", "queued", hold_kind="captain", hold_reason="revisit", hold_bucket="dated",
+        hold_until="2099-01-01"),
+    rec("q-aged-1", "queued", "queued", hold_kind="captain", hold_reason="old ask", hold_bucket="aged",
+        hold_age_days=20),
+    rec("done-meta-1", "done", "done", completion={"verb": "merged", "date": "2026-10-20"}),
+    rec("reopened-working-1", "in_flight", "worker"),
+]
+metas = ["w-done-1", "w-done-dec-1", "w-parked-1", "w-blocked-dec-1", "held-call-1",
+         "held-call-working-1", "held-future-working-1", "held-external-1", "held-parked-1",
+         "done-meta-1", "arch-done-1", "arch-busy-1", "reopened-working-1"]
+json.dump({"backlog": {"path": "data/backlog.md", "present": True, "records": records},
+           "tasks": [{"id": i, "kind": "ship"} for i in metas]}, open(sys.argv[1], "w"))
+PY
+cat > "$HOME16/state/home-summary.json" <<'JSON'
+{"schema":"fm-secondmate-home-summary.v1","valid":false,
+ "invalidity":{"kind":"terminal_in_flight","ids":["w-done-1","w-done-dec-1"]},"omitted":[],
+ "queued":[{"id":"held-call-1","repo":"proj-v","title":"Title held-call-1","kind":"ship","since":"2026-10-01","hold_kind":"captain","hold_bucket":"live","captain_actionable":true,"hold_reason":"pick one","blocked_by_ids":[],"unresolved_blocker_ids":[]}],
+ "active_children":[
+  {"id":"held-call-working-1","repo":"proj-v","kind":"ship","name":"Title held-call-working-1","state":"working","doing":"harness busy"},
+  {"id":"held-future-working-1","repo":"proj-v","kind":"ship","name":"Title held-future-working-1","state":"working","doing":"harness busy"},
+  {"id":"arch-busy-1","repo":"proj-v","kind":"ship","name":"Title arch-busy-1","state":"working","doing":"harness busy"}],
+ "endpoints":[
+  {"id":"w-done-1","state":"done"},{"id":"w-done-dec-1","state":"done"},{"id":"w-parked-1","state":"parked"},
+  {"id":"w-blocked-dec-1","state":"blocked"},{"id":"held-call-1","state":"done"},
+  {"id":"held-call-working-1","state":"working"},{"id":"held-future-working-1","state":"working"},
+  {"id":"held-external-1","state":"done"},{"id":"held-parked-1","state":"unknown"},
+  {"id":"done-meta-1","state":"done"},{"id":"arch-done-1","state":"unknown"},
+  {"id":"arch-busy-1","state":"working"},{"id":"reopened-working-1","state":"working"}],
+ "holds":[{"id":"w-blocked-dec-1","reason":"which branch?"}],
+ "landed":[],
+ "decisions_open":[
+  {"id":"w-done-dec-1","key":"w-done-dec-1","verb":"needs-decision","summary":"land it?","source":"status"},
+  {"id":"w-parked-1","key":"w-parked-1","verb":"needs-decision","summary":"approve gate?","source":"status"},
+  {"id":"w-blocked-dec-1","key":"w-blocked-dec-1","verb":"needs-decision","summary":"which branch?","source":"status"},
+  {"id":"held-call-1","key":"held-call-1","verb":"captain-hold","summary":"pick one","source":"backlog"},
+  {"id":"held-call-working-1","key":"held-call-working-1","verb":"captain-hold","summary":"pick one","source":"backlog"},
+  {"id":"q-call-1","key":"q-call-1","verb":"captain-hold","summary":"pick one","source":"backlog"}]}
+JSON
+# The archived Done cards a reconcile projected while their rows were still
+# in the backlog; both rows have since been archived out of it.
+python3 - "$HOME16/data/board/state.json" <<'PY'
+import json, sys
+def card(tid, state, source="firstmate", note=None):
+    return {"id": tid, "project": "proj-v", "title": "Title " + tid, "state": state, "agent": None,
+            "kind": "ship", "source": source, "since": "2026-10-02", "running": None,
+            "captain_review": False, "hold_reason": None, "note": note,
+            "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-02T00:00:00Z"}
+cards = [card("arch-done-1", "done"), card("arch-busy-1", "done"), card("reopened-working-1", "done"),
+         card("manual-16", "in_progress", source="manual", note="keep me")]
+json.dump({"schema": "fm-board.v1", "tasks": {c["id"]: c for c in cards}}, open(sys.argv[1], "w"))
+PY
+run16() { FM_HOME="$HOME16" FIRSTMATE_ROOT="$FIRSTMATE16" PATH="/usr/bin:/bin" "$BOARD" "$@"; }
+lanes16() {  # <list-json> <python-dict-literal of id: (state, captain_review)>
+  python3 - "$1" "$2" <<'PY'
+import ast, json, sys
+got = {t["id"]: (t["state"], t["captain_review"]) for t in json.loads(sys.argv[1])}
+want = ast.literal_eval(sys.argv[2])
+bad = {k: (got.get(k), v) for k, v in want.items() if got.get(k) != v}
+assert not bad, bad
+PY
+}
+json=$(run16 list --json)
+if lanes16 "$json" '{
+  "w-done-1": ("in_progress", False), "w-done-dec-1": ("in_progress", False),
+  "w-parked-1": ("blocked", False), "w-blocked-dec-1": ("blocked", False),
+  "w-nometa-1": ("blocked", False),
+  "held-call-1": ("waiting_review", True), "held-call-working-1": ("waiting_review", True),
+  "q-call-1": ("waiting_review", True),
+  "held-future-working-1": ("in_progress", False), "held-external-1": ("blocked", False),
+  "held-parked-1": ("todo", False), "q-dated-1": ("todo", False), "q-aged-1": ("todo", False),
+  "done-meta-1": ("done", False), "arch-done-1": ("done", False),
+  "arch-busy-1": ("done", False), "reopened-working-1": ("in_progress", False),
+  "manual-16": ("in_progress", False)}'
+then pass '37 current calls: only live captain holds are Waiting Review; finished, parked and decided workers are not'
+else fail '37 current calls: only live captain holds are Waiting Review; finished, parked and decided workers are not'; fi
+summary16=$(run16 summary --json)
+if python3 -c '
+import json, sys
+t = json.loads(sys.argv[1])["total"]
+assert (t["waiting_review"], t["review"], t["done"], t["in_progress"], t["blocked"], t["todo"]) == (3, 3, 3, 5, 4, 3), t
+' "$summary16"; then pass '37 current calls: lane and awaiting-reply counters equal the three live captain calls'
+else fail '37 current calls: lane and awaiting-reply counters equal the three live captain calls'; fi
+json=$(run16 show arch-done-1 --json)
+if python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert (o["state"], o["updated_at"]) == ("done", "2026-10-02T00:00:00Z"), o' "$json"; then
+  pass '37 archived Done card: a preserved .meta never demotes it (inventory path)'
+else fail '37 archived Done card: a preserved .meta never demotes it (inventory path)'; fi
+cp "$HOME16/data/board/state.json" "$HOME16/after.json"
+cp "$HOME16/data/board/events.jsonl" "$HOME16/events-after.jsonl"
+run16 list >/dev/null
+if cmp -s "$HOME16/after.json" "$HOME16/data/board/state.json" && cmp -s "$HOME16/events-after.jsonl" "$HOME16/data/board/events.jsonl"; then
+  pass '37 current calls idempotence: unchanged inputs leave state and events byte-identical'
+else fail '37 current calls idempotence: unchanged inputs leave state and events byte-identical'; fi
+
+# Summary-only fallback: the archived row's landed entry aged out and its
+# .meta is still published; the queued held call is still a call.
+touch "$HOME16/inventory-failed"
+json=$(run16 list --json)
+if lanes16 "$json" '{"arch-done-1": ("done", False), "held-call-1": ("waiting_review", True),
+  "w-done-1": ("in_progress", False), "w-parked-1": ("blocked", False)}'
+then pass '38 summary only: archived Done card stays done; finished worker is not a call; live call kept'
+else fail '38 summary only: archived Done card stays done; finished worker is not a call; live call kept'; fi
+rm -f "$HOME16/inventory-failed"
 
 [ "$failed" -eq 0 ] || exit 1

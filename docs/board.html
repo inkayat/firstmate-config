@@ -17,6 +17,7 @@
 <pre data-label="shell"><code>fm board            # terminal-browser viewer
 fm board --lavish   # the same static page through Lavish</code></pre>
 <p>Each open refreshes the data first. While the viewer it launched is running, <code>fm board</code> keeps re-rendering, and the page re-reads its data file every few seconds, so a status change appears without a manual reload. The selected tab is preserved.</p>
+<p>The page opens on the active board: the Completed column is hidden until you press <strong>Show completed</strong>, which also shows how many cards it holds. The choice survives project tabs and data refreshes. <code>fm-board list</code>, <code>show</code> and <code>summary</code> always include completed cards.</p>
 
 <h2 id="columns">Columns</h2>
 <p>Columns come from FirstMate's structured state fields only, never from the prose of a hold or note. Every row of FirstMate's complete local backlog is classified, read through the official <code>fm-fleet-snapshot.sh --contribution-input</code> inventory; only when that is unavailable do the bounded <code>state/home-summary.json</code> surfaces stand in.</p>
@@ -24,13 +25,13 @@ fm board --lavish   # the same static page through Lavish</code></pre>
 <thead><tr><th>Column</th><th>Contains</th></tr></thead>
 <tbody>
 <tr><td><code>todo</code> Todo</td><td class="wrap">Queued, deferred or set-aside work: plain queued rows, dated or aged Captain deferrals, and future, load or parked holds.</td></tr>
-<tr><td><code>in_progress</code> In Progress</td><td class="wrap">A live child that is working.</td></tr>
-<tr><td><code>waiting_review</code> Waiting Review</td><td class="wrap">A finished worker awaiting review or landing, a gate or needs-decision that is parked, or a live Captain call.</td></tr>
-<tr><td><code>blocked</code> Blocked</td><td class="wrap">An unresolved dependency or an external hold, or a live child that is blocked, paused, failed, or unknown, including an in-flight worker row with no task metadata.</td></tr>
-<tr><td><code>done</code> Completed</td><td class="wrap">Only a closed backlog row.</td></tr>
+<tr><td><code>in_progress</code> In Progress</td><td class="wrap">A live child that is working, or a finished worker whose landing or closure FirstMate still owes.</td></tr>
+<tr><td><code>waiting_review</code> Waiting Review</td><td class="wrap">Only a live Captain call: a captain hold FirstMate marks actionable (undated or due, not aged, no open blocker), even while its child is working again. A worker's own needs-decision or parked gate is addressed to FirstMate, not to you.</td></tr>
+<tr><td><code>blocked</code> Blocked</td><td class="wrap">An unresolved dependency or an external hold, or a live child that is blocked, parked, paused, failed, or unknown, including an in-flight worker row with no task metadata.</td></tr>
+<tr><td><code>done</code> Completed</td><td class="wrap">Only a closed backlog row, whether the work finished, was cancelled or was superseded. Hidden from the page's default view.</td></tr>
 </tbody>
 </table>
-<p>A live child is an in-flight worker row, or a held row whose child is working again. A finished worker is therefore <em>Waiting Review</em>, not Completed, until FirstMate closes its row, and a task's preserved <code>.meta</code> never overrides a held or closed row.</p>
+<p>A live child is an in-flight worker row, or a held row whose child is working again unless that row is a live Captain call. A finished worker is therefore <em>In Progress</em>, not Completed or Waiting Review, until FirstMate closes its row. A task's preserved <code>.meta</code> never overrides a held or closed row, and never demotes the Completed card of a row archived out of the backlog. Work that is no longer wanted leaves the default view only when FirstMate closes its row; the board never infers that from age, titles or hold text.</p>
 
 <h2 id="details">Task details</h2>
 <p>Every card has a keyboard-reachable <strong>Details</strong> link (<code>board.html#task/&lt;id&gt;</code>) to that task's own view in the same page. <strong>Back to board</strong> or Escape returns to the board with focus on the card.</p>

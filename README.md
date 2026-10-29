@@ -268,10 +268,16 @@ Detailed file ownership and environment overrides are in the
 The board is a deterministic, LLM-free projection, not a competing task database.
 Every row of FirstMate's complete local backlog is classified from structured
 fields: **Todo** is queued, deferred or parked work; **In Progress** is a working
-child; **Waiting Review** includes finished workers, parked gates/decisions and
-live Captain calls; **Blocked** includes unresolved dependencies, external holds
-and blocked, paused, failed or unknown children; **Completed** means a closed
-backlog row only. A preserved task `.meta` never overrides a held or closed row.
+child or a finished worker whose landing or closure FirstMate still owes;
+**Waiting Review** is only a live Captain call (a captain hold FirstMate marks
+actionable), even while its child works; **Blocked** includes unresolved
+dependencies, external holds and blocked, parked, paused, failed or unknown
+children; **Completed** means a closed backlog row only, whether the work
+finished, was cancelled or was superseded. A preserved task `.meta` never
+overrides a held or closed row, nor demotes the Completed card of a row archived
+out of the backlog. The page hides Completed by default behind a
+**Show completed** toggle; `list`/`show`/`summary` still return every card, so
+obsolete work leaves the default view once FirstMate closes its row.
 
 FirstMate's records remain authoritative, read through the official full local
 backlog/metadata inventory; the bounded summary stands in only when that is

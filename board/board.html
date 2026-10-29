@@ -237,6 +237,7 @@
 <header>
   <h1>Firstmate Board</h1>
   <div id="tabs"></div>
+  <button id="completed-toggle" class="tab" type="button" aria-pressed="false"></button>
   <span id="generated"></span>
 </header>
 <main id="board"></main>
@@ -262,6 +263,10 @@
 
   var data, tasks, projects;
   var activeProject = "__all__";
+  // The default view is the active board: Completed (closed backlog rows -
+  // finished, cancelled or superseded work) stays one toggle away and
+  // survives project switches and data refreshes.
+  var showCompleted = false;
 
   function load(next) {
     data = (typeof next === "object" && next) || { tasks: [], generated_at: null };
@@ -282,12 +287,22 @@
     return node;
   }
 
-  // A project tab always shows the board, leaving any open detail view.
-  function selectProject(p) {
-    activeProject = p;
+  // A project tab or the Completed toggle always shows the board, leaving
+  // any open detail view.
+  function showBoard() {
     if (routeId() !== null) location.hash = "";
     else render();
   }
+
+  function selectProject(p) {
+    activeProject = p;
+    showBoard();
+  }
+
+  document.getElementById("completed-toggle").addEventListener("click", function () {
+    showCompleted = !showCompleted;
+    showBoard();
+  });
 
   function renderTabs() {
     var tabsEl = document.getElementById("tabs");
@@ -335,8 +350,14 @@
       return activeProject === "__all__" || (t.project || "(unassigned)") === activeProject;
     });
     document.getElementById("empty-state").hidden = tasks.length !== 0;
+    var toggle = document.getElementById("completed-toggle");
+    var completed = visible.filter(function (t) { return t.state === "done"; }).length;
+    toggle.textContent = showCompleted ? "Hide completed" : "Show completed (" + completed + ")";
+    toggle.className = "tab" + (showCompleted ? " active" : "");
+    toggle.setAttribute("aria-pressed", String(showCompleted));
     COLUMNS.forEach(function (pair) {
       var state = pair[0], label = pair[1];
+      if (state === "done" && !showCompleted) return;
       var col = el("div", { className: "column" });
       col.setAttribute("data-state", state);
       var head = el("div", { className: "column-head" });
@@ -519,8 +540,8 @@
 
   // Re-read board-data.js by re-injecting its script tag (the one way a
   // file:// page can re-load a sibling file); re-render only on a new
-  // generation so the active project tab and the open view survive every
-  // refresh.
+  // generation so the active project tab, the Completed toggle and the open
+  // view survive every refresh.
   setInterval(function () {
     var s = document.createElement("script");
     s.src = "board-data.js?t=" + Date.now();
