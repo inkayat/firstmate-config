@@ -60,6 +60,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 STATES = ("todo", "in_progress", "waiting_review", "blocked", "done")
 SCHEMA = "fm-board.v1"
@@ -395,6 +396,12 @@ def _task_details(task: dict, decisions: dict, landed: dict) -> dict:
     }
 
 
+# tasks-axi has no bulk full read, so render looks up each FirstMate card's
+# record separately; this many lookups overlap (measured: 154 cards ~15 s
+# serialized, ~3 s at 8, no real gain beyond).
+DETAIL_LOOKUP_WORKERS = 8
+
+
 def render() -> None:
     reconcile_if_possible()
     data = read_state()
@@ -402,8 +409,9 @@ def render() -> None:
     decisions = {d.get("id"): d for d in ledger.get("decisions_open", []) if d.get("id")}
     landed = {e.get("id"): e for e in ledger.get("landed", []) if e.get("id")}
     tasks = sorted(data["tasks"].values(), key=lambda t: t.get("id", ""))
-    for t in tasks:
-        t["details"] = _task_details(t, decisions, landed)
+    with ThreadPoolExecutor(max_workers=DETAIL_LOOKUP_WORKERS) as pool:
+        for t, details in zip(tasks, pool.map(lambda t: _task_details(t, decisions, landed), tasks)):
+            t["details"] = details
     payload = {"generated_at": now_iso(), "schema": SCHEMA, "tasks": tasks}
     os.makedirs(board_dir(), exist_ok=True)
     js = "window.BOARD_DATA = " + json.dumps(payload, indent=2, sort_keys=True) + ";\n"
