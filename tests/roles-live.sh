@@ -13,18 +13,20 @@
 #
 # Environment (live):
 #   FM_ROLE_LIVE=1                       required opt-in; anything else never starts a model
-#   FM_ROLE_LIVE_AUTH_FILE=<file>        `omp auth export` JSON; imported ONLY into the fixture
-#                                        home. Without it the live run SKIPs (never PASS).
+#   (no credential variable)             the worker uses the operator's existing omp login IN PLACE
+#                                        (HOME is not redirected); no credential is exported or copied.
+#                                        Without a logged-in `omp` the live run SKIPs (never PASS).
 #   FM_ROLE_LIVE_MODEL                   default anthropic/claude-haiku-4-5
-#   FM_ROLE_LIVE_BUDGET                  total USD cap, default 4.00 (hard stop before each run)
-#   FM_ROLE_LIVE_RUN_CAP                 per-run USD cap passed to omp --max-cost, default 0.30
+#   FM_ROLE_LIVE_BUDGET                  total USD cap, default 4.40 (hard stop before each run)
+#   FM_ROLE_LIVE_RUN_CAP                 per-run USD cap passed to omp --max-cost, default 0.16
 #   FM_ROLE_LIVE_SKILL_SRC               read-only source of installed skills, default ~/.agents/skills
 #
-# Isolation: every run gets a fresh fixture HOME under tests/live-artifacts/
-# (git-ignored), a scrubbed environment, a throwaway git repo as cwd, `--no-skills
-# --no-rules --no-context-files --no-extensions` and a fixture-local copy of the
-# skills. Nothing writes to the real ~/.omp, ~/.agents or any Herdr session; the
-# skill source and the auth file are only read.
+# Isolation: every run gets a fresh fixture directory under tests/live-artifacts/
+# (git-ignored) holding a fixture-local copy of the skills and a throwaway git repo
+# used as cwd; own session dir; scrubbed environment (env -i); `--no-skills --no-rules
+# --no-context-files --no-extensions`. The ONLY exception to home isolation is the omp
+# login, used in place (omp's usual bookkeeping databases under ~/.omp/agent still update).
+# No credential is copied, exported or logged. ~/.agents is only read (skill source).
 #
 # A case (tests/live/<name>.sh) defines a characteristic problem whose correct
 # outcome is reachable only by following the role's skill. Per case the harness
@@ -61,8 +63,8 @@ HANDOFF="$CONFIG_ROOT/bin/fm-role-handoff"
 CASES_DIR="$CONFIG_ROOT/tests/live"
 ART_ROOT="$CONFIG_ROOT/tests/live-artifacts"
 MODEL="${FM_ROLE_LIVE_MODEL:-anthropic/claude-haiku-4-5}"
-BUDGET="${FM_ROLE_LIVE_BUDGET:-4.00}"
-RUN_CAP="${FM_ROLE_LIVE_RUN_CAP:-0.30}"
+BUDGET="${FM_ROLE_LIVE_BUDGET:-4.40}"
+RUN_CAP="${FM_ROLE_LIVE_RUN_CAP:-0.16}"
 SKILL_SRC="${FM_ROLE_LIVE_SKILL_SRC:-$HOME/.agents/skills}"
 OMP_BIN="${FM_ROLE_LIVE_OMP:-omp}"
 SYSTEM_PROMPT='You are a coding worker. Use your tools. Follow the Firstmate spec exactly, including every read-and-apply requirement, then finish with a short final report.'
@@ -141,7 +143,7 @@ build_prompt() {
       FM_CONFIG_ROOT="$CONFIG_ROOT" FM_SKILLS_ROOT="$skills_root" "$HANDOFF" "$role" | strip_skills
     fi
   fi
-  printf 'Pre-work: run pwd -P and git rev-parse --show-toplevel (they must match), then read every path named above with your file read tool before the first edit and before any shell work.\nWork only inside this repository. End with a short final report.\n'
+  printf 'Pre-work: run pwd -P and git rev-parse --show-toplevel (they must match), then read every path named above with your file read tool before the first edit and before any shell work.\nApply each skill'"'"'s procedure step by step. Work only inside this repository, with no network and no package installs. Deliver results in your final message; create files only where the task names them. Be economical: aim for at most 20 tool calls. End with a short final report.\n'
 }
 
 SPENT=0
@@ -161,12 +163,11 @@ run_one() {
   for s in "$SKILL_SRC"/*/; do s=$(basename "$s"); cp -rL "$SKILL_SRC/$s" "$fx/.agents/skills/$s" 2>/dev/null; done
   # addyosmani skills read ../../references/*.md, which resolves to <home>/.agents/references.
   [ ! -d "$(dirname "$SKILL_SRC")/references" ] || cp -rL "$(dirname "$SKILL_SRC")/references" "$fx/.agents/references" 2>/dev/null
-  if [ -n "${AUTH_FILE:-}" ]; then
-    env -i HOME="$fx" PATH="$PATH" OMP_SKIP_SETUP=1 "$OMP_BIN" auth import "$AUTH_FILE" >"$RUN/auth-import.log" 2>&1 || { fail "$name/$label: omp auth import into the fixture home failed"; return 1; }
-  fi
+  # No credential handling: the worker uses the existing omp login in place (HOME is the real one).
   (
     cd "$REPO" || exit 1
     git init -q . && git config user.email live@example.invalid && git config user.name live
+    printf '__pycache__/\n*.pyc\n' >> .git/info/exclude
     # shellcheck source=/dev/null
     . "$case_file"
     case_setup
@@ -176,7 +177,7 @@ run_one() {
   CASE_PROMPT='' && . "$case_file"
   build_prompt "$role" "$mode" "$CASE_PROMPT" "$fx/.agents/skills" > "$RUN/prompt.md"
   if over_budget; then fail "$name/$label: budget $BUDGET USD reached (spent $SPENT); run not started"; return 1; fi
-  ( cd "$REPO" && env -i HOME="$fx" PATH="$PATH" TERM=dumb LANG=C.UTF-8 OMP_SKIP_SETUP=1 PI_CODING_AGENT_DIR="$fx/.omp/agent" \
+  ( cd "$REPO" && env -i HOME="$HOME" PATH="$PATH" TERM=dumb LANG=C.UTF-8 OMP_SKIP_SETUP=1 PYTHONDONTWRITEBYTECODE=1 \
       timeout 420 "$OMP_BIN" -p --model "$MODEL" --thinking low --no-extensions --no-skills --no-rules --no-context-files \
       --no-lsp --no-pty --no-title --tools read,grep,glob,bash,edit,write --system-prompt "$SYSTEM_PROMPT" \
       --session-dir "$RUN/session" --max-cost "$RUN_CAP" --auto-approve --cwd "$REPO" "@$RUN/prompt.md" \
@@ -246,7 +247,7 @@ mkdir -p "$sess"
 } > "$sess/s.jsonl"
 SH
   chmod +x "$fake"
-  OMP_BIN="$fake"; AUTH_FILE=''; MODEL=fake; SKILL_SRC="$t/skills"
+  OMP_BIN="$fake"; MODEL=fake; SKILL_SRC="$t/skills"
   mkdir -p "$SKILL_SRC/code-review-and-quality" "$SKILL_SRC/ponytail-review"
   : > "$SKILL_SRC/code-review-and-quality/SKILL.md"; : > "$SKILL_SRC/ponytail-review/SKILL.md"
   mkdir -p "$t/live"
@@ -271,7 +272,7 @@ CASE
   # budget guard
   SPENT=9; BUDGET=1
   over_budget && pass 'selftest: the budget guard stops further runs' || fail 'selftest: budget guard did not trip'
-  BUDGET="${FM_ROLE_LIVE_BUDGET:-4.00}"
+  BUDGET="${FM_ROLE_LIVE_BUDGET:-4.40}"
   rm -rf "$t"
   ART=''
 }
@@ -348,23 +349,22 @@ selftest_cases() {
 command_selftest=0
 SELFTEST_ONLY=()
 if [ "${1:-}" = selftest ]; then command_selftest=1; SELFTEST_ONLY=("${@:2}"); fi
-selftest
-selftest_cases
+( selftest; exit "$failed" ) || failed=1
+( selftest_cases; exit "$failed" ) || failed=1
 if [ "$command_selftest" -eq 1 ]; then
   printf '\nROLES LIVE SELFTEST %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
   [ "$failed" -eq 0 ]; exit $?
 fi
 
 if [ "${FM_ROLE_LIVE:-}" != 1 ]; then
-  printf 'SKIP - live role suite: set FM_ROLE_LIVE=1 (and FM_ROLE_LIVE_AUTH_FILE) to run real workers; never reported as PASS\n\nROLES LIVE SELFTEST %s, LIVE SKIPPED\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
+  printf 'SKIP - live role suite: set FM_ROLE_LIVE=1 to run real workers with your existing omp login; never reported as PASS\n\nROLES LIVE SELFTEST %s, LIVE SKIPPED\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
   [ "$failed" -eq 0 ]; exit $?
 fi
-if [ -z "${FM_ROLE_LIVE_AUTH_FILE:-}" ] || [ ! -r "${FM_ROLE_LIVE_AUTH_FILE:-}" ] || ! command -v "$OMP_BIN" >/dev/null 2>&1; then
-  printf 'SKIP - live role suite: needs omp and a readable FM_ROLE_LIVE_AUTH_FILE (omp auth export); never reported as PASS\n'
+if ! command -v "$OMP_BIN" >/dev/null 2>&1 || ! "$OMP_BIN" models --json --no-extensions 2>/dev/null | grep -q "\"selector\":\"$MODEL\""; then
+  printf 'SKIP - live role suite: needs omp with %s available from the existing login; never reported as PASS\n' "$MODEL"
   exit 0
 fi
-AUTH_FILE=$FM_ROLE_LIVE_AUTH_FILE
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)-$$
 ART="$ART_ROOT/$STAMP"
 mkdir -p "$ART"
 printf '# Live role results (%s, model %s)\n\n| case | skill read | outcome | control | cumulative USD |\n|---|---|---|---|---|\n' "$STAMP" "$MODEL" > "$ART/results.md"

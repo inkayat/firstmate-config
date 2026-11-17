@@ -271,9 +271,10 @@ Role-only delegation is proven in three layers:
 | --- | --- | --- |
 | Automation | `bash tests/roles.sh` | Every role parses; `autoloadSkills` resolve, are unique and within budget; the handoff names the role and exactly its skills; the Captain-side docs hold no skill-selection instruction |
 | End to end | `bash tests/roles-e2e.sh` | Per role, the real `fm-brief.sh` and `fm-spawn.sh` deliver a first input with the role path and exactly its skill paths (SKIPs without tmux/treehouse/FirstMate) |
-| Live (opt-in) | `FM_ROLE_LIVE=1 FM_ROLE_LIVE_AUTH_FILE=... bash tests/roles-live.sh` | A real model reads the skill and shows the skill-only behaviour in a planted problem, and does not without the skill; budget-capped, fixture home only, artifacts in git-ignored `tests/live-artifacts/` |
+| Live (opt-in) | `FM_ROLE_LIVE=1 bash tests/roles-live.sh [case...]` | A real model (default `anthropic/claude-haiku-4-5` via `omp`, your existing login used in place, nothing copied) reads the skill and shows the skill-only behaviour in a planted problem, and does not without the skill; USD-capped, fixture directories and session dirs under git-ignored `tests/live-artifacts/` |
 
 `bash tests/roles-live.sh` without the opt-in runs only its offline self-test:
 the harness plumbing and every live case's grader against canned good and bad
-workers. The live layer shows a worker read and applied a skill in one cheap
-run per case; it is evidence, not a guarantee.
+workers. The live layer is one cheap run per case: evidence that a skill was
+read and sometimes applied, not a guarantee; a red live case on a cheap model
+can mean the model ignored the skill or role, or that the case needs rework.

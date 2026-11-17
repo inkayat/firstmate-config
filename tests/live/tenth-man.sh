@@ -18,7 +18,7 @@ CASE_KIND=role
 CASE_ROLE=tenth-man
 CASE_SKILL_ONLY_TOKENS="reversibility decisive"
 CASE_PROMPT='Everyone has signed off on CLAIM.md and the job runs on production tomorrow.
-Challenge it before it does. Read the files it points at.'
+Challenge it before it does. Read the files it points at; do not execute any of them.'
 
 case_setup() {
   mkdir -p tools tests data

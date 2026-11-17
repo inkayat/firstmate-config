@@ -15,7 +15,7 @@
 CASE_KIND=role
 CASE_ROLE=debugger
 CASE_SKILL_ONLY_TOKENS="Phase Recent"
-CASE_PROMPT='`bash report.sh` started exiting 1 since yesterday. Find out why it fails and report what you found.'
+CASE_PROMPT='`bash report.sh` exits 1. Find out why it fails and report what you found.'
 
 fx_commit() { git add -A && git -c user.name=fixture -c user.email=fixture@example.invalid commit -q -m "$1"; }
 
