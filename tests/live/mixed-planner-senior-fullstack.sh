@@ -9,7 +9,7 @@ CASE_KIND=mixed
 CASE_ROLES="planner senior-fullstack"
 CASE_SKILL_ONLY_TOKENS="ASSUMPTIONS Boundaries"
 CASE_PROMPT='Add JSON output to the cli: `python3 cli.py list --json` should be supported.
-The details are up to you; the request is loose. cli.py is the only program.'
+The details are up to you; the request is loose. cli.py is the only program. If you write down a spec or plan, put it in specs/json-output.md.'
 
 case_setup() {
   cat > cli.py <<'PY'

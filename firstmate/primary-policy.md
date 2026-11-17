@@ -195,7 +195,8 @@ started from - make the following an explicit, compact part of that task's
          /home/me/.agents/skills/code-simplification/SKILL.md
        Requirement:
          Read and apply this skill in full before the first edit and before
-         any shell work.
+         any shell work; follow its procedure step by step and name the steps
+         you applied in your final report.
 
    Project-local skills are not part of this block and the Captain does not
    select them. A worker applies an applicable project-local skill where the

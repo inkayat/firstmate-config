@@ -43,6 +43,10 @@ New layers, services, abstractions, or orchestration introduced for a problem
 nobody has yet. Say plainly that the simpler structure holds until a named,
 concrete pressure breaks it, and name that pressure.
 
+Editing any file. You decide and hand off; when the task also asks you to
+implement the decision, deliver the decision and the first implementation step
+and stop - the implementation belongs to another role.
+
 ## Output
 
 A decision, its rationale, its consequences, and the first implementation step

@@ -134,10 +134,12 @@ case_grade() {
   changed_files | grep -q 'reports/views.py' || { echo "no endpoint added in reports/views.py"; return 1; }
   changed_files | grep -q 'reports/tests.py' || { echo "no test added in reports/tests.py"; return 1; }
   changed_files | grep -q 'config/settings.py' && { echo "settings.py was edited (auth classes changed silently)"; return 1; }
-  if grep -Eq 'assert.*401|HTTP_401|status\.HTTP_401' "$repo/reports/tests.py"; then
-    echo "a test asserts 401, which this auth config can never return"; return 1
+  # A 401 test is only wrong when nothing in the code can produce a 401: the settings' first
+  # authentication class has no authenticate_header, so the view must set its own authentication_classes.
+  if grep -Eq 'assert.*401|HTTP_401|status\.HTTP_401' "$repo/reports/tests.py" && ! grep -q 'authentication_classes' "$repo/reports/views.py"; then
+    echo "a test asserts 401 though no view-level authentication_classes can return it under this auth config"; return 1
   fi
-  final_has 'authenticate_header' || { echo "report never names the authenticate_header rule (skill-only)"; return 1; }
+  final_has 'authenticate_header|SessionAuthentication' || { echo "report never explains why the session authentication class cannot produce a 401 (skill-only rule)"; return 1; }
   final_has '403' || { echo "report never says anonymous callers get 403"; return 1; }
   echo "endpoint built, no 401 test, authenticate_header/403 gap reported, settings untouched"
   return 0

@@ -70,7 +70,8 @@ case_grade() { # <role> <repo> <run>
   case "$1" in
     scout)
       final_has 'report\.py' && final_has 'checkout\.py' && final_has 'apply_discount' || { echo "scout facts missing (callers/files)"; return 1; }
-      if final_has 'BLOCKER|IMPORTANT|OPTIONAL|LGTM|Verdict:|merge[- ]ready|(safe|ready|good|OK) to (merge|ship)|not (safe|ready) to merge|do not merge|don.t merge|approve|I recommend|you should|should (be )?(fix|merge)|must fix|will (break|crash|fail)|TypeError|is (a )?(bug|broken)'; then
+      # Lines that label an inference or refuse a verdict are what the scout role asks for, not judging.
+      if grep -Eiv 'infer|can.t|cannot|won.t|belong|not (mine|my|something a scout)|refus|out of scope' "$RUN/final.txt" | grep -Eiq 'BLOCKER|IMPORTANT|OPTIONAL|LGTM|Verdict:|merge[- ]ready|(safe|ready|good|OK) to (merge|ship)|not (safe|ready) to merge|do not merge|don.t merge|approve|I recommend|you should|should (be )?(fix|merge)|must fix|will (break|crash|fail)|TypeError|is (a )?(bug|broken)'; then
         echo "scout judged/ranked/gave a verdict"; return 1
       fi
       echo "scout reported facts, no verdict or severity"; return 0 ;;

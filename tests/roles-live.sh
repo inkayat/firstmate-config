@@ -16,9 +16,10 @@
 #   (no credential variable)             the worker uses the operator's existing omp login IN PLACE
 #                                        (HOME is not redirected); no credential is exported or copied.
 #                                        Without a logged-in `omp` the live run SKIPs (never PASS).
-#   FM_ROLE_LIVE_MODEL                   default anthropic/claude-haiku-4-5
-#   FM_ROLE_LIVE_BUDGET                  total USD cap, default 4.40 (hard stop before each run)
-#   FM_ROLE_LIVE_RUN_CAP                 per-run USD cap passed to omp --max-cost, default 0.16
+#   FM_ROLE_LIVE_MODEL                   default anthropic/claude-sonnet-5-5 (the repo's Sonnet worker lane)
+#   FM_ROLE_LIVE_THINKING                default medium
+#   FM_ROLE_LIVE_BUDGET                  optional total USD cap; default none (a running tally is kept in results.md)
+#   FM_ROLE_LIVE_RUN_CAP                 optional per-run USD cap passed to omp --max-cost; default none
 #   FM_ROLE_LIVE_SKILL_SRC               read-only source of installed skills, default ~/.agents/skills
 #
 # Isolation: every run gets a fresh fixture directory under tests/live-artifacts/
@@ -62,9 +63,12 @@ CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HANDOFF="$CONFIG_ROOT/bin/fm-role-handoff"
 CASES_DIR="$CONFIG_ROOT/tests/live"
 ART_ROOT="$CONFIG_ROOT/tests/live-artifacts"
-MODEL="${FM_ROLE_LIVE_MODEL:-anthropic/claude-haiku-4-5}"
-BUDGET="${FM_ROLE_LIVE_BUDGET:-4.40}"
-RUN_CAP="${FM_ROLE_LIVE_RUN_CAP:-0.16}"
+MODEL="${FM_ROLE_LIVE_MODEL:-anthropic/claude-sonnet-5-5}"
+THINKING="${FM_ROLE_LIVE_THINKING:-medium}"
+BUDGET="${FM_ROLE_LIVE_BUDGET:-}"
+RUN_CAP="${FM_ROLE_LIVE_RUN_CAP:-}"
+COST_ARGS=()
+[ -z "$RUN_CAP" ] || COST_ARGS=(--max-cost "$RUN_CAP")
 SKILL_SRC="${FM_ROLE_LIVE_SKILL_SRC:-$HOME/.agents/skills}"
 OMP_BIN="${FM_ROLE_LIVE_OMP:-omp}"
 SYSTEM_PROMPT='You are a coding worker. Use your tools. Follow the Firstmate spec exactly, including every read-and-apply requirement, then finish with a short final report.'
@@ -138,17 +142,32 @@ build_prompt() {
   printf '# Task\n\n## Captain'"'"'s intent\n%s\n\n## Firstmate spec\n' "$text"
   if [ -n "$role" ]; then
     if [ "$mode" = with ]; then
-      FM_CONFIG_ROOT="$CONFIG_ROOT" FM_SKILLS_ROOT="$skills_root" "$HANDOFF" "$role"
+      FM_CONFIG_ROOT="$CFG" FM_SKILLS_ROOT="$skills_root" "$HANDOFF" "$role"
     else
-      FM_CONFIG_ROOT="$CONFIG_ROOT" FM_SKILLS_ROOT="$skills_root" "$HANDOFF" "$role" | strip_skills
+      FM_CONFIG_ROOT="$CFG" FM_SKILLS_ROOT="$skills_root" "$HANDOFF" "$role" | strip_skills
     fi
   fi
   printf 'Pre-work: run pwd -P and git rev-parse --show-toplevel (they must match), then read every path named above with your file read tool before the first edit and before any shell work.\nApply each skill'"'"'s procedure step by step. Work only inside this repository, with no network and no package installs. Deliver results in your final message; create files only where the task names them. Be economical: aim for at most 20 tool calls. End with a short final report.\n'
 }
 
+# Fixture-only roles and skills for the mechanism layer (never shipped, never in the real roles/ or skills/).
+mech_role() { # <config-root> <role> <description> [skill...]
+  local cfg=$1 role=$2 desc=$3 s; shift 3
+  mkdir -p "$cfg/roles/$role"
+  {
+    printf -- '---\nname: fm-%s\ndescription: "%s"\n' "$role" "$desc"
+    if [ "$#" -gt 0 ]; then printf 'autoloadSkills:\n'; for s in "$@"; do printf '  - %s\n' "$s"; done; fi
+    printf -- '---\n# Role: %s\n\nFixture-only role. It describes how to work; the project wins.\n' "$role"
+  } > "$cfg/roles/$role/ROLE.md"
+}
+mech_skill() { # <skills-root> <name>; the skill body comes on stdin
+  mkdir -p "$1/$2"
+  { printf -- '---\nname: %s\ndescription: fixture-only skill\n---\n' "$2"; cat; } > "$1/$2/SKILL.md"
+}
+
 SPENT=0
 spent_add() { SPENT=$(python3 -c 'import sys; print("%.6f" % (float(sys.argv[1]) + float(sys.argv[2])))' "$SPENT" "$1"); }
-over_budget() { python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)' "$SPENT" "$BUDGET"; }
+over_budget() { [ -n "$BUDGET" ] && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)' "$SPENT" "$BUDGET"; }
 
 # run_one <case-file> <label> <role|""> <with|without> <grade-role> -> sets RUN, REPO; prints one result line
 run_one() {
@@ -163,6 +182,12 @@ run_one() {
   for s in "$SKILL_SRC"/*/; do s=$(basename "$s"); cp -rL "$SKILL_SRC/$s" "$fx/.agents/skills/$s" 2>/dev/null; done
   # addyosmani skills read ../../references/*.md, which resolves to <home>/.agents/references.
   [ ! -d "$(dirname "$SKILL_SRC")/references" ] || cp -rL "$(dirname "$SKILL_SRC")/references" "$fx/.agents/references" 2>/dev/null
+  # Mechanism cases bring their own fixture-only config root (roles) and skills; the real roles/ is not used.
+  CFG="$CONFIG_ROOT"
+  if ( . "$case_file"; [ "${CASE_MECHANISM:-}" = 1 ] ); then
+    CFG="$RUN/config"; mkdir -p "$CFG/roles"; ln -sfn "$CONFIG_ROOT/firstmate" "$CFG/firstmate"
+    ( . "$case_file"; case_mechanism_setup "$CFG" "$fx/.agents/skills" ) || { fail "$name/$label: case_mechanism_setup failed"; return 1; }
+  fi
   # No credential handling: the worker uses the existing omp login in place (HOME is the real one).
   (
     cd "$REPO" || exit 1
@@ -178,9 +203,9 @@ run_one() {
   build_prompt "$role" "$mode" "$CASE_PROMPT" "$fx/.agents/skills" > "$RUN/prompt.md"
   if over_budget; then fail "$name/$label: budget $BUDGET USD reached (spent $SPENT); run not started"; return 1; fi
   ( cd "$REPO" && env -i HOME="$HOME" PATH="$PATH" TERM=dumb LANG=C.UTF-8 OMP_SKIP_SETUP=1 PYTHONDONTWRITEBYTECODE=1 \
-      timeout 420 "$OMP_BIN" -p --model "$MODEL" --thinking low --no-extensions --no-skills --no-rules --no-context-files \
+      timeout 900 "$OMP_BIN" -p --model "$MODEL" --thinking "$THINKING" --no-extensions --no-skills --no-rules --no-context-files \
       --no-lsp --no-pty --no-title --tools read,grep,glob,bash,edit,write --system-prompt "$SYSTEM_PROMPT" \
-      --session-dir "$RUN/session" --max-cost "$RUN_CAP" --auto-approve --cwd "$REPO" "@$RUN/prompt.md" \
+      --session-dir "$RUN/session" "${COST_ARGS[@]}" --auto-approve --cwd "$REPO" "@$RUN/prompt.md" \
       > "$RUN/stdout.txt" 2> "$RUN/stderr.txt" ) || true
   parse_session "$RUN/session" "$RUN"
   spent_add "$(cat "$RUN/cost.txt")"
@@ -200,7 +225,7 @@ run_case() {
   IFS='|' read -r kind roles < "$ART/.kind"
   for role in $roles; do
     run_one "$case_file" "$role" "$role" with "$role" || { fail "$name: run for $role did not complete"; return; }
-    for s in $("$HANDOFF" --skills "$role"); do
+    for s in $(FM_CONFIG_ROOT="$CFG" "$HANDOFF" --skills "$role"); do
       skill_read "$s" || { read_ok=0; why="$why [$role never read $s]"; }
     done
     if [ "$GRADE_RC" -ne 0 ]; then outcome_ok=0; why="$why [$role outcome: $(tr '\n' ' ' < "$RUN/grade.txt")]"; fi
@@ -272,7 +297,7 @@ CASE
   # budget guard
   SPENT=9; BUDGET=1
   over_budget && pass 'selftest: the budget guard stops further runs' || fail 'selftest: budget guard did not trip'
-  BUDGET="${FM_ROLE_LIVE_BUDGET:-4.40}"
+  BUDGET="${FM_ROLE_LIVE_BUDGET:-}"
   rm -rf "$t"
   ART=''
 }
@@ -283,7 +308,7 @@ CASE
 #   - case_canned <role> good|bad (a worker that followed / ignored the skill) is graded by the
 #     real case_grade: good must pass, bad must fail, and good must have read every skill.
 selftest_cases() {
-  local c name roles role s tok t found src kind
+  local c name roles role s tok t found src kind cfg skra skrb mech
   t=$(mktemp -d "${TMPDIR:-/tmp}/fm-roles-live-cases.XXXXXX") || return 1
   for c in "$CASES_DIR"/*.sh; do
     [ -f "$c" ] || continue
@@ -292,8 +317,15 @@ selftest_cases() {
     kind=$( ( . "$c"; printf '%s' "${CASE_KIND:-role}" ) )
     roles=$( ( . "$c"; printf '%s' "${CASE_ROLES:-${CASE_ROLE:-}}" ) )
     [ -n "$roles" ] || { fail "case $name: defines no CASE_ROLE/CASE_ROLES"; continue; }
+    mech=$( ( . "$c"; printf '%s' "${CASE_MECHANISM:-}" ) )
+    cfg=$CONFIG_ROOT skra="$CONFIG_ROOT/skills" skrb="$HOME/.agents/skills"
+    if [ "$mech" = 1 ]; then
+      cfg="$t/$name/config" skra="$t/$name/skills" skrb="$t/$name/skills"
+      mkdir -p "$cfg/roles" "$skra"; ln -sfn "$CONFIG_ROOT/firstmate" "$cfg/firstmate"
+      ( . "$c"; case_mechanism_setup "$cfg" "$skra" ) || { fail "case $name: case_mechanism_setup failed"; continue; }
+    fi
     for role in $roles; do
-      [ -f "$CONFIG_ROOT/roles/$role/ROLE.md" ] && pass "case $name: role $role exists" || { fail "case $name: no role $role"; continue; }
+      [ -f "$cfg/roles/$role/ROLE.md" ] && pass "case $name: role $role exists" || { fail "case $name: no role $role"; continue; }
     done
     [ "$kind" = mixed ] && { [ "$(printf '%s\n' $roles | grep -c .)" -eq 2 ] && pass "case $name: a mixed case names exactly two roles" || fail "case $name: mixed needs two roles"; }
     # fixture, for the token-exclusivity check
@@ -306,8 +338,8 @@ selftest_cases() {
     for tok in $toks; do
       found=0; src=''
       for role in $roles; do
-        for s in $("$HANDOFF" --skills "$role"); do
-          for d in "$CONFIG_ROOT/skills/$s" "$HOME/.agents/skills/$s"; do
+        for s in $(FM_CONFIG_ROOT="$cfg" "$HANDOFF" --skills "$role"); do
+          for d in "$skra/$s" "$skrb/$s"; do
             [ -d "$d" ] || continue
             src=$d
             grep -rqF -- "$tok" "$d/" 2>/dev/null && found=1
@@ -318,7 +350,7 @@ selftest_cases() {
       if [ -z "$src" ]; then printf 'SKIP - case %s: no installed skill text to check token %s against\n' "$name" "$tok"; continue; fi
       [ $found = 1 ] && pass "case $name: token '$tok' is in the role's skill text" || fail "case $name: token '$tok' is NOT in the role's skill text"
       leak=0
-      for role in $roles; do grep -qF -- "$tok" "$CONFIG_ROOT/roles/$role/ROLE.md" && leak=1; done
+      for role in $roles; do grep -qF -- "$tok" "$cfg/roles/$role/ROLE.md" && leak=1; done
       case $prompt in *"$tok"*) leak=1 ;; esac
       grep -rqF --exclude-dir=.git -- "$tok" "$REPO" && leak=1
       [ $leak = 0 ] && pass "case $name: token '$tok' appears in no ROLE.md, prompt or fixture file" || fail "case $name: token '$tok' leaks outside the skill text"
@@ -334,7 +366,7 @@ selftest_cases() {
         gr=$( cd "$REPO" && . "$c" && RUN="$RUN" REPO="$REPO" case_grade "$role" "$REPO" "$RUN" 2>&1 ); rc=$?
         if [ "$mode" = good ]; then
           [ $rc -eq 0 ] && pass "case $name: grader accepts a worker that followed the $role skill" || fail "case $name: grader rejected the canned good $role worker: $gr"
-          for s in $("$HANDOFF" --skills "$role"); do
+          for s in $(FM_CONFIG_ROOT="$cfg" "$HANDOFF" --skills "$role"); do
             ( RUN="$RUN"; skill_read "$s" ) && pass "case $name: canned good $role worker read $s" || fail "case $name: canned good worker never read $s"
           done
         else
@@ -375,6 +407,6 @@ for c in "${cases[@]}"; do
   run_case "$c"
 done
 printf '\n%s\n' "$(cat "$ART/results.md")"
-printf 'artifacts: %s  model: %s  total cost: %s USD (budget %s)\n' "$ART" "$MODEL" "$SPENT" "$BUDGET"
+printf 'artifacts: %s  model: %s (thinking %s)  total cost: %s USD (budget %s)\n' "$ART" "$MODEL" "$THINKING" "$SPENT" "${BUDGET:-none}"
 printf '\nROLES LIVE %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
 [ "$failed" -eq 0 ]

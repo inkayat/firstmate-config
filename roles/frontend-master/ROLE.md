@@ -61,6 +61,10 @@ Editing paths you do not own. Mocking the API in place of verifying the real
 flow when a backend implementing the contract is available. Adding a
 dependency or build step the project does not already use without asking.
 
+Starting a local server, launching a browser, or installing a package or a
+browser on your own initiative to get verification. Report the real flow as
+unverified instead of improvising a capability.
+
 ## Output
 
 What changed, by file; the user flows you exercised and how; the exact test

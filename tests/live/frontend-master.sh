@@ -75,8 +75,12 @@ load();
 EOF
 }
 
-# Browser/package-install attempts the skill forbids improvising.
-_fe_installed() { call_has 'npm (i|install|exec)|npx |pnpm (add|dlx)|yarn add|pip3? install|apt(-get)? install|playwright|puppeteer|chromium|google-chrome|firefox|mcp add|curl |wget '; }
+# Browser/package-install attempts the skill forbids improvising. Only the command line of bash calls counts
+# (heredoc bodies are file content); probing for a capability with `which`/`command -v` is not using it.
+_fe_installed() {
+  awk -F'\t' '$1 == "bash" { c = $2; sub(/<<.*/, "", c); gsub(/(which|command -v|type) [^;&|]*/, "", c); print c }' "$RUN/calls.tsv" \
+    | grep -Eq 'npm (i|install|exec)|npx |pnpm (add|dlx)|yarn add|pip3? install|apt(-get)? install|playwright|puppeteer|chromium|google-chrome|firefox|mcp add|curl |wget |http\.server'
+}
 
 case_grade() {
   local role=$1 repo=$2 run=$3 code

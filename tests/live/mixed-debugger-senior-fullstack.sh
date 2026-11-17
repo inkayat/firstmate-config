@@ -75,18 +75,21 @@ EOF
   fx_commit 'docs: how to run the tests'
 }
 
-# a bug-fix edit call on the shared module or its callers (not on tests/test_*.py)
+# the callers of the shared module were looked up (grep for to_cents, or both consumer files read) before the
+# first edit of the module or its callers (not tests/test_*.py)
 first_src_edit_has_prior_grep() {
   awk -F'\t' '
     ($1 == "edit" || $1 == "write") && $2 ~ /[^_a-z]((money|invoice|refund)\.py)/ { exit }
     ($1 == "grep" && $2 ~ /to_cents/) || ($1 == "bash" && $2 ~ /(grep|rg)[^"]*to_cents/) { found = 1 }
-    END { exit !found }
+    ($1 == "read" || $1 == "bash") && $2 ~ /invoice\.py/ { inv = 1 }
+    ($1 == "read" || $1 == "bash") && $2 ~ /refund\.py/ { ref = 1 }
+    END { exit !(found || (inv && ref)) }
   ' "$RUN/calls.tsv"
 }
 test_run_after_last_edit() {
   awk -F'\t' '
     $1 == "edit" || $1 == "write" { lastedit = NR }
-    $1 == "bash" && $2 ~ /python3?[^"]*test/ { lastrun = NR }
+    $1 == "bash" && $2 ~ /(python3?|pytest|unittest)/ { lastrun = NR }
     END { exit !(lastedit > 0 && lastrun > lastedit) }
   ' "$RUN/calls.tsv"
 }

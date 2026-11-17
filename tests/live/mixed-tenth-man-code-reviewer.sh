@@ -99,7 +99,7 @@ case_grade() {
     || { echo "$role missed the planted flaw (retry without idempotency -> double charge)"; return 1; }
   case $role in
     tenth-man)
-      final_lacks 'BLOCKER|IMPORTANT|OPTIONAL|merge-readiness|ready to merge:|approve[sd]? (the )?(change|merge)' \
+      ! grep -Eq '\b(BLOCKER|IMPORTANT|OPTIONAL)\b|merge-readiness|ready to merge:|[Aa]pprove[sd]? (the )?(change|merge)' "$RUN/final.txt" \
         || { echo "tenth-man bled review labels / a merge verdict"; return 1; }
       final_has 'strongest (case|version)|steelman' || { echo "no steelman / strongest case"; return 1; }
       final_has 'would (still )?pass|passes (even|regardless)|regardless|vacuous|never fail|cannot fail|can.t fail|does(n.t| not) (actually )?(verify|check|assert|prove|cover|confirm|test)|only (counts|checks|asserts)|fail if the claim' \

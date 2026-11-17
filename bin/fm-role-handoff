@@ -49,7 +49,7 @@ if [ -z "$skills" ]; then
 else
   while IFS= read -r skill; do
     printf 'Role skill:\n  %s/%s/SKILL.md\n' "$SKILLS_ROOT" "$skill"
-    printf 'Requirement:\n  Read and apply this skill in full before the first edit and before any shell work.\n'
+    printf 'Requirement:\n  Read and apply this skill in full before the first edit and before any shell work; follow its procedure step by step and name the steps you applied in your final report.\n'
   done <<EOF
 $skills
 EOF
