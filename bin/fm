@@ -13,8 +13,8 @@
 #
 # It resolves:
 #
-#   FIRSTMATE_ROOT  the distribution checkout, modified only by fm update's
-#                   fast-forward stage or explicit safe legacy migration. From
+#   FIRSTMATE_ROOT  the official FirstMate checkout, modified only by fm
+#                   update's fast-forward stage. From
 #                   ~/.config/firstmate-config/env, else the environment,
 #                   else ~/Developer/tools/firstmate.
 #   FM_HOME         the machine-local operational home holding state/, data/,
@@ -53,44 +53,31 @@
 # Usage:
 #   fm                    launch the Captain on Pi
 #   fm --harness pi       explicitly select Pi
-#   fm --harness omp      explicitly select OMP (also before check/doctor/version)
+#   fm --harness omp      explicitly select OMP
 #   fm --model codex|claude|grok
 #                         launch on a model preset instead of the model chain;
 #                         combines with --harness in either order and with
 #                         --check or --print-command, never with a subcommand
 #   fm --check            run the preflight and print the resolution
 #   fm --print-command    print the resolved environment and command
-#   fm doctor             run read-only architecture diagnostics
-#   fm doctor --json      the same diagnostics as machine-readable JSON
-#   fm version            print compact installed stack identity/version facts
-#   fm version --json     the same facts as machine-readable JSON
 #   fm update             1) fast-forward the FirstMate distribution checkout
 #                         from the manifest's explicit origin branch,
-#                         2) fast-forward this firstmate-config checkout to
-#                         its remote tip, 3) run its install.sh and
-#                         install.sh --verify. Both checkouts are checked
-#                         before either changes; refuses a missing or wrong
-#                         distribution checkout, an origin that differs from
-#                         firstmate_repo in stack-manifest.tsv, a detached,
-#                         wrong, or upstream-less branch, wrong origin/HEAD, dirty state,
-#                         an unfinished Git operation, and local commits not
-#                         on the upstream. Never forces, stashes, resets,
-#                         merges, rebases, or pushes, or touches secondmates/
+#                         2) fast-forward this standalone firstmate-config
+#                         checkout to its remote tip, 3) run its install.sh
+#                         and install.sh --verify. Both checkouts are checked
+#                         before either changes;
+#                         refuses a missing or wrong distribution checkout,
+#                         an origin that differs from firstmate_repo in
+#                         stack-manifest.tsv, a detached, wrong, or
+#                         upstream-less branch, wrong origin/HEAD, dirty
+#                         state anywhere in either repository, an unfinished
+#                         Git operation, and local commits not on the
+#                         upstream. Never forces, stashes, resets, merges,
+#                         rebases, or pushes, or touches secondmates/
 #                         projects. A failure after step 1 is reported as a
 #                         PARTIAL UPDATE. A running Captain keeps its old
 #                         instructions until restarted (end it, run fm again)
 #   fm update --check     check local guards/source/branch; no fetch/update/install
-#   fm update --migrate   opt-in recognized clean legacy source adoption, then update
-#   fm update --bootstrap <config-root>
-#                         reviewed external revision bootstraps the old installed
-#                         updater; see docs/update.html before use
-#   fm board             open the persistent Kanban board (bin/fm-board's
-#                         own --help documents the full add/update/move/list/
-#                         show/summary/render/open CLI); fm board --lavish
-#                         opens the same static file through Lavish instead
-#   fm bot ...            bot specs and their dry due evaluation (bin/fm-bot's
-#                         own --help documents create/list/show/pause/resume/
-#                         remove/due/file/check-install); never dispatches
 #   fm --help
 set -u
 
@@ -137,7 +124,7 @@ REQUESTED_MODEL_FALLBACK=
 die() { printf 'fm: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,/^set -u$/p' "$self" | sed -e 's/^# \{0,1\}//' -e '/^set -u$/d'; }
 
-# One authoritative availability function/path, shared with bin/fm-doctor.
+# One authoritative harness/availability owner.
 # shellcheck source=firstmate/fm-captain-lib.sh
 . "$CONFIG_ROOT/firstmate/fm-captain-lib.sh"
 harness=
@@ -164,27 +151,10 @@ WATCH_EXT=$CAPTAIN_WATCH_EXT
 TURNEND_EXT=$CAPTAIN_TURNEND_EXT
 
 case ${1:-} in
-  version|doctor|update|board)
-    [ -z "$REQUESTED_MODEL" ] || die "--model applies only to Captain startup, not '$1'"
-    ;;
-esac
-case ${1:-} in
-  version|doctor)
-    subcommand=$1
-    shift
-    exec "$CONFIG_ROOT/bin/fm-$subcommand" --harness "$CAPTAIN_HARNESS" "$@"
-    ;;
   update)
+    [ -z "$REQUESTED_MODEL" ] || die "--model applies only to Captain startup, not '$1'"
     shift
     exec "$CONFIG_ROOT/bin/fm-update" "$@"
-    ;;
-  board)
-    shift
-    exec "$CONFIG_ROOT/bin/fm-board" open "$@"
-    ;;
-  bot)
-    shift
-    exec "$CONFIG_ROOT/bin/fm-bot" "$@"
     ;;
 esac
 
