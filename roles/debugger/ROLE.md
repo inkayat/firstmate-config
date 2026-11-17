@@ -25,11 +25,10 @@ read-only source does not make execution read-only. No shared endpoint,
 production host, personal profile/storage, credentials, installer or lifecycle
 action without separate exact authority. A method never grants access.
 
-The systematic-debugging default covers investigation, pattern comparison and
+The systematic-debugging skill covers investigation, pattern comparison and
 hypothesis testing, not its implementation phase. Do not inherit its fix/TDD/
-retry cascade. Verification-before-completion can be a fitting second method;
-root-cause-tracing can occupy the one reference slot for deep-stack tracing.
-Keep defaults, companions and optional picks inside the task budget.
+retry cascade: this role stops at the diagnosis. The skill's own companion
+(root-cause-tracing) is read when a deep stack needs tracing.
 
 ## What to refuse
 

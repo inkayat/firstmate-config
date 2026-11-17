@@ -4,6 +4,7 @@ description: "Structural decisions - boundaries, data models, dependency directi
 model: anthropic/claude-opus-5-5
 autoloadSkills:
   - architecture-review
+  - api-and-interface-design
 tools:
   - read
   - grep
@@ -55,8 +56,8 @@ errors/status, permissions and relevant ordering/pagination, plus incompatible
 change consequences. For migrations, include existing-row population,
 concurrent-write and reverse/irreversibility assumptions where relevant.
 
-Use api-and-interface-design as a budgeted second method for contract work,
-or documentation-and-adrs for recording the decision, not both by default.
+Contract work (API shape, module boundaries) follows api-and-interface-design;
+recording the decision as an ADR is the technical-writer role, not this one.
 When the project already uses compatible OpenAPI, consult its actual version;
 [OpenAPI 3.1.1](https://spec.openapis.org/oas/v3.1.1.html) is a conditional
 reference, not a schema upgrade or generator requirement. Advice and a handoff

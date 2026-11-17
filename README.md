@@ -174,9 +174,10 @@ escalations. Explicit Captain choices can override the profile.
 Do not maintain a second routing table here: use the full `when`/`why` conditions
 in the profile and [primary policy §3](firstmate/primary-policy.md#3-routing).
 During the current debugging period, the Captain prints a short
-`Routing:` / `Agent:` / `Skills:` block per actual worker/stage.
+`Routing:` / `Agent:` / `Skills:` block per actual worker/stage; `Skills:` is
+derived from the role, never chosen.
 It is a diagnostic trace, not an enforcement or completion gate; see
-[policy §0](firstmate/primary-policy.md#0-routing-agent-and-skill-trace-temporary-debugging-period)
+[policy §0](firstmate/primary-policy.md#0-routing-and-agent-trace-temporary-debugging-period)
 and its checker [`tests/routing-trace.sh`](tests/routing-trace.sh).
 
 ## Context and skills
@@ -184,9 +185,9 @@ and its checker [`tests/routing-trace.sh`](tests/routing-trace.sh).
 ### Worker context and skill classes
 
 Precedence is project-native instructions → project-local skills → role/task
-policy → shared worker skills. Each task carries explicit instruction, role and
-skill paths resolved against its own worktree, including the role's
-`autoloadSkills` defaults; Pi and OMP native discovery alone do not guarantee
+policy → shared worker skills. Each task carries explicit instruction and role
+paths resolved against its own worktree, plus the exact paths of the skills in
+the role's `autoloadSkills`; Pi and OMP native discovery alone do not guarantee
 the same resolution. Official FirstMate delivers those paths and read-and-apply
 requirements, not role or skill bodies: nothing is inlined before the first
 model call, a missing path does not refuse the launch, and no selection record
@@ -198,13 +199,19 @@ Captain-only; this configuration's shared worker skills are installed under
 skill directories. [Primary policy §2](firstmate/primary-policy.md#2-before-delegating)
 owns the handoff, including revisiting context when a new subtree is selected.
 
-### Automatic role selection
+### Role-only selection
 
 [`roles/`](roles/) defines worker contracts and OMP agent definitions;
-installation links them as `~/.omp/agent/agents/fm-<role>.md`. The Captain
-chooses the narrowest fitting role; coherent mixed work stays with
-`senior-fullstack`. Role, skills and route remain separate choices. The
-`tenth-man` role is for deliberate adversarial challenge, not routine review.
+installation links them as `~/.omp/agent/agents/fm-<role>.md`. The Captain's
+only per-task capability choice is a role: the narrowest fitting one, with
+coherent mixed work staying with `senior-fullstack`. It never selects skills.
+Every skill a worker gets is the role's frontmatter `autoloadSkills`, handed
+over by [`bin/fm-role-handoff <role>`](bin/fm-role-handoff). "No skills" is a
+role too (`chore`, `scout`). Project-local skills are not selected by the
+Captain: a worker applies them where the project's own instructions require.
+Role, route and skills therefore stay separate: the route is model/effort, the
+skills come with the role. The `tenth-man` role is for deliberate adversarial
+challenge, not routine review.
 
 ### Bounded internal delegation
 
@@ -217,7 +224,7 @@ reports against it.
 
 ### Completion evidence limits
 
-Context, roles, skill selection and passing fixture reports do not
+Context, roles, role skills and passing fixture reports do not
 prove native adoption, read order, application, sandboxing or task completion.
 Workers report actual commands, observed outcomes and unverified limits;
 browser-visible changes need relevant real-flow evidence.
@@ -250,10 +257,23 @@ Synthetic only: a throwaway `HOME`, private local Git remotes, and inert
 bash tests/install-launch.sh
 bash tests/update.sh
 bash tests/standalone-contract.sh
+bash tests/roles.sh          # role lint, handoff expansion, policy text, install --verify
 ```
 
 `tests/routing-trace.sh` also contains a real spawn seam;
 `tests/worker-context.sh` includes native loader/documentation probes. Inspect
 their headers before execution; they are not part of the synthetic-only
-commands above. Live delegated handoff and Linux/Omarchy adoption require
-separate evidence.
+commands above. Linux/Omarchy adoption requires separate evidence.
+
+Role-only delegation is proven in three layers:
+
+| Layer | Command | What it proves |
+| --- | --- | --- |
+| Automation | `bash tests/roles.sh` | Every role parses; `autoloadSkills` resolve, are unique and within budget; the handoff names the role and exactly its skills; the Captain-side docs hold no skill-selection instruction |
+| End to end | `bash tests/roles-e2e.sh` | Per role, the real `fm-brief.sh` and `fm-spawn.sh` deliver a first input with the role path and exactly its skill paths (SKIPs without tmux/treehouse/FirstMate) |
+| Live (opt-in) | `FM_ROLE_LIVE=1 FM_ROLE_LIVE_AUTH_FILE=... bash tests/roles-live.sh` | A real model reads the skill and shows the skill-only behaviour in a planted problem, and does not without the skill; budget-capped, fixture home only, artifacts in git-ignored `tests/live-artifacts/` |
+
+`bash tests/roles-live.sh` without the opt-in runs only its offline self-test:
+the harness plumbing and every live case's grader against canned good and bad
+workers. The live layer shows a worker read and applied a skill in one cheap
+run per case; it is evidence, not a guarantee.

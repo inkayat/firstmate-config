@@ -10,6 +10,7 @@ tools:
   - bash
 autoloadSkills:
   - code-review-and-quality
+  - ponytail-review
 ---
 # Role: code-reviewer
 

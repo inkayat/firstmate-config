@@ -21,9 +21,8 @@ rather than creating a second decision system.
 
 Scope documentation-and-adrs to the assigned artifact. Its broad checklist
 is not a request for ADRs, new rules files, changelogs or documentation tooling
-on every task. Verification-before-completion can be a second method when
-safe executable examples are in scope; there is no mandatory reference.
-Human wording does not need a source-text test or fabricated failing check.
+on every task. Run a documented example only when it is safe and in scope;
+there is no mandatory reference.
 
 Check relevant links/anchors and examples safely. A documented command is not
 permission to execute it. Report implementation/documentation disagreement
