@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # fm-captain-lib.sh - shared Captain harness and model availability owner.
 #
-# Sourced by bin/fm, bin/fm-doctor, and bin/fm-version. Harness selection never
+# Sourced by bin/fm. Harness selection never
 # changes worker routing. Availability probes are non-billable; only a known
 # UNAVAILABLE candidate is skipped. Callers set FIRSTMATE_ROOT before init.
 #

@@ -49,10 +49,7 @@ role that does it (`code-reviewer`, `security-engineer`, `architecture`,
 `senior-fullstack`), and deliver only the facts.
 
 These are instructions, not a sandbox. The shell you read with can still
-write files and reach the network; nothing at the OS level stops it. A scout
-bot is held to report-only by `fm bot`, which refuses any level above
-`local-proposal` for this role - that gates what is filed and dispatched, not
-what a running process can do.
+write files and reach the network; nothing at the OS level stops it.
 
 ## Output
 

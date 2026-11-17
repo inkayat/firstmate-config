@@ -144,28 +144,31 @@ resolution already computed in section 1. Never hand a worker a generic
 "follow project instructions and use appropriate skills" sentence and call
 that sufficient.
 
-**Typed role preparation.** For a selected role, scaffold with
-`bin/fm-brief.sh --worker-role <absolute-ROLE.md>` and explicit `--skill`
-flags for independently selected shared methods; retain the path/action
-handoff below. The normal `bin/fm-spawn.sh` launch resolves the selected
-role's instructions and `autoloadSkills` through
-`bin/fm-worker-preparation.mjs`, supplies unique canonical bodies, and records
-role/independent origins. Missing or malformed associations refuse
-preparation; do not bypass that refusal with prose or file-read instructions.
-This is prepared input, not native agent selection or proof of application.
+**Role and default-skill handoff.** For a selected role, name its absolute
+`ROLE.md` path in the brief with a read-and-apply requirement, and expand the
+role's frontmatter `autoloadSkills` (section 5) into step 4 entries by exact
+shared skill path, alongside independently selected methods. Official
+FirstMate's `bin/fm-brief.sh` has no `--worker-role`, `--skill` or
+`--skill-root` option and does not reject unknown arguments, so never pass
+them: nothing would be selected or recorded. The worker's first input carries
+these paths and requirements, never role or skill bodies. Nothing is inlined
+before the first model call, nothing resolves `autoloadSkills` automatically,
+a missing or malformed path does not refuse the launch (the worker reports it
+under step 5), and no selection or provenance record is written. This is a
+handoff, not native agent selection or proof of application.
 
 **Continuation versus role change.** Same-role continuation within the
 original authorized scope may keep its existing worker. Selecting a different
-role requires a fresh task/worker with that role's typed preparation, even
-when the harness/model/effort stay the same. An ordinary `fm-send` steer or
-an appended "read this role/skill" brief is not a role change. Current
-`fm-control relaunch` re-resolves the task's existing selection; it is not a
-typed role-change operation. Preserve the old identity and its selection,
-preparation, launch and result evidence; never rewrite them retroactively.
-Carry needed source into a new task-owned artifact/copy under explicit
-authority, preserving uncommitted work and prior evidence. An exact-source
-request does not justify skipping preparation: if no authorized safe copy
-or supported transition fits it, report the constraint instead.
+role requires a fresh task/worker whose brief carries that role's handoff,
+even when the harness/model/effort stay the same. An ordinary `fm-send` steer
+or an appended "read this role/skill" brief is not a role change, and
+`fm-control relaunch` carries the task's existing brief into a fresh agent; it
+is not a role change either. Preserve the old identity and its brief, launch
+and result evidence; never rewrite them retroactively. Carry needed source
+into a new task-owned artifact/copy under explicit authority, preserving
+uncommitted work and prior evidence. An exact-source request does not justify
+skipping the role handoff: if no authorized safe copy or supported transition
+fits it, report the constraint instead.
 
 Before choosing shared worker skills for any delegation, list the entries in
 `~/.agents/skills`, including symlinked directories, and inspect the
@@ -369,15 +372,14 @@ role file plus its line here, never a new dispatch category:
 - `frontend-master` - web UI implementation against a fixed contract,
   verified through the real client
 - `scout` - read-only fact gathering over a codebase or a handed PR, reported
-  with evidence and limits; never reviews, judges, or changes anything. As a
-  bot it is report-only (`local-proposal`)
+  with evidence and limits; never reviews, judges, or changes anything
 - `debugger` - source-read-only diagnosis; explicitly authorized local/test
   reproductions and a causal handoff, never source fixes
 - `technical-writer` - scoped documentation of settled behavior/decisions;
   no code/config or behavior-defining policy edits merely because it is Markdown
 
-Name the role and its absolute source path in the brief, and pass it through
-section 2's typed preparation. A role describes how to work; it never
+Name the role and its absolute source path in the brief through section 2's
+role and default-skill handoff. A role describes how to work; it never
 outranks the project.
 
 ## 5. Skills
@@ -395,8 +397,7 @@ that role works with. When that role is used they are the default selection
 still displaced by a project-local skill covering the same ground. Dropping
 one or adding another takes a one-line reason in the brief, not in the
 `Skills:` trace. A default skill must be a shared skill this repository
-manages (`skills/` or `skills/external.lock`); `fm doctor` reports one that
-is not, and a role file whose frontmatter OMP would reject.
+manages (`skills/` or `skills/external.lock`).
 
 Official FirstMate internal skills (the official checkout's own
 `.agents/skills`) are never a global skill choice for a delegated task -
@@ -558,63 +559,3 @@ This policy and the selected verification skills are guidance, not a
 mechanical completion check. This configuration has no trusted verification
 runner or FirstMate completion hook; a passing fixture report cannot stand
 in for verification of the actual task changes.
-
-## 8. Bot wakes
-
-A `check:` wake from `state/bots.check.sh` carries one line per bot;
-`bin/fm-bot` owns the line formats and their meaning.
-
-- **`bot due: <id> …`** - run `fm bot file <id>`. It is the only way to file a
-  bot occurrence: it re-checks the spec and admission at that moment, files the
-  id with the plan in the row's body, records its durable filing receipt,
-  and prints the dispatch plan. Daily ids remain silent for that day.
-  Never file a bot id with a raw `fm-tasks-axi.sh add`, which bypasses its receipt.
-  `already-filed:`
-  or a refusal means dispatch nothing. `already-filed (planned in this
-  session, not started):` with no plan means this same session already printed
-  that id's plan and nothing was dispatched: the earlier plan stays valid -
-  dispatch it exactly once (its stored copy is the row body in
-  `fm-tasks-axi.sh show <id> --full`); never file again for a new plan.
-  `already-filed (queued, not started):`
-  followed by a plan means an interrupted filing never printed it: dispatch
-  exactly that plan, once - also after that id's window closed or its day
-  ended, because recovering a filed id is not a catch-up.
-  `already-filed (planned, dispatcher gone, not started):` followed by a plan
-  means the Captain session that printed it ended before any dispatch:
-  FirstMate's session lock shows this session now owns the home and the
-  printer is gone, and official fm-spawn left no record for the id. Dispatch
-  exactly that plan, once. A missed window (an id never filed in its window) is
-  never filed later: the bot waits for its next scheduled occurrence.
-- **Dispatch exactly the plan.** Its role file, route rule, kind and
-  delivery, scope, limits, excluded paths, access, notify, wall-clock target,
-  duration note, trigger, admission and stop rule go into the brief as printed.
-  A remote plan also carries its exact selected branch, observed commit and
-  private artifact, including `source_rule`: inspect that pinned commit with
-  the supplied Git commands, never silently review the default branch or call
-  an old observation the latest reviewed bytes. The artifact does not select
-  the native worker's checkout; before source edits prove its HEAD matches
-  the observed OID, otherwise stop for a decision. Missing/ambiguous history
-  also needs a decision, not an invented range. Never widen scope or raise
-  level; a plan carrying `reason:` runs at the level it prints and says why.
-- **The level is never approval.** `local-proposal` is a scout report.
-  `local-commit` and `push` are ships that stop uncommitted with
-  `needs-decision [key=commit-approval]`; any commit, and any push, still
-  needs the captain's own approval for that commit.
-- **`bot invalid: <id> …`** - `fm bot file <id>` files and holds the id for
-  the captain through `fm-captain-hold.sh`, with the cause; dispatch nothing.
-  **`bot error: <id> reason=invalid-unheld`** - that invalid bot's row was
-  filed but never held; run `fm bot file <id>` again to hold it, dispatch
-  nothing. Any other **`bot error: …`** - the check or the backlog could not
-  answer; investigate, dispatch nothing. A per-bot fault repeats only when it
-  recurs, so a quiet sweep after one does not mean it cleared.
-- **Interval/remote admission belongs to `fm bot`.** A queued, inflight,
-  held, busy or uncertain predecessor permanently skips that occurrence.
-  Finishing later does not replay it; an unchanged skipped remote tip is not
-  a new event. Another job needs positive matching native completion and at
-  least two hours after that finish was first observed, not after filing.
-  Never bypass this with raw backlog adds, a changed route, an erased receipt,
-  or recovery of an unowned row. Only the current owned queued plan is
-  recoverable, under the existing printer/dispatch checks and current authority.
-  New-mode `wall_clock_min` is advisory (1..60), not hard termination or
-  provider/detached-resource cancellation. No native lifecycle owner changes
-  or daily-bot migration are implied.

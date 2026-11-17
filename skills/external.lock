@@ -5,8 +5,8 @@
 # ~/.agents/skills/. Nothing is vendored into this repository, so their
 # licenses stay with their sources: all three are MIT.
 #
-# To move Ponytail's pin: scripts/update-ponytail.sh (see README.md).
-# For other sources, review the release diff, change the sha, then reinstall.
+# To move a pin, review the release diff, change the sha, then run
+# firstmate-config/install.sh.
 # Never track a branch here: moving shared skills change every project's behavior.
 #
 # Format, tab-separated:

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# install.sh - reconcile this machine with the configuration in this repository.
+# install.sh - reconcile this machine with this standalone firstmate-config
+# repository. No dotfiles checkout or dotfiles installer is used.
 #
 # Rerunning is the normal case, not the exception: every step below states a
 # desired end state and makes only the change needed to reach it, so a second
@@ -14,15 +15,9 @@
 #   5. selects the herdr runtime backend
 #   6. links the dispatch profiles and seeds the captain file
 #   7. links our skills and the pinned external packs into ~/.agents/skills,
-#      our slash commands (commands/*.md) into ~/.agents/commands, each
-#      role file (roles/<name>/ROLE.md) as OMP agent fm-<name> into
+#      and each role file (roles/<name>/ROLE.md) as OMP agent fm-<name> into
 #      ~/.omp/agent/agents
 #   8. links the fm launcher onto PATH
-#   9. reconciles the Pi Ponytail package: a separate pinned checkout (never
-#      the shared skill cache from step 7), a skills filter in Pi's own
-#      settings so its bundled ponytail/ponytail-review duplicates never
-#      collide with step 7's authoritative copies, and defaultMode=off in
-#      ponytail's own config
 #
 # What it never does: store a credential, touch a project repository, or modify
 # anything tracked in the official FirstMate checkout.
@@ -32,7 +27,12 @@
 #   ./install.sh --verify   report drift without changing anything
 set -u
 
-CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+top=$(git -C "$CONFIG_ROOT" rev-parse --show-toplevel 2>/dev/null) || top=''
+if [ -z "$top" ] || [ "$(cd "$top" && pwd -P)" != "$CONFIG_ROOT" ]; then
+  printf 'install: firstmate-config must be a standalone Git root; nothing was changed\n' >&2
+  exit 1
+fi
 # shellcheck source=firstmate/fm-stack-manifest.sh
 . "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh"
 if ! stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv"; then
@@ -40,12 +40,10 @@ if ! stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv"; then
   exit 1
 fi
 FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
-FIRSTMATE_ORIGIN="${FIRSTMATE_ORIGIN:-$SM_FIRSTMATE_REPO}"
 FM_HOME="${FM_HOME:-$HOME/.firstmate}"
 FM_BACKEND=herdr
 ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
 SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
-COMMANDS_ROOT="${FM_COMMANDS_ROOT:-$HOME/.agents/commands}"
 AGENTS_ROOT="${FM_OMP_AGENTS_ROOT:-$HOME/.omp/agent/agents}"
 SKILL_CACHE="${FM_SKILL_CACHE:-$HOME/.local/share/firstmate-config/skills-src}"
 BIN_DIR="${FM_BIN_DIR:-$HOME/.local/bin}"
@@ -104,7 +102,7 @@ if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
   case $relation in
     exact) ok "matches the validated baseline commit $SM_FIRSTMATE_COMMIT" ;;
     descendant) warn "ahead of the validated baseline commit $SM_FIRSTMATE_COMMIT (unvalidated; not changed automatically)" ;;
-    ancestor) warn "behind the validated baseline commit $SM_FIRSTMATE_COMMIT (not updated automatically; run fm doctor for detail)" ;;
+    ancestor) warn "behind the validated baseline commit $SM_FIRSTMATE_COMMIT (not updated automatically; fm update fast-forwards it)" ;;
     diverged) warn "history has diverged from the validated baseline commit $SM_FIRSTMATE_COMMIT" ;;
     *) warn "relationship to the validated baseline commit $SM_FIRSTMATE_COMMIT is unknown (that commit is not in this checkout's local history)" ;;
   esac
@@ -112,19 +110,18 @@ if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
   source_branch=$(git -C "$FIRSTMATE_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   source_head=$(git -C "$FIRSTMATE_ROOT" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
   if [ "$source_url" != "$SM_FIRSTMATE_REPO" ] || [ "$source_branch" != "$SM_FIRSTMATE_BRANCH" ] || [ "$source_head" != "origin/$SM_FIRSTMATE_BRANCH" ]; then
-    warn "source migration needed: expected $SM_FIRSTMATE_REPO branch $SM_FIRSTMATE_BRANCH and origin/HEAD=origin/$SM_FIRSTMATE_BRANCH; existing checkout left unchanged (see docs/update.html)"
+    warn "source migration needed: expected $SM_FIRSTMATE_REPO branch $SM_FIRSTMATE_BRANCH and origin/HEAD=origin/$SM_FIRSTMATE_BRANCH; existing checkout left unchanged (see README.md \"Moving a fork installation to official\")"
   fi
-elif would "clone $FIRSTMATE_ORIGIN into $FIRSTMATE_ROOT, pinned to $SM_FIRSTMATE_COMMIT"; then
+elif would "clone $SM_FIRSTMATE_REPO into $FIRSTMATE_ROOT, pinned to $SM_FIRSTMATE_COMMIT"; then
   mkdir -p "$(dirname "$FIRSTMATE_ROOT")" || failf "cannot create $(dirname "$FIRSTMATE_ROOT")"
-  if git clone -q --branch "$SM_FIRSTMATE_BRANCH" "$FIRSTMATE_ORIGIN" "$FIRSTMATE_ROOT" \
+  if git clone -q --branch "$SM_FIRSTMATE_BRANCH" "$SM_FIRSTMATE_REPO" "$FIRSTMATE_ROOT" \
      && git -C "$FIRSTMATE_ROOT" merge-base --is-ancestor "$SM_FIRSTMATE_COMMIT" "origin/$SM_FIRSTMATE_BRANCH" \
      && git -C "$FIRSTMATE_ROOT" checkout -q -B "$SM_FIRSTMATE_BRANCH" "$SM_FIRSTMATE_COMMIT" \
      && git -C "$FIRSTMATE_ROOT" branch --set-upstream-to="origin/$SM_FIRSTMATE_BRANCH" "$SM_FIRSTMATE_BRANCH" >/dev/null \
-     && git -C "$FIRSTMATE_ROOT" remote set-head origin "$SM_FIRSTMATE_BRANCH" \
-     && git -C "$FIRSTMATE_ROOT" remote add upstream "$SM_FIRSTMATE_UPSTREAM_REPO"; then
+     && git -C "$FIRSTMATE_ROOT" remote set-head origin "$SM_FIRSTMATE_BRANCH"; then
     changedf "cloned FirstMate into $FIRSTMATE_ROOT, pinned to $SM_FIRSTMATE_COMMIT on $SM_FIRSTMATE_BRANCH"
   else
-    failf "could not clone $FIRSTMATE_ORIGIN and pin it to $SM_FIRSTMATE_COMMIT"
+    failf "could not clone $SM_FIRSTMATE_REPO and pin it to $SM_FIRSTMATE_COMMIT"
     # Never leave a half-cloned or unpinned checkout behind for the next run
     # to mistake for a genuine, present install: a partial clone/pin failure
     # must not be reportable as success on a later run.
@@ -271,25 +268,6 @@ link_to() { # <target> <link> ; creates a missing link, never rewrites an existi
     failf "cannot link $link"
   fi
 }
-# Retire only a link proven to reach this checkout's removed catalogue.
-# Ordinary files and links into other trees have no ownership proof.
-legacy="$FM_HOME/config/workflows.md"
-if [ -L "$legacy" ] || [ -e "$legacy" ]; then
-  OWNED_ROOT=$(CDPATH='' cd -P "$CONFIG_ROOT" && pwd -P)
-  OWNED="$OWNED_ROOT/firstmate/workflows.md"
-  if [ -L "$legacy" ] && reaches_owned "$legacy"; then
-    if would "remove obsolete managed workflow link $legacy"; then
-      if rm "$legacy"; then changedf "removed obsolete managed workflow link $legacy"
-      else failf "cannot remove $legacy"; fi
-    fi
-  else
-    warn "$legacy has unknown ownership; leaving it alone; inspect and remove obsolete workflow references manually"
-  fi
-fi
-if [ -e "$CONFIG_ROOT/firstmate/workflows.md" ]; then
-  warn "$CONFIG_ROOT/firstmate/workflows.md is obsolete user/untracked content; leaving it alone; inspect and remove obsolete workflow references manually"
-fi
-
 link_to "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$FM_HOME/config/crew-dispatch.json"
 
 captain="$FM_HOME/data/captain.md"
@@ -302,25 +280,14 @@ elif would 'seed data/captain.md from the template'; then
     failf "cannot write $captain"
   fi
 fi
-if [ -f "$captain" ] && grep -Eq 'firstmate/workflows[.]md|Workflow:|Workflow ID:' "$captain"; then
-  warn "$captain still references the removed config workflow layer; leaving it alone; edit those references manually without removing role/skill/bot preferences"
-fi
 
-# --- 7. global skills, commands, and role agents ------------------------------
-step '7. global skills, commands, and role agents'
-mkdir -p "$SKILLS_ROOT" 2>/dev/null || true
+# --- 7. global skills and role agents ----------------------------------------
+step '7. global skills and role agents'
 
 for skill_dir in "$CONFIG_ROOT"/skills/*/; do
   [ -f "$skill_dir/SKILL.md" ] || continue
   name=$(basename "$skill_dir")
   link_to "${skill_dir%/}" "$SKILLS_ROOT/$name"
-done
-
-# OMP's `agents` provider turns each ~/.agents/commands/<name>.md into
-# /<name> in every session, the same shared root convention as the skills.
-for command_file in "$CONFIG_ROOT"/commands/*.md; do
-  [ -f "$command_file" ] || continue
-  link_to "$command_file" "$COMMANDS_ROOT/$(basename "$command_file")"
 done
 
 # Each role file opens with OMP task-agent frontmatter (name: fm-<role>), so
@@ -387,156 +354,10 @@ fi
 # --- 8. command launchers ---------------------------------------------------
 step '8. command launchers'
 link_to "$CONFIG_ROOT/bin/fm" "$BIN_DIR/fm"
-link_to "$CONFIG_ROOT/bin/ponytail-update" "$BIN_DIR/ponytail-update"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ok "$BIN_DIR is on PATH" ;;
   *) warn "$BIN_DIR is not on PATH; add it to your shell profile" ;;
 esac
-
-# --- 9. Pi Ponytail package --------------------------------------------------
-# The upstream Ponytail package ships six skills (ponytail, -review, -audit,
-# -debt, -gain, -help) and one extension. Two of those skills duplicate the
-# ones step 7 already installs from the same upstream repo into the shared,
-# authoritative ~/.agents/skills. Reconciling it here as a direct pinned
-# checkout into Pi's own package path (`$PI_AGENT_DIR/git/<host>/<repo>`,
-# matching what `pi install` would produce, but cloned by this script
-# itself rather than shelled out to Pi's installer) keeps this reproducible
-# from a clean machine with `git pull && ./install.sh`, matching this
-# file's own convention of cloning pinned sources itself (see steps 2 and 7).
-# Its checkout is deliberately separate from step 7's shared skill cache
-# clone: a later `pi update` of this package must never be able to mutate
-# the canonical shared skills.
-step '9. Pi Ponytail package'
-PONYTAIL_REPO=DietrichGebert/ponytail
-PONYTAIL_SOURCE="git:github.com/$PONYTAIL_REPO"
-PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
-ponytail_pkg_dir="$PI_AGENT_DIR/git/github.com/$PONYTAIL_REPO"
-ponytail_settings="$PI_AGENT_DIR/settings.json"
-ponytail_config="${XDG_CONFIG_HOME:-$HOME/.config}/ponytail/config.json"
-
-if [ ! -f "$lock" ]; then
-  warn 'no skills/external.lock; skipping Pi ponytail package'
-else
-  # Single source-of-truth pin: the same commit skills/external.lock already
-  # pins for the shared ponytail/ponytail-review skills, read dynamically
-  # rather than duplicated here as a second literal.
-  ponytail_sha=$(awk -F'\t' -v repo="$PONYTAIL_REPO" '/^[^#]/ && NF >= 5 && $2==repo {print $3; exit}' "$lock")
-  if [ -z "$ponytail_sha" ]; then
-    warn "skills/external.lock has no $PONYTAIL_REPO pin; skipping Pi ponytail package"
-  else
-    if [ -d "$ponytail_pkg_dir/.git" ] && [ "$(git -C "$ponytail_pkg_dir" rev-parse HEAD 2>/dev/null)" = "$ponytail_sha" ]; then
-      ok "pi package $PONYTAIL_SOURCE at ${ponytail_sha%"${ponytail_sha#???????}"}"
-    elif would "pin pi package $PONYTAIL_SOURCE to $ponytail_sha"; then
-      mkdir -p "$(dirname "$ponytail_pkg_dir")"
-      [ -d "$ponytail_pkg_dir/.git" ] || git clone -q "https://github.com/$PONYTAIL_REPO.git" "$ponytail_pkg_dir" 2>/dev/null
-      if [ -d "$ponytail_pkg_dir/.git" ]; then
-        git -C "$ponytail_pkg_dir" fetch -q --all 2>/dev/null
-        if git -C "$ponytail_pkg_dir" checkout -q "$ponytail_sha" 2>/dev/null; then
-          changedf "pi package $PONYTAIL_SOURCE pinned to ${ponytail_sha%"${ponytail_sha#???????}"}"
-        else
-          failf "pi package $PONYTAIL_SOURCE has no commit $ponytail_sha"
-        fi
-      else
-        failf "cannot clone pi package $PONYTAIL_SOURCE"
-      fi
-    fi
-
-    if [ -d "$ponytail_pkg_dir" ]; then
-      if ! command -v python3 >/dev/null 2>&1; then
-        failf "python3 is required to reconcile $ponytail_settings and $ponytail_config"
-      else
-        # Structural merge: only the "skills" filter on this one package
-        # entry is ever touched; every other key, entry, and file is
-        # preserved byte-for-byte when already correct.
-        pi_settings_result=$(PONYTAIL_SOURCE="$PONYTAIL_SOURCE" PONYTAIL_VERIFY="$VERIFY" python3 - "$ponytail_settings" <<'PY'
-import json, os, sys
-path = sys.argv[1]
-src = os.environ["PONYTAIL_SOURCE"]
-verify = os.environ["PONYTAIL_VERIFY"] == "1"
-skills = ["-skills/ponytail/SKILL.md", "-skills/ponytail-review/SKILL.md"]
-try:
-    with open(path) as f:
-        data = json.load(f)
-except FileNotFoundError:
-    data = {}
-except json.JSONDecodeError as e:
-    print(f"fail invalid JSON in {path}: {e}")
-    sys.exit(0)
-pkgs = data.get("packages", [])
-changed = False
-found = False
-for i, p in enumerate(pkgs):
-    if isinstance(p, dict) and p.get("source") == src:
-        found = True
-        if p.get("skills") != skills:
-            p["skills"] = skills
-            changed = True
-        break
-    if isinstance(p, str) and p == src:
-        pkgs[i] = {"source": src, "skills": skills}
-        found = True
-        changed = True
-        break
-if not found:
-    pkgs.append({"source": src, "skills": skills})
-    changed = True
-if not changed:
-    print(f"ok {src} skills filter")
-elif verify:
-    print(f"drift {src} skills filter")
-else:
-    data["packages"] = pkgs
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-    print(f"changed {src} skills filter in {path}")
-PY
-)
-        case $pi_settings_result in
-          ok\ *)     ok "${pi_settings_result#ok }" ;;
-          changed\ *) changedf "${pi_settings_result#changed }" ;;
-          drift\ *)  driftf "${pi_settings_result#drift }" ;;
-          fail\ *)   failf "${pi_settings_result#fail }" ;;
-          *)         failf "could not reconcile $ponytail_settings: $pi_settings_result" ;;
-        esac
-
-        ponytail_config_result=$(PONYTAIL_VERIFY="$VERIFY" python3 - "$ponytail_config" <<'PY'
-import json, os, sys
-path = sys.argv[1]
-verify = os.environ["PONYTAIL_VERIFY"] == "1"
-try:
-    with open(path) as f:
-        data = json.load(f)
-except FileNotFoundError:
-    data = {}
-except json.JSONDecodeError as e:
-    print(f"fail invalid JSON in {path}: {e}")
-    sys.exit(0)
-if data.get("defaultMode") == "off":
-    print(f"ok {path}: defaultMode is off")
-elif verify:
-    print(f"drift {path}: defaultMode is not off")
-else:
-    data["defaultMode"] = "off"
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-    print(f"changed {path}: set defaultMode=off")
-PY
-)
-        case $ponytail_config_result in
-          ok\ *)     ok "${ponytail_config_result#ok }" ;;
-          changed\ *) changedf "${ponytail_config_result#changed }" ;;
-          drift\ *)  driftf "${ponytail_config_result#drift }" ;;
-          fail\ *)   failf "${ponytail_config_result#fail }" ;;
-          *)         failf "could not reconcile $ponytail_config: $ponytail_config_result" ;;
-        esac
-      fi
-    fi
-  fi
-fi
 
 # --- report -----------------------------------------------------------------
 if [ "$VERIFY" -eq 1 ]; then
