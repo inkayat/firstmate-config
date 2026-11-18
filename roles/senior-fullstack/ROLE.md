@@ -46,3 +46,11 @@ completion is worse than an honest gap.
 
 State what changed, the evidence it works, and anything you deliberately left
 alone. Name risks you introduced. Keep it short.
+
+## Feedback handed back to you
+
+When your brief hands you feedback items from QA or a reviewer, they are the
+requirement for this round. Address every item by id: fix it, or say concretely
+why it does not apply. Never drop one silently, and never fix only the wording
+of the report. Report what each id needed, in the order handed, then the
+evidence that the change still works.

@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/inkayat/firstmate-config/workflows/workflow.schema.json",
+  "title": "FirstMate workflow definition",
+  "description": "A workflow is a small state machine of named steps. `bin/fm-workflow validate` enforces this schema (its structural half is evaluated by a jq subset validator, so no schema library is needed) plus the rules a schema cannot express: roles exist, every transition target exists, every outcome of a step is routed, every step is reachable, and every cycle passes through a loop that has a limit. `x-outcomes` is a non-standard keyword read by the engine: the outcomes each output contract can produce.",
+  "type": "object",
+  "required": ["name", "version", "description", "when", "start", "roles", "loops", "steps"],
+  "additionalProperties": false,
+  "x-outcomes": {
+    "report": ["done", "blocked"],
+    "verdict": ["pass", "fail", "blocked"],
+    "deliver": ["done", "blocked"]
+  },
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": { "$ref": "#/$defs/name", "description": "Equals the file name without .json." },
+    "version": { "type": "integer", "minimum": 1, "description": "Bump on every behavior change; a running task keeps the version it started with (its state file pins the definition)." },
+    "description": { "$ref": "#/$defs/text" },
+    "when": { "$ref": "#/$defs/text", "description": "What kind of task selects this workflow: the Captain's selection guidance, read by `fm-workflow list`." },
+    "start": { "$ref": "#/$defs/name", "description": "The first step." },
+    "roles": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/roleName" },
+      "description": "Alias -> role under roles/. Steps bind to an alias, so swapping the agent for a kind of work is one edit here."
+    },
+    "loops": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/loop" }
+    },
+    "steps": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$" },
+    "roleName": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+    "text": { "type": "string", "minLength": 1 },
+    "target": {
+      "description": "A step name, the reserved @complete (the workflow succeeded) or @escalate (stop and hand the accumulated feedback to the captain), or {to, loop} to take the transition inside a named loop.",
+      "oneOf": [
+        { "type": "string", "pattern": "^(@complete|@escalate|[a-z][a-z0-9]*(-[a-z0-9]+)*)$" },
+        {
+          "type": "object",
+          "required": ["to"],
+          "additionalProperties": false,
+          "properties": {
+            "to": { "type": "string", "pattern": "^(@complete|@escalate|[a-z][a-z0-9]*(-[a-z0-9]+)*)$" },
+            "loop": { "$ref": "#/$defs/name" }
+          }
+        }
+      ]
+    },
+    "loop": {
+      "type": "object",
+      "required": ["maxIterations", "onExhausted"],
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "maxIterations": { "type": "integer", "minimum": 1, "maximum": 20, "description": "How many times a transition tagged with this loop may be taken. The attempt after that is not taken: onExhausted applies." },
+        "onExhausted": { "enum": ["escalate"], "description": "Never a silent stop and never a silent pass: escalate hands the accumulated feedback to the captain." }
+      }
+    },
+    "input": {
+      "type": "object",
+      "required": ["name", "from"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "from": { "enum": ["task", "change", "report", "feedback"], "description": "task: the task text the workflow was started with. change: the change under work, as the last step that recorded one gave it. report: the latest recorded report of `step`. feedback: the latest still-open feedback list produced by any of `steps`, verbatim." },
+        "step": { "$ref": "#/$defs/name" },
+        "steps": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/name" } },
+        "optional": { "type": "boolean", "description": "Omit the input silently when nothing is available yet (feedback on a first run)." }
+      },
+      "allOf": [
+        { "if": { "properties": { "from": { "const": "report" } }, "required": ["from"] }, "then": { "required": ["step"], "properties": { "steps": false } } },
+        { "if": { "properties": { "from": { "const": "feedback" } }, "required": ["from"] }, "then": { "required": ["steps"], "properties": { "step": false } } },
+        { "if": { "properties": { "from": { "enum": ["task", "change"] } }, "required": ["from"] }, "then": { "properties": { "step": false, "steps": false } } }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "required": ["kind", "on"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["work", "decision", "deliver"], "description": "work: a worker with the step's role runs it. decision: the orchestrator decides, by the stated criteria. deliver: Firstmate delivers through the task's own delivery mode; it is never a role." },
+        "role": { "$ref": "#/$defs/name", "description": "A key of the workflow's roles map (work steps only)." },
+        "instruction": { "$ref": "#/$defs/text" },
+        "input": { "type": "array", "items": { "$ref": "#/$defs/input" } },
+        "output": { "enum": ["report", "verdict"], "description": "report: free-form report, outcome reported by the orchestrator (done or blocked). verdict: the report ends with the machine-readable verdict block and the outcome is parsed from it, never supplied by the caller." },
+        "question": { "$ref": "#/$defs/text" },
+        "criteria": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } },
+        "on": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/name" },
+          "additionalProperties": { "$ref": "#/$defs/target" },
+          "description": "Outcome -> target. A work step routes every outcome of its output contract (x-outcomes); a deliver step routes done and blocked; a decision step's keys are its choices."
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "work" } }, "required": ["kind"] }, "then": { "required": ["role", "instruction", "output"], "properties": { "question": false, "criteria": false } } },
+        { "if": { "properties": { "kind": { "const": "decision" } }, "required": ["kind"] }, "then": { "required": ["question", "criteria"], "properties": { "role": false, "instruction": false, "output": false } } },
+        { "if": { "properties": { "kind": { "const": "deliver" } }, "required": ["kind"] }, "then": { "required": ["instruction"], "properties": { "role": false, "output": false, "question": false, "criteria": false } } }
+      ]
+    }
+  }
+}

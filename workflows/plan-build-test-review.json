@@ -1,0 +1,225 @@
+{
+  "$schema": "./workflow.schema.json",
+  "name": "plan-build-test-review",
+  "version": 1,
+  "description": "Plan first, then implement, verify with an independent QA worker, then an independent code review; deliver only when both pass. build-test-review with a written plan in front.",
+  "when": "A task that needs the build-test-review treatment and whose requirement is unclear, ambiguous, or too large to start: an assumption would have to be guessed, or the work needs an ordered task list with acceptance criteria before anyone implements it. A clear, bounded task goes to build-test-review; tiny or mechanical work uses no workflow; no-mistakes as the selected delivery path owns review and testing itself.",
+  "start": "plan",
+  "roles": {
+    "planner": "planner",
+    "implementer": "senior-fullstack",
+    "qa": "qa",
+    "reviewer": "code-reviewer"
+  },
+  "loops": {
+    "qa-fix": {
+      "description": "QA failed or gave feedback: the implementer fixes it, then QA evaluates again against that feedback.",
+      "maxIterations": 5,
+      "onExhausted": "escalate"
+    },
+    "review-fix": {
+      "description": "Code review gave feedback: the implementer fixes it, the orchestrator decides whether QA must run again, then the review is repeated on the corrected delta.",
+      "maxIterations": 5,
+      "onExhausted": "escalate"
+    }
+  },
+  "steps": {
+    "plan": {
+      "kind": "work",
+      "role": "planner",
+      "instruction": "Turn the task into a written plan: the objective, the assumptions you are making stated explicitly, what is out of scope, acceptance criteria that can each be checked by running something, and an ordered task list. Resolve ambiguity by stating an assumption; list only what you cannot responsibly assume as open questions. Write the plan to the path the task names and report that path. Do not implement.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        }
+      ],
+      "output": "report",
+      "on": {
+        "done": "implement",
+        "blocked": "@escalate"
+      }
+    },
+    "implement": {
+      "kind": "work",
+      "role": "implementer",
+      "instruction": "Implement the task according to the plan: its assumptions and acceptance criteria are the requirement. Verify it by running it, commit the work to the task branch, and report the commit range of your change. If a feedback input is present it is QA's findings on your previous change: address every item by id - fix it, or say concretely why it does not apply - and report on each id.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "plan",
+          "from": "report",
+          "step": "plan"
+        },
+        {
+          "name": "change",
+          "from": "change",
+          "optional": true
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "qa"
+          ],
+          "optional": true
+        }
+      ],
+      "output": "report",
+      "on": {
+        "done": "qa",
+        "blocked": "@escalate"
+      }
+    },
+    "qa": {
+      "kind": "work",
+      "role": "qa",
+      "instruction": "Verify the change independently against the plan's acceptance criteria (the plan is the requirement; its assumptions stand), by running it and probing the behavior the plan implies beyond the implementer's own checks. Do not edit the change. If a feedback input is present it is the previous findings that the change was corrected for: first report on each id (fixed or still failing, with what you ran), then evaluate the whole change again.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "plan",
+          "from": "report",
+          "step": "plan"
+        },
+        {
+          "name": "change",
+          "from": "change"
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "qa",
+            "review"
+          ],
+          "optional": true
+        }
+      ],
+      "output": "verdict",
+      "on": {
+        "pass": "review",
+        "fail": {
+          "to": "implement",
+          "loop": "qa-fix"
+        },
+        "blocked": "@escalate"
+      }
+    },
+    "review": {
+      "kind": "work",
+      "role": "reviewer",
+      "instruction": "Review the change for correctness first, then maintainability and safety, against the plan it implements. QA has already run the change, so spend your attention on what a test run does not show. If a feedback input is present it is your previous findings and the change is the corrected delta: confirm each id is fixed or still open, then review the delta itself.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "plan",
+          "from": "report",
+          "step": "plan"
+        },
+        {
+          "name": "change",
+          "from": "change"
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "review"
+          ],
+          "optional": true
+        }
+      ],
+      "output": "verdict",
+      "on": {
+        "pass": "deliver",
+        "fail": {
+          "to": "address-review",
+          "loop": "review-fix"
+        },
+        "blocked": "@escalate"
+      }
+    },
+    "address-review": {
+      "kind": "work",
+      "role": "implementer",
+      "instruction": "The code review found problems in your change. Address every feedback item by id - fix it, or say concretely why it does not apply - verify, commit to the task branch, and report the commit range of the corrected change together with what each id needed.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "plan",
+          "from": "report",
+          "step": "plan"
+        },
+        {
+          "name": "change",
+          "from": "change"
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "review"
+          ]
+        }
+      ],
+      "output": "report",
+      "on": {
+        "done": "requalify",
+        "blocked": "@escalate"
+      }
+    },
+    "requalify": {
+      "kind": "decision",
+      "question": "Does the change made in response to the review feedback require QA to run again before the review is repeated?",
+      "criteria": [
+        "yes (QA again, then review): the fix changed behavior, logic, data handling, an interface, a test, a dependency or configuration - anything a test run could now see differently - or it is more than a trivial edit, or the finding it answers was about correctness or safety.",
+        "no (review the delta directly): the fix is limited to naming, comments, formatting, documentation or removal of dead code with no behavioral effect, and the implementer reports the project's own checks still pass.",
+        "When in doubt, yes. Record the reason; it is kept in the workflow state."
+      ],
+      "input": [
+        {
+          "name": "change",
+          "from": "change"
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "review"
+          ]
+        }
+      ],
+      "on": {
+        "yes": "qa",
+        "no": "review"
+      }
+    },
+    "deliver": {
+      "kind": "deliver",
+      "instruction": "QA and code review both passed. Deliver through the task's own delivery mode: for direct-PR the worker that owns the branch pushes it and opens the PR ready for review. Never merge: merging stays the captain's word.",
+      "input": [
+        {
+          "name": "change",
+          "from": "change"
+        }
+      ],
+      "on": {
+        "done": "@complete",
+        "blocked": "@escalate"
+      }
+    }
+  }
+}

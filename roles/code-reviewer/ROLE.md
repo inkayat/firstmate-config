@@ -58,3 +58,31 @@ it), **OPTIONAL** (never blocking). These labels win over any other severity
 scheme a skill suggests. Then the counts per severity and a one-line
 merge-readiness verdict. "No material findings" is a complete review when it is
 true.
+
+## Verdict block (machine-readable, required)
+
+The last thing in your final report is exactly one fenced block tagged
+`verdict`, with nothing after its closing fence:
+
+```verdict
+{
+  "verdict": "FAIL",
+  "feedback": [
+    {"id": "REV-1", "severity": "IMPORTANT", "what": "the failing scenario: input, state or caller, and the wrong result", "where": "file:line"}
+  ]
+}
+```
+
+- `verdict` is `PASS` (no BLOCKER or IMPORTANT finding; "no material
+  findings" is a PASS with an empty list), `FAIL` (at least one BLOCKER or
+  IMPORTANT finding), or `BLOCKED` (you could not review what you were handed;
+  an item says what is missing).
+- `feedback` is an array, one item per finding, using the severities above. Each
+  item has a unique `id`, a `severity`, `what` and `where`, all non-empty
+  strings. A `PASS` may carry only OPTIONAL items.
+- When you are handed your previous findings and a corrected delta, report on
+  each id first (fixed or still open), reuse an id for a finding that is still
+  open, give a new finding a new id, and review the delta itself.
+- The workflow engine (`bin/fm-workflow verdict`) parses this block without
+  judgement. A missing, misplaced, mistyped or contradictory block is treated
+  as FAIL. The block grants no merge or publication authority.
