@@ -32,7 +32,7 @@ mkdir -p "$HOME" "$TMPDIR" "$T/stubs" "$T/remotes"
 cat > "$T/stubs/pi" <<'SH'
 #!/usr/bin/env bash
 case ${1:-} in
-  --list-models) printf 'openai-codex gpt-6.1-sol 400K 128K yes yes\n'; exit 0 ;;
+  --list-models) printf 'openai-codex gpt-6.2-sol 400K 128K yes yes\n'; exit 0 ;;
   auth) printf '{"status":"ready"}\n'; exit 0 ;;
   list) exit 0 ;;
 esac
@@ -46,7 +46,7 @@ SH
 cat > "$T/stubs/omp" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = models ]; then
-  printf '{"models":[{"provider":"openai-codex","id":"gpt-6.1-sol","thinking":["low","medium","high"]}]}\n'
+  printf '{"models":[{"provider":"openai-codex","id":"gpt-6.2-sol","thinking":["low","medium","high"]}]}\n'
   exit 0
 fi
 {

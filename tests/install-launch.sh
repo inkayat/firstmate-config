@@ -57,7 +57,7 @@ has 'Captain gets the config root in standalone config' "$log" "FM_CONFIG_ROOT=$
 has 'launch directory passes through as a hint' "$log" "FM_FORK_ORIGIN_CWD=$project/repo/sub"
 has 'launch directory is recognized as a Git project' "$log" 'FM_FORK_ORIGIN_IS_PROJECT=true'
 has 'operational home is passed' "$log" "FM_HOME=$FMHOME"
-has 'startup model chain is applied' "$log" 'args=--model openai-codex/gpt-6.1-sol --thinking medium'
+has 'startup model chain is applied' "$log" 'args=--model openai-codex/gpt-6.2-sol --thinking medium'
 has 'parent harness markers are scrubbed' "$log" 'CLAUDECODE=unset'
 policy=$(sed -n 's/^FM_CONFIG_ROOT=//p' "$HARNESS_LOG")
 check 'captain policy pointer resolves for the launched Captain' "$([ -f "$policy/firstmate/primary-policy.md" ] && printf yes)" yes
