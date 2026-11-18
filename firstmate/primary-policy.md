@@ -5,7 +5,7 @@ captain works; it never overrides `AGENTS.md`, and it never overrides a
 project's own instructions. It is longer than one default read: page
 through to the end.
 
-## 0. Routing, agent and skill trace (temporary, debugging period)
+## 0. Routing and agent trace (temporary, debugging period)
 
 Until the captain ends this debugging period, print a short trace in the
 Captain chat. It discloses decisions sections 3-5 already made -
@@ -18,7 +18,7 @@ a display or print prospective stages as if already dispatched:
 
     Routing: <CATEGORY> [#n] | role <role> | <harness> | <provider/model> | <effort> | why: <short reason>
     Agent: <assigned role name>
-    Skills: <selected name>, <selected name>
+    Skills: <name>, <name>
 
 - `#n` is the matched rule's position within its category in
   `config/crew-dispatch.json` (1-based; required when the category has
@@ -28,17 +28,13 @@ a display or print prospective stages as if already dispatched:
   `why`. Harness, model, and effort are exactly what is passed to
   `fm-spawn` for that worker - that rule's resolved candidate. An explicit
   captain choice outside the rule says `captain override` in `why`.
-- `Skills` names exactly the project-local and shared worker skills
-  selected in that brief (section 2 steps 3-4), plus required companions,
-  by short name only. Use the skill directory name for a selected
-  `SKILL.md`, and the filename without `.md` for a required companion
-  (for example `writing-good-tests`). Entries are comma-separated.
-  Nothing else - no installed-but-unselected skill, no official FirstMate
-  internal skill. `Skills: none` stands alone when no skill is selected,
-  with no `No skill:` line. Before choosing none, inspect applicable
-  project-local and shared worker skills under section 5; explain why
-  neither applies in the brief, never use a generic "none needed", and
-  select a fitting skill instead of rationalizing an omission.
+- `Skills` is derived, never chosen: exactly the assigned role's frontmatter
+  `autoloadSkills` (`bin/fm-role-handoff --skills <role>`), by skill directory
+  name, comma-separated, in the role file's order. `Skills: none` stands
+  alone for a role that autoloads nothing (`scout`, `chore`), with no
+  `No skill:` line. Nothing else: no project-local skill (the Captain does
+  not select those, section 2), no installed-but-unlisted skill, no official
+  FirstMate internal skill.
 - `Agent` names only the assigned role, for example `senior-fullstack`.
   It is not a native agent identifier or proof of native adoption.
   For several assigned workers or stages print each real assignment;
@@ -59,17 +55,17 @@ gate is introduced; do not remove debug early.
 
 A separately requested review stays separate from any automated pipeline:
 
-    Review: <role> | <harness> <model> <effort> | why: <reason> | skills: <...> | BLOCKER n, IMPORTANT n, OPTIONAL n
+    Review: <role> | <harness> <model> <effort> | why: <reason> | skills: <role's autoloadSkills> | BLOCKER n, IMPORTANT n, OPTIONAL n
     no-mistakes: <result>
 
 `tests/routing-trace.sh check` compares one captured block against the real
-spawn axes, the matched rule's route, and the brief's selected skills.
+spawn axes and the matched rule's route; it derives the expected skills from
+the Routing role's `autoloadSkills`, never from a caller-supplied list.
 Agent must agree with Routing's role.
-Optional trailing `--brief <delivered-brief>` compares only the `Agent`
-name with `Assigned role:`.
-Missing or contradictory names fail agreement. Without a brief, assignment
-names are not compared. Selected skill paths normalize to short names;
-same-named local/shared sources are indistinguishable in this display.
+Optional trailing `--brief <delivered-brief>` compares the `Agent` name with
+`Assigned role:` and the brief's `Role skill:` paths with that same derived
+set. Missing or contradictory names fail agreement. Without a brief,
+assignment names and brief paths are not compared.
 The offline suite also has a real `fm-spawn.sh` seam with a fixture worker.
 The checker cannot compare hidden paths, worker/native identity or stage,
 prove native adoption, instruction/skill application, outcome correctness,
@@ -144,18 +140,23 @@ resolution already computed in section 1. Never hand a worker a generic
 "follow project instructions and use appropriate skills" sentence and call
 that sufficient.
 
-**Role and default-skill handoff.** For a selected role, name its absolute
-`ROLE.md` path in the brief with a read-and-apply requirement, and expand the
-role's frontmatter `autoloadSkills` (section 5) into step 4 entries by exact
-shared skill path, alongside independently selected methods. Official
-FirstMate's `bin/fm-brief.sh` has no `--worker-role`, `--skill` or
-`--skill-root` option and does not reject unknown arguments, so never pass
-them: nothing would be selected or recorded. The worker's first input carries
-these paths and requirements, never role or skill bodies. Nothing is inlined
-before the first model call, nothing resolves `autoloadSkills` automatically,
-a missing or malformed path does not refuse the launch (the worker reports it
-under step 5), and no selection or provenance record is written. This is a
-handoff, not native agent selection or proof of application.
+**Role handoff.** The Captain's only capability choice per task is the role
+(section 4). Name its absolute `ROLE.md` path in the brief with a
+read-and-apply requirement, and hand over the skills that role carries: every
+entry of its frontmatter `autoloadSkills` (section 5), by exact shared skill
+path, each with the same requirement. `bin/fm-role-handoff <role>` in this
+repository prints exactly that block from the role's frontmatter; paste it into
+`## Firstmate spec` unchanged. The Captain never adds, drops, swaps or names a
+skill of its own for a task: a different skill set is a different role, and a
+skill-less role (`scout`, `chore`) hands over none. Official FirstMate's
+`bin/fm-brief.sh` has no `--worker-role`, `--skill` or `--skill-root` option
+and does not reject unknown arguments, so never pass them: nothing would be
+selected or recorded. The worker's first input carries these paths and
+requirements, never role or skill bodies. Nothing is inlined before the first
+model call, nothing resolves `autoloadSkills` automatically, a missing or
+malformed path does not refuse the launch (the worker reports it under step
+4), and no selection or provenance record is written. This is a handoff, not
+native agent selection or proof of application.
 
 **Continuation versus role change.** Same-role continuation within the
 original authorized scope may keep its existing worker. Selecting a different
@@ -170,13 +171,6 @@ uncommitted work and prior evidence. An exact-source request does not justify
 skipping the role handoff: if no authorized safe copy or supported transition
 fits it, report the constraint instead.
 
-Before choosing shared worker skills for any delegation, list the entries in
-`~/.agents/skills`, including symlinked directories, and inspect the
-task-relevant `SKILL.md` files directly. Never conclude that no shared skills
-exist from a recursive `**/SKILL.md` search alone: symlinked skill directories
-may be omitted by glob traversal. Select only skills relevant to the task
-under section 5.
-
 For every delegated task, resolved against the worker's own isolated task
 worktree - its instructions and skills, never the primary checkout the task
 started from - make the following an explicit, compact part of that task's
@@ -188,42 +182,41 @@ started from - make the following an explicit, compact part of that task's
    `AGENTS.override.md`, root/nested `AGENTS.md`, and `CLAUDE.md`
    explicitly wherever more than one exists, so the worker never has to
    guess which contradictory file is authoritative;
-3. the exact project-local skill path(s) the task requires, each paired with
-   a read-and-apply requirement, not merely a name to notice. Give every
-   path bare and worktree-relative - never the primary/source checkout's
-   absolute path, which does not exist yet from the worker's side and
-   which the worker must never read from instead of its own worktree - for
-   example:
+3. the role handoff block printed by `bin/fm-role-handoff <role>`: the
+   absolute `ROLE.md` path and each autoloaded skill path, every one with a
+   read-and-apply requirement, for example:
 
-       Required project skill:
-         .agents/skills/django-migrations/SKILL.md
+       Assigned role: refactorist
+       Role source:
+         /path/to/firstmate-config/roles/refactorist/ROLE.md
        Requirement:
-         Read and apply this skill before reading, writing, reviewing, or
-         editing migrations.
-
-4. the exact selected shared worker skill path(s) - at most what section 5
-   already allows - each with the same read-and-apply requirement, never a
-   copied body, for example:
-
-       Selected shared worker skill:
-         verification-before-completion
+         Read and apply this role file in full before substantive work.
+       Role skill:
+         /home/me/.agents/skills/code-simplification/SKILL.md
        Requirement:
-         Apply before declaring the task complete.
+         Read and apply this skill in full before the first edit and before
+         any shell work; follow its procedure step by step and name the steps
+         you applied in your final report.
 
-   A companion file the selected skill makes mandatory for this task (for
-   example `~/.agents/skills/test-driven-development/writing-good-tests.md`
-   when tests change) is named the same way, by its absolute or `~/` path,
-   as its own entry;
-5. a pre-work requirement: before substantive work, confirm `pwd -P`
+   Project-local skills are not part of this block and the Captain does not
+   select them. A worker applies an applicable project-local skill where the
+   project's own instructions require it, under section 1's precedence, which
+   this section does not change; where a project-local skill covers the same
+   ground as a role skill, the project-local one wins and the conflict is
+   worth one sentence in the brief. A companion file a role skill itself makes
+   mandatory is read by the worker when that skill requires it, never named or
+   chosen by the Captain;
+4. a pre-work requirement: before substantive work, confirm `pwd -P`
    equals `git rev-parse --show-toplevel` (standing at the worker's own
    isolated worktree root, not a parent or the primary checkout), then
-   read every path named above relative to that root and report a missing,
-   unreadable, or conflicting path instead of silently falling back to a
-   different scope or a global default. Each selected skill and companion
-   is read with the harness's own file read tool before the first edit and
-   before any work done through the shell, continuing any truncated or
-   elided output until every line has been shown;
-6. guidance for target discovery and subtree changes: revisit steps 1-4
+   read every path named above - instruction paths relative to that root,
+   the role and skill paths as given - and report a missing, unreadable, or
+   conflicting path instead of silently falling back to a different scope
+   or a global default. Each role skill is read with the harness's own file
+   read tool before the first edit and before any work done through the
+   shell, continuing any truncated or elided output until every line has
+   been shown;
+5. guidance for target discovery and subtree changes: revisit steps 1-3
    for each newly selected scope and read the newly applicable instructions
    and project-local skills before substantive work there. This applies to
    the parent worker and bounded internal helpers alike; the parent remains
@@ -237,8 +230,8 @@ can describe discovery, but cannot independently prove read order or skill
 application; the harness's generic native loader alone cannot either.
 
 Official FirstMate internal skills (`$FIRSTMATE_ROOT/.agents/skills/*`) are
-never a selected shared worker skill and never belong in step 4: they are
-Captain/FirstMate-only. Shared worker skills live at the normal shared root
+never part of a role's `autoloadSkills` and never belong in the handoff: they
+are Captain/FirstMate-only. Role skills live at the shared worker root
 (`~/.agents/skills`, both Pi- and OMP-visible); project-local skills live
 under the project's own tracked directories inside the worktree.
 
@@ -247,10 +240,12 @@ per task, in place.
 
 ## 3. Routing
 
-Five decisions, kept separate on purpose: **role** (how to work), **harness**
-(Pi or omp), **model**, **effort**, and **skills**. Never let one of them drag
-the others along - a hard task does not automatically mean the strongest
-model, and a strong model does not automatically mean maximum effort.
+Four decisions, kept separate on purpose: **role** (how to work, and with
+which skills - the role's `autoloadSkills`), **harness** (Pi or omp),
+**model**, and **effort**. Skills are not a fifth, Captain-made decision: they
+come with the role. Never let one decision drag the others along - a hard
+task does not automatically mean the strongest model, and a strong model does
+not automatically mean maximum effort.
 
 **Category first.** Every delegated task maps to exactly one of ten
 dispatch categories, or to the DEFAULT catch-all when none fits, before
@@ -315,11 +310,11 @@ ship. Neither mapping is fixed: a QUICK question can be a scout, a QUICK
 rename a ship; a DEEP diagnosis is naturally a scout, a DEEP fix naturally a
 ship. Judge the actual task, not the category label.
 
-**Task handoff.** Name the assigned role and absolute role source path,
-context/skills, input/output artifacts, acceptance, true dependencies,
-scope/mutation/validation limits and delivery/stop boundary in
-`## Firstmate spec`. Keep the actual worker identity distinct from any
-native agent identifier; unobserved native selection/adoption is unknown,
+**Task handoff.** Name the assigned role and absolute role source path
+(through the section 2 role handoff), input/output artifacts, acceptance,
+true dependencies, scope/mutation/validation limits and delivery/stop
+boundary in `## Firstmate spec`. Keep the actual worker identity distinct from
+any native agent identifier; unobserved native selection/adoption is unknown,
 not implied by the role.
 
 **Model catalog adoption.** Active routes use only `anthropic/claude-haiku-4-5`,
@@ -349,6 +344,8 @@ optional `autoloadSkills` - so the same file is both the role a brief points
 at and a valid OMP agent definition. `install.sh` links each one into OMP's
 user agent root as `~/.omp/agent/agents/fm-<name>.md`, so every OMP session
 can spawn `fm-<name>`; it never replaces an entry there that is not its own.
+A role's `autoloadSkills` is its whole skill set (section 5); choosing the
+role is the only way a task gets a skill.
 
 Core roles:
 
@@ -367,49 +364,59 @@ role file plus its line here, never a new dispatch category:
 - `refactorist` - one small, behavior-preserving improvement per task, proven
   by tests
 - `django-pro` - Django and Django REST Framework backend implementation
-  against a fixed contract; default skill `django-backend`, which this
-  repository authors under `skills/`
+  against a fixed contract
 - `frontend-master` - web UI implementation against a fixed contract,
   verified through the real client
-- `scout` - read-only fact gathering over a codebase or a handed PR, reported
-  with evidence and limits; never reviews, judges, or changes anything
 - `debugger` - source-read-only diagnosis; explicitly authorized local/test
   reproductions and a causal handoff, never source fixes
 - `technical-writer` - scoped documentation of settled behavior/decisions;
-  no code/config or behavior-defining policy edits merely because it is Markdown
+  no code/config or behavior-defining policy edits merely because it is
+  Markdown
+- `planner` - turns an unclear or oversized request into a written spec and
+  an ordered task list; never implements
+
+Skill-less roles - choosing one of these is how a task gets no skill; the
+Captain never decides "no skill" separately:
+
+- `scout` - read-only fact gathering over a codebase or a handed PR, reported
+  with evidence and limits; never reviews, judges, or changes anything
+- `chore` - fully specified mechanical work (a rename, a one-file edit, a
+  format pass, collecting a listed fact) with no methodology; it hands
+  anything needing design, diagnosis, new logic or judgment back. It is the
+  role for QUICK work that is purely mechanical; a QUICK task that needs
+  judgment goes to a narrower or `senior-fullstack` role instead
 
 Name the role and its absolute source path in the brief through section 2's
-role and default-skill handoff. A role describes how to work; it never
-outranks the project.
+role handoff. A role describes how to work; it never outranks the project.
 
 ## 5. Skills
 
-Global skills live in the normal Agent Skills location and load on demand.
-Select them; do not dump them. Per task, at most two workflow or methodology
-skills and at most one reference skill, fewer by preference, and none at all
-when the task does not need one. A project-local skill always wins over a
-global skill covering the same ground, and a project-required skill is
-mandatory: it is always kept, even when it leaves no room for optional picks.
+Skills belong to roles, not to tasks. A role file's frontmatter
+`autoloadSkills` is the complete list of shared worker skills a worker running
+that role is handed (section 2): at most three per role, and none for a role
+that needs none (`scout`, `chore`). The Captain does not select, add, drop,
+budget, substitute or name skills for a delegated task, and does not name
+project-local skills. To change what a kind of work loads, change the role or
+add one (a role file plus its line in section 4, never a dispatch category).
 
-A role file's frontmatter `autoloadSkills` lists the shared worker skills
-that role works with. When that role is used they are the default selection
-- still named by exact path under section 2, still inside this budget,
-still displaced by a project-local skill covering the same ground. Dropping
-one or adding another takes a one-line reason in the brief, not in the
-`Skills:` trace. A default skill must be a shared skill this repository
-manages (`skills/` or `skills/external.lock`).
+An autoloaded skill must be a shared skill this repository manages (`skills/`
+or `skills/external.lock`), must exist at that path, and appears once per
+role. Every managed skill is autoloaded by at least one installed role, except
+the operator skills named below, which no role may carry.
+`tests/roles.sh` enforces all of this.
+
+Operator skills (Captain/operator only): `firstmate-cleanup`.
 
 Official FirstMate internal skills (the official checkout's own
-`.agents/skills`) are never a global skill choice for a delegated task -
-they are Captain/FirstMate-only, per section 2.
+`.agents/skills`) are never a role skill, per section 2.
 
-Selecting a skill is not reading or applying it, including a role default.
-A mandatory companion named under section 2 step 4 is the task's one
-reference skill, not an extra method. When it does not fit this budget it
-is not listed in `Skills:`; instead name its full path and the reason in
-the task instructions/handoff, not in a companion chat line.
-Do not claim the full method was applied when its required companion
-was not read and applied.
+A project-local skill always wins over a shared skill covering the same
+ground, and a project-required skill is mandatory; it is reached through the
+project's own instructions (section 2), not through the Captain.
+
+Handing a worker a role skill is not reading or applying it. Do not claim a
+method was applied when a companion file that skill itself requires was not
+read and applied.
 
 ## 6. Orchestration boundary
 
@@ -555,7 +562,7 @@ BLOCKER/IMPORTANT/OPTIONAL counts. This is reporting discipline, not a
 mechanical gate: this configuration has no trusted enforcement runner for
 it and never auto-merges on a pass.
 
-This policy and the selected verification skills are guidance, not a
+This policy and the role skills are guidance, not a
 mechanical completion check. This configuration has no trusted verification
 runner or FirstMate completion hook; a passing fixture report cannot stand
 in for verification of the actual task changes.

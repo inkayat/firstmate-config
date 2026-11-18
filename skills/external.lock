@@ -32,13 +32,10 @@ superpowers:tdd	obra/superpowers	bb92a77741419a4ab5f06e711a283343f1ada0c3	skills
 ponytail:implement	DietrichGebert/ponytail	16352ac229eb08a9598dcae48fe9f2b342567d86	skills/ponytail	ponytail
 ponytail:review	DietrichGebert/ponytail	16352ac229eb08a9598dcae48fe9f2b342567d86	skills/ponytail-review	ponytail-review
 addy:planning	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/planning-and-task-breakdown	planning-and-task-breakdown
-addy:incremental	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/incremental-implementation	incremental-implementation
-addy:context	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/context-engineering	context-engineering
 addy:api-design	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/api-and-interface-design	api-and-interface-design
 addy:security	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/security-and-hardening	security-and-hardening
 addy:code-review	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/code-review-and-quality	code-review-and-quality
 addy:simplify	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/code-simplification	code-simplification
 addy:spec	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/spec-driven-development	spec-driven-development
-addy:browser-testing	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/browser-testing-with-devtools	browser-testing-with-devtools
 addy:frontend	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/frontend-ui-engineering	frontend-ui-engineering
 addy:documentation	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/documentation-and-adrs	documentation-and-adrs

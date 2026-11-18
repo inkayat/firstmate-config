@@ -264,20 +264,14 @@ than one file exists at a scope:
   sub/AGENTS.md        - wins only for files under sub/
   sub2/CLAUDE.md        - wins only for files under sub2/ (no AGENTS.md there)
 
-Required project skill:
-  .agents/skills/migration-canary/SKILL.md
-Requirement:
-  Read and apply this skill before reading, writing, reviewing, or editing
-  anything under migrations/.
+Project-local skills: the Captain selects none. The project's own
+instructions above (AGENTS.override.md) name the ones that apply - here
+.agents/skills/migration-canary/SKILL.md, for anything under migrations/ -
+so read and apply those. A project-local skill that shares a name with a
+role skill wins over it (.agents/skills/architecture-review/SKILL.md is such
+a skill here): apply the project-local version, never a global default.
 
-Required project skill (name collision with a global shared skill):
-  .agents/skills/architecture-review/SKILL.md
-Requirement:
-  This project-local skill overrides the global shared skill of the same
-  name for this task; apply the project-local version, never a global
-  default.
-
-Selected shared worker skill:
+Role skill (from the assigned role's autoloadSkills; read and apply):
   $C_SHARED_SKILL_NAME
 Requirement:
   Apply before declaring the task complete.
@@ -286,9 +280,9 @@ Skill-catalog evidence requirement:
   Never a filesystem scan: use your harness's own skill catalog or
   resource listing, and report exactly these four lines:
     PROJECT_SKILL_RESOLVED_PATH: <absolute path your harness resolved for
-      the required project skill above>
+      the project-required skill named in AGENTS.override.md>
     SHARED_SKILL_RESOLVED_PATH: <absolute path your harness resolved for
-      the selected shared worker skill above>
+      the role skill above>
     SKILL_CATALOG_SOURCES: <N> source root(s): <root1>[, <root2>, ...]
       (every skill source your harness's own catalog reports, by root
       path and count - never every individual skill name)
@@ -986,7 +980,7 @@ EOF
   cat > "$PI_HOME/.agents/skills/shared-fixture-skill/SKILL.md" <<'EOF'
 ---
 name: shared-fixture-skill
-description: Fixture stand-in for a selected shared worker skill.
+description: Fixture stand-in for a role skill.
 ---
 SHARED_FIXTURE_CANARY
 EOF
@@ -1126,8 +1120,8 @@ if [ -f "$CLI_DIR/repo/AGENTS.override.md" ]; then pass 'CLI prepare: fixture re
 
 handoff_out=$(bash "$SELF" handoff "$CLI_DIR/repo" 2>&1); handoff_rc=$?
 check 'CLI handoff: exits 0' 0 "$handoff_rc"
-contains 'CLI handoff: names the required project skill path' "$handoff_out" 'migration-canary/SKILL.md'
-contains 'CLI handoff: names the selected shared worker skill' "$handoff_out" "$C_SHARED_SKILL_NAME"
+contains 'CLI handoff: leaves project-local skills to the project instructions' "$handoff_out" 'the Captain selects none'
+contains 'CLI handoff: names the role skill' "$handoff_out" "$C_SHARED_SKILL_NAME"
 for marker in "$C_ROOT_OVERRIDE" "$C_ROOT_AGENTS_SHADOWED" "$C_ROOT_CLAUDE_NEVER_WIN" "$C_NESTED_SCOPE" "$C_NESTED_CLAUDE" \
   "$C_PROJECT_SKILL_BODY" "$C_SHARED_SKILL_BODY" "$C_PROJECT_WINS" "$C_GLOBAL_LEAK" "$C_CAPTAIN_ONLY"; do
   not_contains "CLI handoff: never quotes the canary marker '$marker'" "$handoff_out" "$marker"

@@ -1,6 +1,10 @@
 ---
 name: fm-senior-fullstack
 description: "Ordinary delivery work - features, fixes, refactors, tests - across whatever layers the change touches."
+autoloadSkills:
+  - test-driven-development
+  - ponytail
+  - verification-before-completion
 ---
 # Role: senior-fullstack
 

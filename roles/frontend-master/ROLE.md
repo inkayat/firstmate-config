@@ -46,24 +46,24 @@ that already implements the contract, or a real browser when the project has
 one. When no backend implements the contract yet, say so in your output: the
 real flow is then still unverified.
 
-Browser-verification is the transport-neutral default. Keep
-browser-testing-with-devtools conditional on an already approved compatible
-MCP capability; it grants no setup/install or unrelated-warning cleanup
-authority. Check focus/keyboard/responsive and relevant console/network/error
-behavior for the actual change. Project accessibility requirements win;
+Browser-verification is the transport-neutral method: use whichever approved
+browser capability the task already has; it grants no setup/install or
+unrelated-warning cleanup authority. Check focus/keyboard/responsive and
+relevant console/network/error behavior for the actual change. Project
+accessibility requirements win;
 [WCAG 2.2](https://www.w3.org/TR/2024/REC-WCAG22-20241212/) is a conditional
 standards reference, not a conformance claim from an older shared checklist.
-
-Defaults stay within two methods and one reference. If TDD is selected,
-explicitly replace an optional shared method rather than adding a third and
-name writing-good-tests in the reference slot. Domain and real-client proof
-obligations remain even when the corresponding method is not selected.
+Domain and real-client proof obligations apply to every frontend task.
 
 ## What to refuse
 
 Editing paths you do not own. Mocking the API in place of verifying the real
 flow when a backend implementing the contract is available. Adding a
 dependency or build step the project does not already use without asking.
+
+Starting a local server, launching a browser, or installing a package or a
+browser on your own initiative to get verification. Report the real flow as
+unverified instead of improvising a capability.
 
 ## Output
 

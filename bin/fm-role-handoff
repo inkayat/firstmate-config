@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# fm-role-handoff - print the role handoff for a delegated task's
+# `## Firstmate spec` (firstmate/primary-policy.md section 2).
+#
+# The Captain's only per-task capability choice is a role. This command turns
+# that role into the exact paths a worker must read: the ROLE.md, and the
+# shared skills named by that role's frontmatter `autoloadSkills`, each by exact
+# path with a read-and-apply requirement. It reads frontmatter only, selects
+# nothing, writes nothing and never inlines a role or skill body.
+#
+# Usage:
+#   fm-role-handoff <role>           the handoff block to paste into the brief
+#   fm-role-handoff --skills <role>  the role's autoloadSkills, one name per line
+#   fm-role-handoff --roles          every role name, one per line
+#
+# FM_CONFIG_ROOT locates roles/ (default: this checkout); FM_SKILLS_ROOT is the
+# shared skill root the worker reads (default: ~/.agents/skills).
+set -u
+
+self=${BASH_SOURCE[0]}
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case $target in /*) self=$target ;; *) self="$(cd "$(dirname "$self")" && pwd)/$target" ;; esac
+done
+CONFIG_ROOT="${FM_CONFIG_ROOT:-$(cd "$(dirname "$self")/.." && pwd -P)}"
+export ROLES_ROOT="$CONFIG_ROOT/roles" # read by fm-roles-lib.sh
+SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
+# shellcheck source=../firstmate/fm-roles-lib.sh
+. "$CONFIG_ROOT/firstmate/fm-roles-lib.sh"
+
+usage() { printf 'usage: %s <role> | --skills <role> | --roles\n' "${0##*/}" >&2; exit 2; }
+
+case ${1:-} in
+  --roles) [ "$#" -eq 1 ] || usage; role_names; exit 0 ;;
+  --skills) [ "$#" -eq 2 ] || usage; role_autoload_skills "$2"; exit $? ;;
+  ''|-*) usage ;;
+esac
+[ "$#" -eq 1 ] || usage
+
+role=$1
+file=$(role_file "$role") || { printf 'fm-role-handoff: no such role: %s\n' "$role" >&2; exit 1; }
+skills=$(role_autoload_skills "$role") || exit 1
+
+printf 'Assigned role: %s\n' "$role"
+printf 'Role source:\n  %s\n' "$file"
+printf 'Requirement:\n  Read and apply this role file in full before substantive work.\n'
+if [ -z "$skills" ]; then
+  printf 'Role skills:\n  none - this role loads no shared skill.\n'
+else
+  while IFS= read -r skill; do
+    printf 'Role skill:\n  %s/%s/SKILL.md\n' "$SKILLS_ROOT" "$skill"
+    printf 'Requirement:\n  Read and apply this skill in full before the first edit and before any shell work; follow its procedure step by step and name the steps you applied in your final report.\n'
+  done <<EOF
+$skills
+EOF
+fi
