@@ -47,7 +47,7 @@ create missing operational-home directories.
 
 | Command | Purpose |
 | --- | --- |
-| `fm` | Start the Pi Captain from any directory, preferring GPT-6.1 Sol medium |
+| `fm` | Start the Pi Captain from any directory, preferring GPT-6.2 Sol medium |
 | `fm --harness omp` | Use OMP explicitly; harness fallback is not automatic |
 | `fm --model claude` | Choose a model preset for this launch only; also accepts `codex` or `grok` |
 | `fm --check` / `fm --print-command` | Inspect startup resolution / the resolved command without launching |
@@ -77,7 +77,7 @@ as global authority at startup. The exact precedence belongs to
 ### Captain startup model
 
 [`captain-startup-models.tsv`](firstmate/captain-startup-models.tsv) owns the
-ordered chain: GPT-6.1 Sol medium, then a harness-specific Sonnet medium fallback.
+ordered chain: GPT-6.2 Sol medium, then a harness-specific Sonnet medium fallback.
 Rows for a different harness are ignored. Only an authoritative `UNAVAILABLE`
 skips a candidate; `UNKNOWN` remains eligible. Launch output explains fallback
 decisions.
@@ -90,7 +90,7 @@ providers. OMP probes use `models --json --no-extensions` to avoid writing
 FirstMate extension-load markers.
 
 `fm --model codex|claude|grok` selects, respectively,
-`openai-codex/gpt-6.1-sol`, `anthropic/claude-sonnet-5-5`, or `xai/grok-4.7`,
+`openai-codex/gpt-6.2-sol`, `anthropic/claude-sonnet-5-5`, or `xai/grok-4.7`,
 all at medium effort. A preset requires `AVAILABLE` for that exact model/effort.
 Invalid, unavailable or unverifiable presets warn and use the unchanged default
 chain on the same harness. Raw model ids are not accepted; nothing is persisted.
@@ -167,7 +167,7 @@ End the old Captain session and all its workers before activation; start a new
 
 [`crew-dispatch.json`](firstmate/crew-dispatch.json) owns ten semantic categories
 and a DEFAULT catch-all. Substantive work prefers Opus 5.5, bounded work may use
-Sonnet 5.5, and trivial work uses Haiku/Luna. GPT-6.1 Sol supplies cross-family
+Sonnet 5.5, and trivial work uses Haiku/Luna. GPT-6.2 Sol supplies cross-family
 routes and implementation alternatives; Astra is reserved for narrow worker
 escalations. Explicit Captain choices can override the profile.
 

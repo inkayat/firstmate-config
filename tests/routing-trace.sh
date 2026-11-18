@@ -228,7 +228,7 @@ t() { printf '%s\n' "$2" > "$TMP/$1"; printf '%s' "$TMP/$1"; }
 
 OPUS=anthropic/claude-opus-5-5
 SONNET=anthropic/claude-sonnet-5-5
-SOL=openai-codex/gpt-6.1-sol
+SOL=openai-codex/gpt-6.2-sol
 
 # skills_line <role> - the Skills line the policy derives for that role.
 skills_line() {
@@ -264,7 +264,7 @@ DEFAULT=$(block default.txt DEFAULT senior-fullstack omp "$OPUS" high 'no specif
 expect 'DEFAULT trace on Opus 5.5 high matches the debug-period catch-all' pass "$DEFAULT" omp "$OPUS" high
 
 TENTH=$(block tenth.txt 'TENTH-MAN #1' tenth-man pi "$SOL" high 'challenge Claude-authored completion claim')
-expect 'TENTH-MAN against Claude output on Pi GPT-6.1 Sol high is accepted' pass "$TENTH" pi "$SOL" high
+expect 'TENTH-MAN against Claude output on Pi GPT-6.2 Sol high is accepted' pass "$TENTH" pi "$SOL" high
 ARCH_WRONG_ROLE=$(block arch-role.txt 'ARCHITECTURE #1' senior-fullstack omp "$OPUS" high 'module boundary')
 expect 'ARCHITECTURE trace must name role architecture' fail "$ARCH_WRONG_ROLE" omp "$OPUS" high
 ARCH=$(block arch.txt 'ARCHITECTURE #1' architecture omp "$OPUS" high 'module boundary')

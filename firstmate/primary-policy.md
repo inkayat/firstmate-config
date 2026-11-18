@@ -333,18 +333,18 @@ not implied by the role.
 
 **Model catalog adoption.** Active routes use only `anthropic/claude-haiku-4-5`,
 `anthropic/claude-sonnet-5-5`, `anthropic/claude-opus-5-5`,
-`openai-codex/gpt-6-luna`, `openai-codex/gpt-6.1-sol`, and
-`openai-codex/gpt-6-astra`. OMP's native catalog lists all six with low
-through xhigh support; every Claude route is OMP. `openai-codex/gpt-6.1-sol`
+`openai-codex/gpt-6-luna`, `openai-codex/gpt-6.2-sol`, and
+`openai-codex/gpt-6.2-astra`. OMP's native catalog lists all six with low
+through xhigh support; every Claude route is OMP. `openai-codex/gpt-6.2-sol`
 is also the OMP GPT alternative in all four IMPLEMENT/IMPLEMENT-LARGE rules
 (same effort as each rule's Claude candidate) and the first
 Captain-startup candidate in `captain-startup-models.tsv` (medium effort);
 that chain's Claude Sonnet fallback step is harness-scoped (OMP's own
 `anthropic/claude-sonnet-5-5` versus Pi's unversioned
 `pi-claude-code-provider/sonnet` alias) - see README.md "Captain startup
-model". `openai-codex/gpt-6-astra` is confined to Pi. Sonnet 5, Opus 5,
-Fable 5.1, GPT-5.5, GPT-5.6 Luna/Sol, and GPT-6 Sol are retired from worker
-routing.
+model". `openai-codex/gpt-6.2-astra` is confined to Pi. Sonnet 5, Opus 5,
+Fable 5.1, GPT-5.5, GPT-5.6 Luna/Sol, GPT-6 Sol, GPT-6.1 Sol, and GPT-6 Astra
+are retired from worker routing.
 
 **Deferred to a later release.** The local Qwen/Ollama lane remains absent
 while that machine is offline. It is not configured anywhere in this
