@@ -213,6 +213,40 @@ Role, route and skills therefore stay separate: the route is model/effort, the
 skills come with the role. The `tenth-man` role is for deliberate adversarial
 challenge, not routine review.
 
+### Workflows
+
+A task that needs build, test and review follows a workflow instead of one
+worker: [`build-test-review`](workflows/build-test-review.json) (implement,
+independent QA, independent code review, delivery) or, when the requirement
+needs a plan first,
+[`plan-build-test-review`](workflows/plan-build-test-review.json). QA failures
+and review findings go back to the implementer verbatim, QA re-evaluates
+against them, and a loop that reaches its limit (5) escalates to the captain
+with the accumulated feedback instead of stopping or passing. Small or
+mechanical tasks use no workflow. The Captain's rules are
+[primary policy §8](firstmate/primary-policy.md#8-workflows).
+
+A workflow is a JSON file validated by
+[`workflows/workflow.schema.json`](workflows/workflow.schema.json): named steps
+bound to role aliases, an input contract, an output contract, a transition per
+outcome and per-loop `maxIterations` with `onExhausted`. JSON because the
+repository already uses `jq` and JSON, so no runtime, parser or dependency is
+added; a new workflow or a different loop shape is a new file, and swapping the
+agent for a kind of work is one edit of its `roles` map.
+[`bin/fm-workflow`](bin/fm-workflow) (bash and `jq`) is the engine:
+
+| Command | Purpose |
+| --- | --- |
+| `fm-workflow list` | Each workflow with its `when` guidance |
+| `fm-workflow validate <workflow\|file>` | Schema, roles exist, every outcome routed, every step reachable, every cycle passes a limited loop |
+| `fm-workflow next <workflow> <state-file> [--task t] [--spec] [result flags]` | The current step with its exact role handoff, inputs and loop counters; with a result flag, records it and takes the transition |
+| `fm-workflow verdict <report>` | Strict parse of a QA or review report's final fenced `verdict` block; anything else is FAIL |
+| `fm-workflow trace <state-file> [captured-block]` | The `Workflow:` trace line derived from the state file |
+
+The engine launches nothing: the Captain launches each step's worker as it
+does any worker. State is one JSON file per task in the task's data folder,
+never in a repository.
+
 ### Bounded internal delegation
 
 Only FirstMate owns macro orchestration. OMP's native bounded `task` helpers may
@@ -258,6 +292,7 @@ bash tests/install-launch.sh
 bash tests/update.sh
 bash tests/standalone-contract.sh
 bash tests/roles.sh          # role lint, handoff expansion, policy text, install --verify
+bash tests/workflows.sh      # workflow schema, engine sequences, verdict parser, trace derivation
 ```
 
 `tests/routing-trace.sh` also contains a real spawn seam;
@@ -279,3 +314,16 @@ workers. The live layer is one run per case plus its control: evidence, not a
 guarantee. A real skill whose advice a strong model already follows cannot
 discriminate (its control passes); the mechanism cases are the unambiguous
 proof that a role's autoloaded skill is read and applied.
+
+Workflows are proven in the same three layers:
+
+| Layer | Command | What it proves |
+| --- | --- | --- |
+| Automation | `bash tests/workflows.sh` | Both definitions validate and each defect (unknown role, unreachable step, missing `onExhausted`, bad transition, unlimited cycle, ...) is rejected; the verdict parser is strict; the engine on scripted outcomes: straight through, QA failing twice then passing, review feedback then QA needed / not needed, loop exhaustion escalating, malformed verdict = FAIL; each step's handoff is `bin/fm-role-handoff`'s; the trace line is derived from the state file |
+| End to end | `bash tests/workflows-e2e.sh` | Both workflows driven through the real `fm-brief.sh` and `fm-spawn.sh` with a fake `omp`: each launched worker's first input carries the step's role handoff verbatim and exactly the previous verdict's feedback (SKIPs without tmux/treehouse/FirstMate) |
+| Live (opt-in) | `FM_WORKFLOW_LIVE=1 bash tests/workflows-live.sh [case...]` | Real workers (same model, login and artifact rules as the roles live layer; `FM_WORKFLOW_LIVE_*` knobs) on fixture problems that force the loops: QA must fail a change that only a hidden acceptance kit catches and the implementer fixes it from QA's feedback; a flaw only the reviewer finds goes back to the implementer and the decision step runs; an ambiguous requirement is settled by the planner's plan, which implement, QA and review receive. A control run of the same step without the forcing input must not produce the fix. A thin driver plays the Captain mechanically, so this tests roles, verdicts, handoff and loop mechanics, not the Captain model's choice of workflow |
+
+`bash tests/workflows-live.sh` without the opt-in runs only its offline
+self-test: the whole driver against canned workers, including harness
+mutations (an implementer that ignores feedback must end in an escalation, one
+that is right at once must be flagged as an unforced loop).

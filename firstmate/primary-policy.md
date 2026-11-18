@@ -46,6 +46,15 @@ a display or print prospective stages as if already dispatched:
   identity distinct from native selection, current stage, authority,
   task-specific fit/reasons, input/output handoff, dependencies, scope
   and stop boundary stay inside the task instructions/handoff.
+- A task running a workflow (section 8) adds one line to its block, derived by
+  `bin/fm-workflow trace <state-file>` from the task's state file and never
+  typed from memory:
+
+      Workflow: <workflow> v<version> | step <step> #<run> | loops <loop> <used>/<max>, ... | <running|complete|escalated>
+
+  `bin/fm-workflow trace <state-file> <captured-block>` fails when a captured
+  Workflow line differs from the derived one; `tests/routing-trace.sh check`
+  ignores the line.
 
 End-of-period removal: when the captain ends debugging, remove this section
 0's temporary trace/diagnostic, fixtures and guide references. Retain ordinary
@@ -310,6 +319,11 @@ ship. Neither mapping is fixed: a QUICK question can be a scout, a QUICK
 rename a ship; a DEEP diagnosis is naturally a scout, a DEEP fix naturally a
 ship. Judge the actual task, not the category label.
 
+**Build, test and review are a workflow, not one worker.** A task that needs
+implementation, independent QA and independent code review, with or without a
+plan first, follows a workflow (section 8) instead of being routed once; each
+of its steps is then routed here like any task.
+
 **Task handoff.** Name the assigned role and absolute role source path
 (through the section 2 role handoff), input/output artifacts, acceptance,
 true dependencies, scope/mutation/validation limits and delivery/stop
@@ -374,6 +388,9 @@ role file plus its line here, never a new dispatch category:
   Markdown
 - `planner` - turns an unclear or oversized request into a written spec and
   an ordered task list; never implements
+- `qa` - independent verification of a change against the task's acceptance:
+  runs and probes it, never edits it, and ends with a machine-readable verdict
+  (section 8); `code-reviewer` ends its report with the same verdict block
 
 Skill-less roles - choosing one of these is how a task gets no skill; the
 Captain never decides "no skill" separately:
@@ -519,10 +536,11 @@ security, payment, or other risk label is by itself authority for a reviewer.
 change as its path requires (see "Browser and manual verification" above) and
 no independent reviewer is dispatched or awaited - for substantive,
 cross-component, security, or payment work too - unless the captain
-explicitly requested one. Genuine security, destructive, irreversible, and
-payment authority boundaries still escalate to the captain exactly as the
-official contract and the task's own authority require, independent of this
-section.
+explicitly requested one or the task runs a workflow (section 8), whose qa
+and code-review steps are that request. Genuine security, destructive,
+irreversible, and payment authority boundaries still escalate to the captain
+exactly as the official contract and the task's own authority require,
+independent of this section.
 
 **Explicitly requested review.** When the captain explicitly requests a
 separate review or audit, or the authorized task is itself a knowledge-only
@@ -566,3 +584,82 @@ This policy and the role skills are guidance, not a
 mechanical completion check. This configuration has no trusted verification
 runner or FirstMate completion hook; a passing fixture report cannot stand
 in for verification of the actual task changes.
+
+## 8. Workflows
+
+A workflow is a declarative state machine in `workflows/<name>.json`
+(structure: `workflows/workflow.schema.json`) that `bin/fm-workflow` executes:
+named steps, each bound to a role alias, with an input contract, an output
+contract, one transition per outcome, and loop limits. The engine decides only
+what the definition says. It launches no agent, merges nothing and never
+writes to a project; the Captain launches every step's worker through
+sections 2-3 exactly as it launches any worker. Two workflows exist.
+`bin/fm-workflow list` prints each with its `when`:
+
+- Workflow `build-test-review`: implement, then independent QA, then independent code
+  review, then delivery. For a task that changes behavior or code, whose
+  requirement is clear enough to implement without a written plan, and that
+  warrants independent verification and review.
+- Workflow `plan-build-test-review`: the same with a planner step first; implement,
+  QA and review receive the plan. For a task that needs the above and whose
+  requirement a reasonable implementer could read two ways that behave
+  differently, or is too large to start without an ordered task list.
+
+**Choosing.** Small or mechanical work, a question, research, diagnosis or a
+change one worker can verify itself uses no workflow: the `chore` or the
+narrowest fitting role, as before. When `no-mistakes` is the selected delivery
+path it owns review and testing (section 7): use no workflow unless the captain
+explicitly asks for one. An explicit captain choice of workflow, or of none,
+always wins. A workflow is the captain's standing explicit request for its qa
+and code-review steps, and acting on their findings is the workflow's next
+step, not a separate authorization. Section 7's no-reviewer default applies
+to everything that runs no workflow.
+
+**Running.**
+
+1. Start with `bin/fm-workflow next <workflow> $FM_HOME/data/<task-id>/workflow.json --task <the captain's intent>`.
+   The state file lives only in the task's data folder, never in a repository;
+   it embeds the definition it started with, so editing `workflows/` never
+   changes a task in flight. `next` without a result flag only prints the current
+   step.
+2. Every `work` step is a fresh worker with its own task and worktree, even
+   when a role repeats (the implementer's fix round): section 2's role-change
+   rule, and each step's spec carries everything it needs, so no step relies on
+   another worker's memory. Brief it with `next ... --spec` pasted into
+   `## Firstmate spec` unchanged: it contains the step's instruction, its
+   inputs, its output contract, and `bin/fm-role-handoff <role>` verbatim for
+   the role bound to the step's alias. Route the step by section 3 as any task:
+   the step's work picks the category (implementation steps IMPLEMENT or
+   IMPLEMENT-LARGE, qa and code-review steps REVIEW, plan by its semantics);
+   the role is the step's, never the category's. The change travels as a
+   commit range on the task branch, the plan as a file in the task's data
+   folder; record them with `--change` and `--report`.
+3. Record each result. Report step: `--outcome done|blocked`, with `--report`
+   and `--change` when the worker produced them. Verdict step (qa,
+   code-review): `--report <the worker's final report file>`; the outcome is
+   parsed from the verdict block by the engine, never read, inferred or
+   overridden by the Captain, and a missing or malformed verdict is a FAIL.
+   Decision step: `--decide <choice> --reason <why>`, by the criteria the step
+   prints; no worker is launched and the reason is kept in the state.
+   Delivery step: Firstmate delivers through the task's own delivery mode (for
+   direct-PR the worker that owns the branch pushes it and opens the PR ready
+   for review); it never merges, and `--outcome done` records it.
+4. Feedback travels verbatim. The next step's spec carries the feedback list
+   exactly as the verdict recorded it: pasted unchanged, never summarised,
+   merged, reordered, softened, or added to by the Captain. The implementer
+   addresses every item by id; QA re-evaluates against the same items; the
+   re-review is handed its own previous findings with the corrected delta.
+5. Each loop has `maxIterations` (5 in both workflows) and `onExhausted:
+   escalate`. A blocked step or an exhausted loop ends the state `escalated`,
+   and its spec lists every accumulated feedback entry verbatim. Report that
+   to the captain with the feedback; an escalated state is terminal, and
+   continuing is the captain's decision, never an edit of the state file.
+6. In the Captain chat, each block of section 0 for a worker of a workflow
+   also carries the derived `Workflow:` line.
+
+Adding or changing a workflow is a JSON file under `workflows/` plus
+`bin/fm-workflow validate`, never an engine change; swapping the agent for a
+kind of work is one edit of the definition's `roles` map. Bump `version` on a
+behavior change. The engine proves sequence, handoff and loop mechanics; it
+cannot prove that the Captain chose the right workflow or that a worker read
+and applied its role.
