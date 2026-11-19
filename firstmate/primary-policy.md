@@ -377,10 +377,6 @@ role file plus its line here, never a new dispatch category:
   the captain explicitly requests (section 7)
 - `refactorist` - one small, behavior-preserving improvement per task, proven
   by tests
-- `django-pro` - Django and Django REST Framework backend implementation
-  against a fixed contract
-- `frontend-master` - web UI implementation against a fixed contract,
-  verified through the real client
 - `debugger` - source-read-only diagnosis; explicitly authorized local/test
   reproductions and a causal handoff, never source fixes
 - `technical-writer` - scoped documentation of settled behavior/decisions;
@@ -392,8 +388,9 @@ role file plus its line here, never a new dispatch category:
   runs and probes it, never edits it, and ends with a machine-readable verdict
   (section 8); `code-reviewer` ends its report with the same verdict block
 
-Skill-less roles - choosing one of these is how a task gets no skill; the
-Captain never decides "no skill" separately:
+Skill-less roles (`tenth-man`, listed above, is one too) - choosing one of
+these is how a task gets no skill; the Captain never decides "no skill"
+separately:
 
 - `scout` - read-only fact gathering over a codebase or a handed PR, reported
   with evidence and limits; never reviews, judges, or changes anything
@@ -411,18 +408,19 @@ role handoff. A role describes how to work; it never outranks the project.
 Skills belong to roles, not to tasks. A role file's frontmatter
 `autoloadSkills` is the complete list of shared worker skills a worker running
 that role is handed (section 2): at most three per role, and none for a role
-that needs none (`scout`, `chore`). The Captain does not select, add, drop,
+that needs none (`scout`, `chore`, `tenth-man`). The Captain does not select, add, drop,
 budget, substitute or name skills for a delegated task, and does not name
 project-local skills. To change what a kind of work loads, change the role or
 add one (a role file plus its line in section 4, never a dispatch category).
 
 An autoloaded skill must be a shared skill this repository manages (`skills/`
 or `skills/external.lock`), must exist at that path, and appears once per
-role. Every managed skill is autoloaded by at least one installed role, except
-the operator skills named below, which no role may carry.
+role. Every repo-authored skill is autoloaded by at least one installed role,
+except the operator skills named below, which no role may carry; an external
+pin may stay installed without a role.
 `tests/roles.sh` enforces all of this.
 
-Operator skills (Captain/operator only): `firstmate-cleanup`.
+Operator skills (Captain/operator only): none.
 
 Official FirstMate internal skills (the official checkout's own
 `.agents/skills`) are never a role skill, per section 2.
