@@ -372,7 +372,7 @@ SH
   OMP_BIN=$fake; MODEL=fake; SKILL_SRC="$t/skills"
   mkdir -p "$SKILL_SRC"
   local s
-  for s in test-driven-development ponytail verification-before-completion code-review-and-quality ponytail-review spec-driven-development planning-and-task-breakdown; do
+  for s in test-driven-development ponytail verification-before-completion code-review-and-quality ponytail-review karpathy-guidelines spec-driven-development planning-and-task-breakdown; do
     mkdir -p "$SKILL_SRC/$s"; : > "$SKILL_SRC/$s/SKILL.md"
   done
   for c in "$CASES_DIR"/*.sh; do

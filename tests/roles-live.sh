@@ -237,8 +237,8 @@ mkdir -p "$sess"
 SH
   chmod +x "$fake"
   OMP_BIN="$fake"; MODEL=fake; SKILL_SRC="$t/skills"
-  mkdir -p "$SKILL_SRC/code-review-and-quality" "$SKILL_SRC/ponytail-review"
-  : > "$SKILL_SRC/code-review-and-quality/SKILL.md"; : > "$SKILL_SRC/ponytail-review/SKILL.md"
+  mkdir -p "$SKILL_SRC/code-review-and-quality" "$SKILL_SRC/ponytail-review" "$SKILL_SRC/karpathy-guidelines"
+  : > "$SKILL_SRC/code-review-and-quality/SKILL.md"; : > "$SKILL_SRC/ponytail-review/SKILL.md"; : > "$SKILL_SRC/karpathy-guidelines/SKILL.md"
   mkdir -p "$t/live"
   cat > "$t/live/selftest-case.sh" <<'CASE'
 CASE_KIND=role
@@ -248,15 +248,15 @@ case_setup() { printf 'x\n' > a.txt; }
 case_grade() { final_has 'MARKER-FOLLOWED' && [ -e selftest-marker.txt ] && { echo marker found; return 0; }; echo "no marker"; return 1; }
 CASE
   SPENT=0
-  # Both code-reviewer skills are read by the fake only for the FIRST one; the second stays
-  # unread, so the harness must report a missing read (read=NO) - proving the read check bites.
+  # The fake reads only the FIRST code-reviewer skill; the others stay unread, so the
+  # harness must report a missing read (read=NO) - proving the read check bites.
   out=$(run_case "$t/live/selftest-case.sh" 2>&1); rc=$?
   case $out in *"never read ponytail-review"*) pass 'selftest: a skill that was not read in the transcript fails the case' ;; *) fail "selftest: unread second skill not reported: $out" ;; esac
   [ -s "$ART/selftest-case/code-reviewer/calls.tsv" ] && pass 'selftest: tool calls parsed from the session jsonl' || fail 'selftest: no tool calls parsed'
   case $(cat "$ART/selftest-case/control-noskill/final.txt") in "done, no method") pass 'selftest: the control run really ran without the skill block' ;; *) fail 'selftest: control transcript wrong' ;; esac
   grep -q 'Role skill:' "$ART/selftest-case/control-noskill/prompt.md" && fail 'selftest: control prompt still carries a Role skill entry' || pass 'selftest: control prompt carries no Role skill entry'
   grep -q 'Role skills:' "$ART/selftest-case/control-noskill/prompt.md" && pass 'selftest: control prompt says the role loads no skill' || fail 'selftest: control prompt lacks the none line'
-  [ "$(grep -c 'Role skill:' "$ART/selftest-case/code-reviewer/prompt.md")" -eq 2 ] && pass 'selftest: the with-skill prompt carries both role skills' || fail 'selftest: with-skill prompt wrong'
+  [ "$(grep -c 'Role skill:' "$ART/selftest-case/code-reviewer/prompt.md")" -eq 3 ] && pass 'selftest: the with-skill prompt carries all three role skills' || fail 'selftest: with-skill prompt wrong'
   [ "$(cat "$ART/selftest-case/code-reviewer/cost.txt")" = "0.020000" ] && pass 'selftest: cost summed from session usage' || fail "selftest: cost $(cat "$ART/selftest-case/code-reviewer/cost.txt")"
   # budget guard
   SPENT=9; BUDGET=1

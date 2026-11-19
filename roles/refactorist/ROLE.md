@@ -4,6 +4,7 @@ description: "One small, behavior-preserving improvement per task, proven by tes
 autoloadSkills:
   - code-simplification
   - verification-before-completion
+  - karpathy-guidelines
 ---
 # Role: refactorist
 

@@ -139,15 +139,22 @@ has 'handoff for an unknown role says so' "$out" 'no such role'
 out=$("$HANDOFF" 'Bad Role' 2>&1); rc=$?
 check 'handoff rejects a malformed role name' "$rc" 1
 check 'handoff --roles lists every role' "$("$HANDOFF" --roles | sort | tr '\n' ' ')" "$(ls "$FIX_SRC/roles" | sort | tr '\n' ' ')"
-for sel in senior-fullstack code-reviewer architecture planner; do
+for sel in senior-fullstack code-reviewer refactorist architecture planner; do
   case $sel in
     senior-fullstack) w='test-driven-development ponytail verification-before-completion' ;;
-    code-reviewer) w='code-review-and-quality ponytail-review' ;;
+    code-reviewer) w='code-review-and-quality ponytail-review karpathy-guidelines' ;;
+    refactorist) w='code-simplification verification-before-completion karpathy-guidelines' ;;
     architecture) w='api-and-interface-design' ;;
     planner) w='spec-driven-development planning-and-task-breakdown' ;;
   esac
   check "role $sel carries the skills the inventory assigned it" "$("$HANDOFF" --skills "$sel" | tr '\n' ' ')" "$w "
 done
+# karpathy-guidelines is for the refactoring and reviewing roles; senior-fullstack keeps ponytail.
+karpathy_roles=
+for role in $("$HANDOFF" --roles | sort); do
+  "$HANDOFF" --skills "$role" | grep -qx karpathy-guidelines && karpathy_roles="$karpathy_roles $role"
+done
+check 'karpathy-guidelines is autoloaded by exactly the refactoring and reviewing roles' "$karpathy_roles" ' code-reviewer refactorist'
 
 # --- 4. the Captain side contains no skill-selection instruction ------------------------
 captain_docs="$POLICY $FIX_SRC/README.md $FIX_SRC/firstmate/captain.md $FIX_SRC/firstmate/crew-dispatch.json"
