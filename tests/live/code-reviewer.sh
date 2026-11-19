@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LIVE case: code-reviewer (skills code-review-and-quality, ponytail-review).
+# LIVE case: code-reviewer (skills code-review-and-quality, ponytail-review, karpathy-guidelines).
 # Trap: the patch changes apply_discount()'s return type and fixes checkout.py, but
 #   report.py (not in the patch) still formats a float. The ponytail-review skill
 #   alone defines the report shape: it opens with `What this change does:` and gives
@@ -75,7 +75,7 @@ case_grade() {
 case_canned() { # <role> good|bad
   local mode=$2
   if [ "$mode" = good ]; then
-    printf 'read\t{"path":"/home/x/.agents/skills/code-review-and-quality/SKILL.md"}\nread\t{"path":"/home/x/.agents/skills/ponytail-review/SKILL.md"}\ngrep\t{"pattern":"apply_discount"}\n' > "$RUN/calls.tsv"
+    printf 'read\t{"path":"/home/x/.agents/skills/code-review-and-quality/SKILL.md"}\nread\t{"path":"/home/x/.agents/skills/ponytail-review/SKILL.md"}\nread\t{"path":"/home/x/.agents/skills/karpathy-guidelines/SKILL.md"}\ngrep\t{"pattern":"apply_discount"}\n' > "$RUN/calls.tsv"
     cat > "$RUN/final.txt" <<'R'
 What this change does: apply_discount() now returns a dict with total and saved instead of a number. checkout.py is updated to read ["total"].
 

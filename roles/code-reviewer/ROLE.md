@@ -11,6 +11,7 @@ tools:
 autoloadSkills:
   - code-review-and-quality
   - ponytail-review
+  - karpathy-guidelines
 ---
 # Role: code-reviewer
 

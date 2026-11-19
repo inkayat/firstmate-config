@@ -3,7 +3,8 @@
 # install.sh clones each repository once into a machine-local cache, checks out
 # the exact commit below, and symlinks the named skill directory into
 # ~/.agents/skills/. Nothing is vendored into this repository, so their
-# licenses stay with their sources: all three are MIT.
+# licenses stay with their sources: all four are MIT (see the karpathy caveat
+# under Known deviations).
 #
 # To move a pin, review the release diff, change the sha, then run
 # firstmate-config/install.sh.
@@ -15,6 +16,8 @@
 # Reviewed 2026-10-20 against official upstream stable releases:
 # obra/superpowers v7.0.0; DietrichGebert/ponytail v5.3.2;
 # addyosmani/agent-skills 0.6.13. Exact commits below, never moving tags.
+# multica-ai/andrej-karpathy-skills has no release or tag; its single skill was
+# reviewed 2026-11-19 at the main commit below.
 #
 # Known deviations:
 #   - ponytail:implement does not exist upstream. The repository ships exactly
@@ -25,6 +28,10 @@
 #   - addyosmani skills link to ../../references/*.md at the repository root,
 #     outside their own directory, so install.sh also links ~/.agents/references
 #     at the parent that those relative paths resolve to.
+#   - multica-ai/andrej-karpathy-skills declares MIT in the skill's SKILL.md
+#     frontmatter and in its README, but ships no standalone LICENSE file at the
+#     pinned commit. Attribution stays with the source (nothing is vendored);
+#     re-check for a LICENSE file when moving this pin.
 
 superpowers:debug	obra/superpowers	bb92a77741419a4ab5f06e711a283343f1ada0c3	skills/systematic-debugging	systematic-debugging
 superpowers:verify	obra/superpowers	bb92a77741419a4ab5f06e711a283343f1ada0c3	skills/verification-before-completion	verification-before-completion
@@ -39,3 +46,4 @@ addy:simplify	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	s
 addy:spec	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/spec-driven-development	spec-driven-development
 addy:frontend	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/frontend-ui-engineering	frontend-ui-engineering
 addy:documentation	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/documentation-and-adrs	documentation-and-adrs
+karpathy:guidelines	multica-ai/andrej-karpathy-skills	2c606141936f1eeef17fa3043a72095b4765b9c2	skills/karpathy-guidelines	karpathy-guidelines

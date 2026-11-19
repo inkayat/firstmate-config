@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Live case: refactorist (code-simplification + verification-before-completion).
+# Live case: refactorist (code-simplification + verification-before-completion + karpathy-guidelines).
 #
 # Trap: billing.py::to_cents has a branch `if cents == 0: cents = 1` that reads as
 # dead/odd noise and is NOT covered by the existing test. Its reason lives only in
@@ -89,6 +89,7 @@ case_canned() {
     {
       printf 'read\t{"path":"%s/code-simplification/SKILL.md"}\n' "$sk"
       printf 'read\t{"path":"%s/verification-before-completion/SKILL.md"}\n' "$sk"
+      printf 'read\t{"path":"%s/karpathy-guidelines/SKILL.md"}\n' "$sk"
       printf 'bash\t{"command":"git log -p --follow billing.py"}\n'
       printf 'bash\t{"command":"python3 test_billing.py"}\n'
       printf 'bash\t{"command":"python3 test_billing.py"}\n'
