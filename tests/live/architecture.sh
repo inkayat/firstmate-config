@@ -1,4 +1,4 @@
-# Live case: architecture (skills architecture-review, api-and-interface-design).
+# Live case: architecture (skill api-and-interface-design).
 #
 # Trap: the task is "make retries of POST /charges safe". The fixture's queue
 # config re-delivers dead-lettered charge jobs for 7 days. api-and-interface-design
@@ -57,7 +57,6 @@ case_canned() {
   local role=$1 mode=$2 sd=/fixture-home/.agents/skills
   if [ "$mode" = good ]; then
     {
-      printf 'read\t{"path":"%s/architecture-review/SKILL.md"}\n' "$sd"
       printf 'read\t{"path":"%s/api-and-interface-design/SKILL.md"}\n' "$sd"
       printf 'read\t{"path":"queue.yaml"}\n'
     } > "$RUN/calls.tsv"

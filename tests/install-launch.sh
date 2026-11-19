@@ -18,7 +18,7 @@ has 'env file points the config root at standalone config' "$(cat "$HOME/.config
 check 'fm launcher links into standalone config' "$(target "$HOME/.local/bin/fm")" "$FMC/bin/fm"
 check 'routing profile links into standalone config' "$(target "$FMHOME/config/crew-dispatch.json")" "$FMC/firstmate/crew-dispatch.json"
 check 'role agent links into standalone config' "$(target "$HOME/.omp/agent/agents/fm-senior-fullstack.md")" "$FMC/roles/senior-fullstack/ROLE.md"
-check 'config-owned shared skill links into standalone config' "$(target "$HOME/.agents/skills/architecture-review")" "$FMC/skills/architecture-review"
+check 'config-owned shared skill links into standalone config' "$(target "$HOME/.agents/skills/demo-local")" "$FMC/skills/demo-local"
 check 'pinned external skill is linked' "$(cat "$HOME/.agents/skills/demo-method/SKILL.md" | tail -1)" 'Read ../../references/checklist.md'
 check 'external skill ancestor reference resolves from the shared root' \
   "$(cat "$HOME/.agents/skills/demo-method/../../references/checklist.md" 2>&1)" checklist

@@ -105,13 +105,13 @@ case $2 in
     ;;
   partial)
     push_change "$OFFICIAL_REMOTE" AGENTS.md 'official firstmate v2'
-    rm "$HOME/.agents/skills/architecture-review"
-    ln -s "$T/elsewhere" "$HOME/.agents/skills/architecture-review"
+    rm "$HOME/.agents/skills/demo-local"
+    ln -s "$T/elsewhere" "$HOME/.agents/skills/demo-local"
     run_update; status=$?
     check 'a failed reconcile fails the update' "$status" 1
     has 'failure after the official move is a partial update' "$(cat "$T/update.out")" 'PARTIAL UPDATE'
     check 'official move is kept, not rolled back' "$(git -C "$OFFICIAL" rev-parse HEAD)" "$(remote_tip "$OFFICIAL_REMOTE")"
-    check 'foreign skill link is left untouched' "$(readlink "$HOME/.agents/skills/architecture-review")" "$T/elsewhere"
+    check 'foreign skill link is left untouched' "$(readlink "$HOME/.agents/skills/demo-local")" "$T/elsewhere"
     ;;
 esac
 finish

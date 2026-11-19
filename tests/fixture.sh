@@ -133,6 +133,8 @@ make_world() {
     "$FIX_SRC/firstmate/stack-manifest.tsv" > "$d/firstmate/stack-manifest.tsv"
   printf 'fixture:demo\taddyosmani/agent-skills\t%s\tskills/demo-method\tdemo-method\n' "$pack_sha" \
     > "$d/skills/external.lock"
+  mkdir -p "$d/skills/demo-local"
+  printf -- '---\nname: demo-local\ndescription: fixture\n---\n' > "$d/skills/demo-local/SKILL.md"
   seed_remote "$CONFIG_REMOTE" "$d"
   git clone -q "$CONFIG_REMOTE" "$CONFIG"
 }

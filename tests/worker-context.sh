@@ -142,7 +142,7 @@ C_MIGRATION_FILE='migrations/0001_init.sql'
 # deliberately conflicting root/nested instructions, a project-local
 # mandatory skill (PROJECT_SKILL_CANARY, body-only marker), and a
 # project-local skill that collides by name with the real global shared
-# skill "architecture-review" this repository installs (PROJECT_WINS_OVER_SHARED
+# skill "api-and-interface-design" this repository installs (PROJECT_WINS_OVER_SHARED
 # marker), proving project-local-over-global precedence
 # (firstmate/primary-policy.md section 1). Never deleted by this function;
 # the caller owns the directory's lifetime.
@@ -150,7 +150,7 @@ fixture_prepare() {
   local dir=$1 repo="$1/repo"
   mkdir -p "$repo/sub" "$repo/sub2" "$repo/migrations" \
     "$repo/.agents/skills/migration-canary" \
-    "$repo/.agents/skills/architecture-review"
+    "$repo/.agents/skills/api-and-interface-design"
 
   cat > "$repo/AGENTS.override.md" <<EOF
 Rule: $C_ROOT_OVERRIDE applies at the repository root.
@@ -203,13 +203,13 @@ reviewing, or editing anything under migrations/.
 EOF
 
   # Project-local skill with the same name as the real global shared skill
-  # "architecture-review" this repository installs into ~/.agents/skills.
-  cat > "$repo/.agents/skills/architecture-review/SKILL.md" <<EOF
+  # "api-and-interface-design" this repository installs into ~/.agents/skills.
+  cat > "$repo/.agents/skills/api-and-interface-design/SKILL.md" <<EOF
 ---
-name: architecture-review
-description: Fixture project-local architecture-review, must win over global.
+name: api-and-interface-design
+description: Fixture project-local api-and-interface-design, must win over global.
 ---
-# Project-local architecture-review
+# Project-local api-and-interface-design
 
 $C_PROJECT_WINS: this project-local skill must win over the global shared
 skill of the same name.
@@ -268,7 +268,7 @@ Project-local skills: the Captain selects none. The project's own
 instructions above (AGENTS.override.md) name the ones that apply - here
 .agents/skills/migration-canary/SKILL.md, for anything under migrations/ -
 so read and apply those. A project-local skill that shares a name with a
-role skill wins over it (.agents/skills/architecture-review/SKILL.md is such
+role skill wins over it (.agents/skills/api-and-interface-design/SKILL.md is such
 a skill here): apply the project-local version, never a global default.
 
 Role skill (from the assigned role's autoloadSkills; read and apply):
@@ -969,11 +969,11 @@ else
   PI_REPO="$FIX_DIR/repo"
   PI_HOME="$TMP_ROOT/pi-home"
   PI_AGENT_DIR="$PI_HOME/.pi/agent"
-  mkdir -p "$PI_HOME/.agents/skills/architecture-review" "$PI_HOME/.agents/skills/shared-fixture-skill" "$PI_AGENT_DIR"
-  cat > "$PI_HOME/.agents/skills/architecture-review/SKILL.md" <<EOF
+  mkdir -p "$PI_HOME/.agents/skills/api-and-interface-design" "$PI_HOME/.agents/skills/shared-fixture-skill" "$PI_AGENT_DIR"
+  cat > "$PI_HOME/.agents/skills/api-and-interface-design/SKILL.md" <<EOF
 ---
-name: architecture-review
-description: Real global shared architecture-review stand-in.
+name: api-and-interface-design
+description: Real global shared api-and-interface-design stand-in.
 ---
 $C_GLOBAL_LEAK
 EOF
@@ -1049,8 +1049,8 @@ EOF
     contains 'Pi native-loader probe: untrusted project still sees the shared global skill' "$probe_out" 'shared-fixture-skill'
     not_contains 'Pi native-loader probe: untrusted project never sees the project-local migration skill' "$UNTRUSTED_PART" 'migration-canary'
     contains 'Pi native-loader probe: trusted project sees the required migration skill' "$TRUSTED_PART" 'migration-canary'
-    contains 'Pi native-loader probe: trusted project-local architecture-review wins the same-name collision' "$TRUSTED_PART" "\"path\":\"$PI_REPO/.agents/skills/architecture-review/SKILL.md\""
-    not_contains 'Pi native-loader probe: the global architecture-review stand-in never wins once project-local exists' "$TRUSTED_PART" "\"path\":\"$PI_HOME/.agents/skills/architecture-review/SKILL.md\""
+    contains 'Pi native-loader probe: trusted project-local api-and-interface-design wins the same-name collision' "$TRUSTED_PART" "\"path\":\"$PI_REPO/.agents/skills/api-and-interface-design/SKILL.md\""
+    not_contains 'Pi native-loader probe: the global api-and-interface-design stand-in never wins once project-local exists' "$TRUSTED_PART" "\"path\":\"$PI_HOME/.agents/skills/api-and-interface-design/SKILL.md\""
     not_contains 'Pi native-loader probe: the official-internal captain-hold-lifecycle name never surfaces as a skill' "$probe_out" "$C_CAPTAIN_ONLY"
     contains 'Pi native-loader probe: nested sub2/CLAUDE.md applies only in that scope (no sub2/AGENTS.md present)' "$probe_out" "$PI_REPO/sub2/CLAUDE.md"
     contains 'Pi native-loader probe: a bare root AGENTS.md is authoritative with no override or CLAUDE.md present' "$probe_out" "$AGENTS_ONLY_REPO/AGENTS.md"
@@ -1161,7 +1161,7 @@ $C_NESTED_SCOPE observed under sub/.
 $C_NESTED_CLAUDE observed under sub2/.
 $C_PROJECT_SKILL_BODY applied before touching $C_MIGRATION_FILE.
 $C_SHARED_SKILL_BODY confirmed before declaring completion.
-$C_PROJECT_WINS applied for architecture-review.
+$C_PROJECT_WINS applied for api-and-interface-design.
 PROJECT_SKILL_RESOLVED_PATH: $CLI_DIR/repo/.agents/skills/$C_PROJECT_SKILL_NAME/SKILL.md
 SHARED_SKILL_RESOLVED_PATH: $HOME/.agents/skills/$C_SHARED_SKILL_NAME/SKILL.md
 SKILL_CATALOG_SOURCES: 3 source root(s): $HOME/.pi/agent/skills, $CLI_DIR/repo/.agents/skills, $HOME/.agents/skills

@@ -4,7 +4,7 @@
 # (firstmate/primary-policy.md sections 2, 4, 5). No model, network or real home.
 #
 #   1. every role's frontmatter parses and its autoloadSkills pass the lint
-#      (path resolves, no duplicate, at most three, no orphaned managed skill,
+#      (path resolves, no duplicate, at most three, no orphaned repo-authored skill,
 #      operator skills not autoloaded, policy section 4 lists every role)
 #   2. the lint really fails on each defect (negative fixtures)
 #   3. bin/fm-role-handoff yields the ROLE.md and exactly the role's skills;
@@ -21,10 +21,15 @@ ROLES_ROOT="$FIX_SRC/roles"
 # shellcheck source=firstmate/fm-roles-lib.sh
 . "$FIX_SRC/firstmate/fm-roles-lib.sh"
 
-# managed_skills <config-root> - repo-authored skills plus external.lock names.
-managed_skills() {
+# local_skills <config-root> - repo-authored skills (skills/<name>/SKILL.md).
+local_skills() {
   local d
   for d in "$1"/skills/*/; do [ -f "$d/SKILL.md" ] && basename "$d"; done
+}
+
+# managed_skills <config-root> - repo-authored skills plus external.lock names.
+managed_skills() {
+  local_skills "$1"
   awk -F'\t' '/^[^#]/ && NF >= 5 {print $5}' "$1/skills/external.lock" 2>/dev/null
 }
 
@@ -48,7 +53,7 @@ lint_roles() {
     [ "$n" -le "$MAX_SKILLS" ] || printf 'LINT: role %s: %d autoloaded skills (max %d)\n' "$role" "$n" "$MAX_SKILLS"
     grep -q -- "^- \`$role\` -" "$policy" || printf 'LINT: role %s: not listed in policy section 4\n' "$role"
   done
-  for s in $managed; do
+  for s in $(local_skills "$root" | sort -u); do
     case " $used " in *" $s "*) continue ;; esac
     printf '%s\n' "$operator" | grep -qx -- "$s" || printf 'LINT: managed skill %s is autoloaded by no role and not an operator skill in the policy\n' "$s"
   done
@@ -85,6 +90,8 @@ fresh_fixture; sed -i 's/  - ext-skill/  - local-skill/' "$LINT_FIX/roles/alpha/
 has 'lint fails on a duplicate autoloaded skill' "$(lint_fix)" 'duplicate autoloaded skill local-skill'
 fresh_fixture; mkdir -p "$LINT_FIX/skills/orphan"; printf -- '---\nname: orphan\n---\n' > "$LINT_FIX/skills/orphan/SKILL.md"
 has 'lint fails on a managed skill no role autoloads and the policy does not list' "$(lint_fix)" 'orphan is autoloaded by no role'
+fresh_fixture; printf 'fx:spare\trepo\tsha\tskills/spare\tspare-skill\n' >> "$LINT_FIX/skills/external.lock"
+check 'lint allows an external pin that no role autoloads' "$(lint_fix)" ''
 fresh_fixture; sed -i 's/  - ext-skill/  - ext-skill\n  - local-op\n  - x1/' "$LINT_FIX/roles/alpha/ROLE.md"
 has 'lint fails when a role carries an operator skill' "$(lint_fix)" 'autoloads operator skill local-op'
 fresh_fixture; sed -i 's/  - ext-skill/  - ext-skill\n  - a\n  - b/' "$LINT_FIX/roles/alpha/ROLE.md"
@@ -124,7 +131,7 @@ Requirement:
     lacks "handoff $role: a skill-less role hands over no SKILL.md" "$out" 'SKILL.md'
   fi
 done
-check 'skill-less roles are exactly scout and chore' "$(printf '%s' "$SKILL_LESS" | tr ' ' '\n' | grep . | sort | tr '\n' ' ')" 'chore scout '
+check 'skill-less roles are exactly scout, chore and tenth-man' "$(printf '%s' "$SKILL_LESS" | tr ' ' '\n' | grep . | sort | tr '\n' ' ')" 'chore scout tenth-man '
 check 'chore, the neutral role, expands to no skill' "$("$HANDOFF" --skills chore)" ''
 out=$("$HANDOFF" no-such-role 2>&1); rc=$?
 check 'handoff for an unknown role fails' "$rc" 1
@@ -136,7 +143,7 @@ for sel in senior-fullstack code-reviewer architecture planner; do
   case $sel in
     senior-fullstack) w='test-driven-development ponytail verification-before-completion' ;;
     code-reviewer) w='code-review-and-quality ponytail-review' ;;
-    architecture) w='architecture-review api-and-interface-design' ;;
+    architecture) w='api-and-interface-design' ;;
     planner) w='spec-driven-development planning-and-task-breakdown' ;;
   esac
   check "role $sel carries the skills the inventory assigned it" "$("$HANDOFF" --skills "$sel" | tr '\n' ' ')" "$w "

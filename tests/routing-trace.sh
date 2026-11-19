@@ -324,7 +324,7 @@ for role in $("$HANDOFF" --roles); do
   fi
   HAS_SKILLS="$HAS_SKILLS $role"
   expect_rejects "role $role: a Captain-chosen extra skill is rejected" 'Skills equals role' \
-    "$(t "e-$role.txt" "$(cat "$good"), tenth-man")" "$h" "$m" high
+    "$(t "e-$role.txt" "$(cat "$good"), security-and-hardening")" "$h" "$m" high
   expect_rejects "role $role: a dropped skill is rejected" 'Skills equals role' \
     "$(t "r-$role.txt" "$(sed 's/^Skills: [A-Za-z0-9_-]*, /Skills: /; t; s/^Skills: .*/Skills: none/' "$good")")" "$h" "$m" high
   expect_rejects "role $role: Skills none for a role that autoloads skills is rejected" 'Skills equals role' \
@@ -355,20 +355,20 @@ ASSIGNED=$(block assigned.txt 'IMPLEMENT #2' senior-fullstack omp "$OPUS" high '
 expect 'the real handoff block agrees with the trace on role and skills' pass \
   "$ASSIGNED" omp "$OPUS" high --brief "$ASSIGN_BRIEF"
 expect_rejects 'an Agent role differing from the delivered brief is rejected' 'Assigned role name agrees with brief' \
-  "$(t assign-wrong-role.txt "$(sed 's/Agent: senior-fullstack/Agent: django-pro/' "$ASSIGNED")")" \
+  "$(t assign-wrong-role.txt "$(sed 's/Agent: senior-fullstack/Agent: code-reviewer/' "$ASSIGNED")")" \
   omp "$OPUS" high --brief "$ASSIGN_BRIEF"
 expect_rejects 'a missing Agent line is rejected' 'exactly one Agent' \
   "$(t assign-missing.txt "$(sed '/^Agent:/d' "$ASSIGNED")")" omp "$OPUS" high
 cp "$ASSIGN_BRIEF" "$TMP/contradictory-brief.md"
-printf 'Assigned role: django-pro\n' >> "$TMP/contradictory-brief.md"
+printf 'Assigned role: code-reviewer\n' >> "$TMP/contradictory-brief.md"
 expect_rejects 'contradictory brief names fail rather than last-value-wins' 'exactly one brief field Assigned role' \
   "$ASSIGNED" omp "$OPUS" high --brief "$TMP/contradictory-brief.md"
 expect_rejects 'an Agent role cannot contradict Routing even without a brief' 'Agent role agrees with Routing role' \
-  "$(t assign-role-conflict.txt "$(sed 's/Routing: IMPLEMENT #2 | role senior-fullstack/Routing: IMPLEMENT #2 | role django-pro/' "$ASSIGNED")")" \
+  "$(t assign-role-conflict.txt "$(sed 's/Routing: IMPLEMENT #2 | role senior-fullstack/Routing: IMPLEMENT #2 | role code-reviewer/' "$ASSIGNED")")" \
   omp "$OPUS" high
 expect_rejects 'two Agent lines cannot hide conflicting assignments' 'exactly one Agent' \
   "$(t assign-duplicate.txt "$(cat "$ASSIGNED")
-Agent: django-pro")" omp "$OPUS" high --brief "$ASSIGN_BRIEF"
+Agent: code-reviewer")" omp "$OPUS" high --brief "$ASSIGN_BRIEF"
 for extra in ' | path /fixture/ROLE.md' ' | native UNPROVEN' ' | worker fixture' ' | why: role fit'; do
   expect_rejects 'Agent rejects expanded metadata instead of silently accepting it' 'Agent contains names only' \
     "$(t assign-expanded.txt "$(sed "s@^Agent:.*@Agent: senior-fullstack$extra@" "$ASSIGNED")")" \
@@ -380,10 +380,10 @@ awk '/^Role skill:/ { getline nxt; if (nxt ~ /\/ponytail\/SKILL\.md$/) { skip = 
   "$ASSIGN_BRIEF" > "$TMP/brief-dropped.md"
 expect_rejects 'a brief missing one of the role skills is rejected' 'brief Role skill paths are exactly' \
   "$ASSIGNED" omp "$OPUS" high --brief "$TMP/brief-dropped.md"
-{ cat "$ASSIGN_BRIEF"; printf 'Role skill:\n  %s/.agents/skills/tenth-man/SKILL.md\nRequirement:\n  Read.\n' "$HOME"; } > "$TMP/brief-extra.md"
+{ cat "$ASSIGN_BRIEF"; printf 'Role skill:\n  %s/.agents/skills/security-and-hardening/SKILL.md\nRequirement:\n  Read.\n' "$HOME"; } > "$TMP/brief-extra.md"
 expect_rejects 'a brief with an extra skill the role does not carry is rejected' 'brief Role skill paths are exactly' \
   "$ASSIGNED" omp "$OPUS" high --brief "$TMP/brief-extra.md"
-{ cat "$ASSIGN_BRIEF"; printf 'Selected shared worker skill:\n  tenth-man\nRequirement:\n  Apply.\n'; } > "$TMP/brief-selected.md"
+{ cat "$ASSIGN_BRIEF"; printf 'Selected shared worker skill:\n  security-and-hardening\nRequirement:\n  Apply.\n'; } > "$TMP/brief-selected.md"
 expect_rejects 'a brief carrying a Captain skill selection header is rejected' 'no Captain skill selection header' \
   "$ASSIGNED" omp "$OPUS" high --brief "$TMP/brief-selected.md"
 SCOUT_BLOCK=$(block scout-block.txt 'EXPLORE #1' scout omp anthropic/claude-haiku-4-5 low 'recon')
