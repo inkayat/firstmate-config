@@ -40,7 +40,10 @@ block in the chat message that reports the delegation, as these plain lines
   captain choice outside the rule says `captain override` in `why`.
 - `Skills` is derived, never chosen: exactly the assigned role's frontmatter
   `autoloadSkills` (`bin/fm-role-handoff --skills <role>`), by skill directory
-  name, comma-separated, in the role file's order. `Skills: none` stands
+  name, comma-separated, in the role file's order. Run that command and copy
+  every name it prints, in its order, joined by `, `: never recompute,
+  shorten, reorder or drop one from memory, including a skill that looks
+  redundant or optional (under urgency too). `Skills: none` stands
   alone for a role that autoloads nothing (`scout`, `chore`, `tenth-man`,
   `risk-classifier`), with no
   `No skill:` line. Nothing else: no project-local skill (the Captain does
