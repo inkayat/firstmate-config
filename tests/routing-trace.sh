@@ -326,7 +326,7 @@ for role in $("$HANDOFF" --roles); do
   expect_rejects "role $role: a Captain-chosen extra skill is rejected" 'Skills equals role' \
     "$(t "e-$role.txt" "$(cat "$good"), security-and-hardening")" "$h" "$m" high
   expect_rejects "role $role: a dropped skill is rejected" 'Skills equals role' \
-    "$(t "r-$role.txt" "$(sed 's/^Skills: [A-Za-z0-9_-]*, /Skills: /; t; s/^Skills: .*/Skills: none/' "$good")")" "$h" "$m" high
+    "$(t "r-$role.txt" "$(awk '/^Skills: [A-Za-z0-9_-]*, /{sub(/^Skills: [A-Za-z0-9_-]*, /,"Skills: ");print;next} /^Skills: /{print "Skills: none";next} {print}' "$good")")" "$h" "$m" high
   expect_rejects "role $role: Skills none for a role that autoloads skills is rejected" 'Skills equals role' \
     "$(t "n-$role.txt" "$(sed 's/^Skills: .*/Skills: none/' "$good")")" "$h" "$m" high
 done
