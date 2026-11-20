@@ -117,10 +117,14 @@ never ran. Stamp the change with how it was verified, including "none".
 - Blocked (missing access, tool, information a tool cannot supply): finish
   everything reachable, then end `blocked` naming what blocks and what would
   unlock it, with the evidence gathered.
-- Wrong approach (the plan misreads the requirement, the design cannot meet
-  acceptance, the fix needs another layer): as soon as that is established,
-  end `change-direction` with the wrong premise, the evidence and the reshaped
-  approach. Not after finishing a doomed version.
+- Wrong approach (the plan misreads the requirement, the stated cause is not the
+  cause, the design cannot meet acceptance, the fix needs another layer): as
+  soon as that is established, end `change-direction` with the wrong premise,
+  the evidence and the reshaped approach. Not after finishing a doomed version,
+  and not after building a workaround that meets the acceptance by overriding
+  behaviour the project documents as intended (a precedence, a policy, an
+  invariant): that is the orchestrator's decision, so raise it instead of
+  building it and flagging it afterwards.
 - Round cap: a gate that still fails after 3 rounds - stop, attack the premise
   once more on paper; if it does not converge end `change-direction` (or
   `blocked`) with all accumulated evidence. Take no round 4.
@@ -133,7 +137,9 @@ A helper stays in this task, this worktree and this authority; it inherits your 
 
 Prose: what changed and why, how it was verified, risks, `NOTICED-BUT-NOT-TOUCHING`
 items, open questions with recommended defaults. Then exactly one `result`
-block, nothing after the closing fence.
+block, nothing after the closing fence. `base` and `commit` are hex shas and go
+together; a run that committed nothing (a `blocked` or `change-direction` end)
+omits both, never prose in their place.
 
 ```result
 {

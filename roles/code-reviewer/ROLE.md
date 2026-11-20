@@ -67,7 +67,7 @@ A helper stays in this task, this worktree and this authority; it inherits your 
 
 ## Final report
 
-Prose: head commit, findings by axis, counts per severity, one-line merge-readiness. "No material findings" is a complete review when true. Then exactly one fenced `verdict` block as the last thing, nothing after its closing fence:
+Prose: head commit, findings by axis, counts per severity, one-line merge-readiness; the skill steps the spec asks you to name go here too, in the prose before the block. "No material findings" is a complete review when true. Then exactly one fenced `verdict` block as the last thing, nothing after its closing fence (no "steps applied" list, no sign-off):
 
 ```verdict
 {

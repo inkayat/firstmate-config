@@ -21,7 +21,10 @@ brief, never written to a file, board, or monitor.
 
 Before each delegation, one block per actually assigned worker and stage
 (including an authorized review/re-review). Never instantiate actors to fill
-a display or print prospective stages as if already dispatched:
+a display or print prospective stages as if already dispatched. Print each
+block in the chat message that reports the delegation, as these plain lines
+(a code fence is fine; no list marker, bold or other markup, which
+`tests/routing-trace.sh check` does not read):
 
     Routing: <CATEGORY> [#n] | role <role> | <harness> | <provider/model> | <effort> | why: <short reason>
     Agent: <assigned role name>
@@ -54,9 +57,11 @@ a display or print prospective stages as if already dispatched:
   identity distinct from native selection, current stage, authority,
   task-specific fit/reasons, input/output handoff, dependencies, scope
   and stop boundary stay inside the task instructions/handoff.
-- A task running a workflow (section 8) adds one line to its block, derived by
-  `bin/fm-workflow trace <state-file>` from the task's state file and never
-  typed from memory:
+- A task running a workflow (section 8) adds one line to its block. Run
+  `$FM_CONFIG_ROOT/bin/fm-workflow trace <state-file>` on the task's state file
+  for each block and paste its one output line exactly as printed; never type
+  it, shorten it or reuse one from memory (its `loops` part names every loop of
+  the definition):
 
       Workflow: <workflow> v<version> | step <step> #<run> | loops <loop> <used>/<max>, ... | <running|complete|closed|escalated>
 
@@ -656,7 +661,10 @@ named steps, each bound to a role alias, with an input contract, an output
 contract, one transition per outcome, loop limits and gates. The engine decides
 only what the definition says. It launches no agent, merges nothing and never
 writes to a project; the Captain launches every step's worker through
-sections 2-3 exactly as it launches any worker. Seven workflows exist;
+sections 2-3 exactly as it launches any worker. The scripts `bin/fm-workflow`
+and `bin/fm-role-handoff` belong to this configuration repository: run them as
+`$FM_CONFIG_ROOT/bin/<script>`, never from the Firstmate checkout's `bin/`,
+which has neither. Seven workflows exist;
 `bin/fm-workflow list` prints each with its `when`:
 
 - Workflow `build-test-review`: implement, classify the risk of the change,
@@ -701,9 +709,11 @@ closed list; nothing else exempts a task:
    (`bin/fm-workflow select <kind> --none "<the stated choice>"`).
 
 A documentation-only task (`docs`) is outside the rule, not an exception: it
-changes no behavior, so it runs no workflow. A change to a role, skill,
-workflow or policy file defines agent behavior and is configuration: classify
-it `feature` or `refactor`.
+changes no behavior, so it runs no workflow. Resolve it all the same, before
+its worker is launched, with `bin/fm-workflow select docs`, which prints the
+`none: out-of-scope` result and is the check that the task is really
+documentation: a change to a role, skill, workflow or policy file defines
+agent behavior and is configuration, so classify it `feature` or `refactor`.
 
 A task whose selected delivery path is `no-mistakes` is not a fourth way out:
 it runs `delegated-build`. When unsure whether a task is trivial, it is not.
@@ -772,7 +782,11 @@ applies to everything that runs no workflow.
    step (`research-decide`, the one workflow that runs `tenth-man` as a
    standing step) TENTH-MAN; the `options` step ARCHITECTURE; plan, diagnose and
    research steps by their semantics. The role is the step's, never the
-   category's.
+   category's. A `report` step (plan, diagnose, research, options) delivers a
+   file and no branch, so it is a scout task: scaffold the brief with
+   `bin/fm-brief.sh --scout` and launch it with `bin/fm-spawn.sh --scout`, the
+   same kind in both; every other `work` step is a ship task on the task
+   branch.
 3. Record each result. A `result`, `verdict` or `risk` step: `--report <the
    worker's final report file>`; the outcome is parsed from its final fenced
    block by the engine, never read, inferred or overridden by the Captain. A
@@ -803,7 +817,8 @@ applies to everything that runs no workflow.
    pass is valid only for the commit it ran on (a verdict names its commit; the
    verification stamp marks a stale one).
 6. In the Captain chat, each block of section 0 for a worker of a workflow also
-   carries the derived `Workflow:` line.
+   carries the `Workflow:` line exactly as `bin/fm-workflow trace <state-file>`
+   prints it (section 0).
 
 ### Convergence, risk and direction
 

@@ -78,7 +78,7 @@ First line exactly `status: done`, `status: blocked` or `status: change-directio
 
 1. Log findings: tasks, records, rounds-to-pass, escalation rate, noise rate, recurring classes per role/skill (quoted from `fm-retro report`).
 2. Proposals ranked by severity, each `[PROP-n] class <c>` with the seven fields of step 5 and the three tenth-man outcomes.
-3. Rejected proposals with reason.
+3. Rejected proposals, each under the same `[PROP-n] class <c>` heading, with the reason and the helper outcomes that refuted it.
 4. Prune list.
 5. Open questions with recommended default and what each blocks.
 6. Helpers: which ran, why, read-only, returned.

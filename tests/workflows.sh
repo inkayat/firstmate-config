@@ -390,6 +390,7 @@ check '3e: the fourth FAIL is not a fourth round: the author steps back' "$(o '"
 check '3e: the counter is not pushed past the cap' "$(o '.loops["qa-fix"].used')" 3
 has '3e: the step-back spec says the round cap was reached' "$(o .spec)" 'ROUND CAP REACHED'
 has '3e: ... and forbids another round' "$(o .spec)" 'Do not fix anything and do not start another round'
+has '3e: ... and tells the author to leave `answers` empty (nothing is fixed; only fixed or rejected is accepted there)' "$(o .spec)" 'leave `answers` empty ("answers": [])'
 check '3e: the step-back is handed every accumulated finding, open and closed' "$(o '.inputs[] | select(.name == "accumulated") | .entries | map(.items[0].id) | join(" ")')" 'QA-1 QA-2 QA-3 QA-4'
 rres "$T/sb-done.md" done - - '[]' '[{"command":"git log","observed":"the class returns because the parser trusts the caller"}]'
 adv $BTR "$st" --report "$T/sb-done.md"
