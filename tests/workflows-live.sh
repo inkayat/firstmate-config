@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
-# workflows-live.sh - opt-in LIVE proof that the two workflows (workflows/*.json) drive
+# workflows-live.sh - opt-in LIVE proof that the workflows (workflows/*.json, engine bin/fm-workflow) drive
 # real workers through their loops. For each characteristic problem in
 # tests/live-workflows/, a thin driver plays the Captain MECHANICALLY: it asks
 # bin/fm-workflow for the next step, launches one real worker (omp, a real model) per
-# step with that step's spec, role handoff and inputs, records the result in the engine
-# (verdicts parsed from the worker's own final report), and repeats until the workflow
-# completes or escalates. Then it grades from the engine's state, the transcripts and
-# the final fixture repository.
+# step with that step's spec, role handoff and inputs, records the outcome in the engine, and
+# repeats until the workflow completes or escalates. Every work step names its output contract
+# and the driver honours it: result (implementer, step-back) / verdict (qa, review, verify-review,
+# security, verify-security, ship) / risk (classify) steps are recorded with --report <the worker's
+# final report> and the engine parses the outcome from the fenced block that ends it; a report step
+# (the planner) is recorded with --outcome done|blocked and the plan file as --report; the decision
+# step (redirect) is answered mechanically with `escalate` (the live cases must not change
+# direction); deliver is recorded, never performed. Then it grades from the engine's state, the
+# transcripts and the final fixture repository.
 #
-# What this proves: roles, verdict contract, handoff and loop mechanics hold with real
+# What this proves: roles, block contracts, handoff and loop mechanics hold with real
 # workers: QA failing a change and the implementer fixing it from QA's feedback, a review
-# finding that only the reviewer catches going back to the implementer, a plan reaching
-# every later step, and (control) the same fix round WITHOUT the forcing input not
-# producing the fix. What it cannot prove: that a Captain MODEL chooses the right
-# workflow (the driver picks the workflow named by the case), or judges the `requalify`
-# decision well (the driver applies a mechanical rule), or that PRs get opened (the
-# fixture has no remote; delivery is recorded, never performed). One run per case:
-# evidence, not a guarantee.
+# finding that only the reviewer catches going through the finding-verifier back to the implementer
+# (who gets the verifier's CONFIRMED list, not the raw review), a plan reaching every later step, and
+# (control) the same fix round WITHOUT the forcing input not producing the fix. Every fix re-runs
+# classify, qa and review. What it cannot prove: that a Captain MODEL chooses the right
+# workflow (the driver picks the workflow named by the case), or judges a change of direction well
+# (the driver always escalates), or that PRs get opened (the fixture has no remote; delivery is
+# recorded, never performed). One run per case: evidence, not a guarantee.
 #
 # Usage:
 #   tests/workflows-live.sh                 offline self-test (canned fake workers, no model); live SKIPs
@@ -37,12 +42,14 @@
 # prompt, transcript, parsed calls/final/cost, grade.md; results.md at the top.
 #
 # Case file contract (tests/live-workflows/<case>.sh, sourced in a subshell):
-#   CASE_WORKFLOW, CASE_TASK, CASE_EXPECT_PATH (ERE over "step:outcome step:outcome ..."),
+#   CASE_WORKFLOW, CASE_TASK, CASE_EXPECT_PATH (ERE over "step:outcome step:outcome ..."; the outcome of
+#   the classify step is its tier word, of a verdict step pass|fail, of the planner done),
 #   CASE_CONTROL_STEP / CASE_CONTROL_RUN / CASE_CONTROL_STRIP (feedback|plan), CASE_FORCE_AFTER
 #   (step:run whose hidden check must FAIL, or empty), CASE_FORCE_KIT_PASS (1: QA's kit alone passes then);
 #   case_setup (cwd = the fixture repo), case_kit_setup <dir>, case_extra <step> <role> <iter> <kit> <cwd> <run>,
 #   case_hidden <repo> <kit> (0 = acceptance satisfied), case_kit_only <repo> <kit>, case_assert <run> <repo>,
-#   case_canned <role> <prompt> <cwd> (offline stand-in worker).
+#   case_canned <role> <prompt> <cwd> (offline stand-in worker; tests/live-lib/canned.sh answers the roles
+#   a case does not customise and builds the result/verdict/risk blocks).
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -100,8 +107,8 @@ sealed_clone() {
 }
 
 # --- the driver ------------------------------------------------------------------------
-# One worker step. Globals: RUN REPO DATA KIT STATE BASE0 N LAST_REVIEW_HEAD LAST_FIX_RANGE.
-worker_step() { # <role> <step> <iteration> <output-contract>
+# One worker step. Globals: RUN REPO DATA KIT STATE BASE0 N.
+worker_step() { # <role> <step> <iteration> <output-contract: result|verdict|risk|report>
   local role=$1 step=$2 iter=$3 output=$4 sd spec extra intent cwd rc head prev outcome
   sd="$RUN/steps/$(printf '%02d' "$N")-$step"
   mkdir -p "$sd" "$RUN/runs/$step:$iter" "$SCR_SESSIONS/$N"
@@ -113,10 +120,6 @@ worker_step() { # <role> <step> <iteration> <output-contract>
   esac
   prev=$(git -C "$REPO" rev-parse HEAD)
   extra=$(case_extra "$step" "$role" "$iter" "$KIT" "$cwd" "$DATA" 2>/dev/null || true)
-  if [ "$role" = code-reviewer ] && [ "$iter" -gt 1 ]; then
-    extra="$extra
-Corrected delta since your last review: $LAST_REVIEW_HEAD..$prev (the full change is $BASE0..$prev)."
-  fi
   intent=$CASE_TASK
   [ -z "$extra" ] || intent="$intent
 
@@ -132,43 +135,41 @@ $extra"
   cp -r "$SCR_SESSIONS/$N" "$sd/session"
   parse_session "$sd/session" "$sd"
   spent_add "$(cat "$sd/cost.txt")"
-  case $role in
-    senior-fullstack)
-      if [ -n "$(git -C "$REPO" status --porcelain)" ]; then
-        git -C "$REPO" add -A && git -C "$REPO" commit -q -m "driver: the worker left changes uncommitted" && printf 'yes\n' > "$sd/autocommit"
-      fi
-      head=$(git -C "$REPO" rev-parse HEAD)
-      LAST_FIX_RANGE="$prev..$head"
-      outcome=done; { [ "$rc" -eq 0 ] && [ -s "$sd/final.txt" ]; } || outcome=blocked
-      "$W" next "$CASE_WORKFLOW" "$STATE" --outcome "$outcome" --change "$BASE0..$head" --report "$sd/final.txt" > "$sd/next.json" 2>&1 || { DRIVE_ERR="engine refused the result of $step: $(cat "$sd/next.json")"; return 1; }
-      case_hidden "$REPO" "$KIT" > /dev/null 2>&1; printf '%s\n' "$?" > "$RUN/runs/$step:$iter/hidden.rc"
-      cp "$RUN/hidden.last" "$RUN/runs/$step:$iter/hidden.txt" 2>/dev/null
-      case_kit_only "$REPO" "$KIT" >/dev/null 2>&1; printf '%s\n' "$?" > "$RUN/runs/$step:$iter/kit.rc" ;;
-    planner)
-      if [ "$rc" -eq 0 ] && [ -s "$DATA/plan.md" ]; then outcome=done; else outcome=blocked; fi
-      "$W" next "$CASE_WORKFLOW" "$STATE" --outcome "$outcome" --report "$DATA/plan.md" > "$sd/next.json" 2>&1 \
-        || "$W" next "$CASE_WORKFLOW" "$STATE" --outcome blocked > "$sd/next.json" 2>&1 \
-        || { DRIVE_ERR="engine refused the result of $step: $(cat "$sd/next.json")"; return 1; } ;;
+  [ -s "$sd/final.txt" ] || printf 'The worker produced no report (omp exit %s).\n' "$rc" > "$sd/final.txt"
+  if [ "$role" = senior-fullstack ] && [ -n "$(git -C "$REPO" status --porcelain)" ]; then
+    git -C "$REPO" add -A && git -C "$REPO" commit -q -m "driver: the worker left changes uncommitted" && printf 'yes\n' > "$sd/autocommit"
+  fi
+  case $output in
+    result|verdict|risk)
+      # the outcome is parsed by the engine from the final fenced block of the worker's own report
+      "$W" next "$CASE_WORKFLOW" "$STATE" --report "$sd/final.txt" > "$sd/next.json" 2>&1 || { DRIVE_ERR="engine refused the result of $step: $(cat "$sd/next.json")"; return 1; } ;;
     *)
-      if [ "$output" = verdict ]; then
-        [ -s "$sd/final.txt" ] || printf 'The worker produced no report (omp exit %s).\n' "$rc" > "$sd/final.txt"
-        "$W" next "$CASE_WORKFLOW" "$STATE" --report "$sd/final.txt" > "$sd/next.json" 2>&1 || { DRIVE_ERR="engine refused the result of $step: $(cat "$sd/next.json")"; return 1; }
-        [ "$role" != code-reviewer ] || LAST_REVIEW_HEAD=$(git -C "$REPO" rev-parse HEAD)
+      if [ "$role" = planner ]; then
+        if [ "$rc" -eq 0 ] && [ -s "$DATA/plan.md" ]; then outcome=done; else outcome=blocked; fi
+        "$W" next "$CASE_WORKFLOW" "$STATE" --outcome "$outcome" --report "$DATA/plan.md" > "$sd/next.json" 2>&1 \
+          || "$W" next "$CASE_WORKFLOW" "$STATE" --outcome blocked > "$sd/next.json" 2>&1 \
+          || { DRIVE_ERR="engine refused the result of $step: $(cat "$sd/next.json")"; return 1; }
       else
-        "$W" next "$CASE_WORKFLOW" "$STATE" --outcome done > "$sd/next.json" 2>&1 || { DRIVE_ERR="engine refused the result of $step: $(cat "$sd/next.json")"; return 1; }
+        outcome=done; [ "$rc" -eq 0 ] || outcome=blocked
+        "$W" next "$CASE_WORKFLOW" "$STATE" --outcome "$outcome" --report "$sd/final.txt" > "$sd/next.json" 2>&1 || { DRIVE_ERR="engine refused the result of $step: $(cat "$sd/next.json")"; return 1; }
       fi ;;
   esac
+  if [ "$role" = senior-fullstack ]; then
+    # the hidden acceptance check after every implementer run (it is what the cases force and grade)
+    case_hidden "$REPO" "$KIT" > /dev/null 2>&1; printf '%s\n' "$?" > "$RUN/runs/$step:$iter/hidden.rc"
+    cp "$RUN/hidden.last" "$RUN/runs/$step:$iter/hidden.txt" 2>/dev/null
+    case_kit_only "$REPO" "$KIT" >/dev/null 2>&1; printf '%s\n' "$?" > "$RUN/runs/$step:$iter/kit.rc"
+  fi
   return 0
 }
 
-# The `requalify`-style decision, applied MECHANICALLY: yes unless the fix delta changes
-# nothing but comments and blank lines. A Captain model would judge; this only exercises the step.
-decision_step() { # <step> <choices...>
-  local step=$1 changed choice reason
-  changed=$(git -C "$REPO" diff -U0 --ignore-all-space "$LAST_FIX_RANGE" -- '*.py' | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | grep -Ev '^[+-][[:space:]]*(#.*)?$' | wc -l | tr -d ' ')
-  if [ "$changed" -gt 0 ]; then choice=yes; reason="mechanical rule: the fix delta $LAST_FIX_RANGE changes $changed non-comment, non-blank line(s), so QA runs again"
-  else choice=no; reason="mechanical rule: the fix delta $LAST_FIX_RANGE changes only comments and blank lines"; fi
-  "$W" next "$CASE_WORKFLOW" "$STATE" --decide "$choice" --reason "$reason" > "$RUN/steps/decision-$step.json" 2>&1 || { DRIVE_ERR="engine refused the decision: $(cat "$RUN/steps/decision-$step.json")"; return 1; }
+# The `redirect` decision, applied MECHANICALLY: a worker raised a change of direction, which the live
+# cases never expect; the driver escalates it. A Captain model would judge (reshape, close or escalate).
+
+decision_step() { # <step>
+  local step=$1
+  "$W" next "$CASE_WORKFLOW" "$STATE" --decide escalate --reason "mechanical rule: the live cases must not change direction, so a raised change of direction is escalated to the human" > "$RUN/steps/decision-$step.json" 2>&1 \
+    || { DRIVE_ERR="engine refused the decision: $(cat "$RUN/steps/decision-$step.json")"; return 1; }
 }
 
 drive() {
@@ -191,7 +192,7 @@ drive() {
   [ -z "${FAKE_MODE:-}" ] || printf '%s\n' "$FAKE_MODE" > "$RUN/fake.mode"
   ( cd "$REPO" && git init -q . && git config user.email live@example.invalid && git config user.name live \
     && printf '__pycache__/\n*.pyc\n' >> .git/info/exclude && case_setup && git add -A && git commit -q -m fixture ) || { DRIVE_ERR='fixture setup failed'; return 1; }
-  BASE0=$(git -C "$REPO" rev-parse HEAD); LAST_REVIEW_HEAD=$BASE0; LAST_FIX_RANGE="$BASE0..$BASE0"
+  BASE0=$(git -C "$REPO" rev-parse HEAD)
   ! declare -F case_kit_setup >/dev/null || case_kit_setup "$KIT"
   export FM_CONFIG_ROOT="$CONFIG_ROOT" FM_SKILLS_ROOT="$SCR_HOME/.agents/skills"
   "$W" next "$CASE_WORKFLOW" "$STATE" --task "$CASE_TASK" > "$RUN/start.json" 2>&1 || { DRIVE_ERR="cannot start the workflow: $(cat "$RUN/start.json")"; return 1; }
@@ -231,7 +232,7 @@ hist = st["history"]
 path = " ".join("%s:%s" % (h["step"], h["outcome"]) for h in hist)
 res(st["status"] == "complete", "the workflow completed" + ("" if st["status"] == "complete" else " (status %s: %s)" % (st["status"], (st.get("escalation") or {}).get("reason"))))
 res(re.search(expect, path) is not None, "the path taken matches the expected loop shape: %s" % path)
-res(all(h["verdict"]["valid"] for h in hist if "verdict" in h), "every worker ended its report with a valid verdict block (no parser-FAIL)")
+res(all(h["valid"] for h in hist if "valid" in h), "every worker ended its report with a valid result/verdict/risk block (no parser-FAIL, no redo)")
 steps = st["definition"]["steps"]
 work = [h for h in hist if steps[h["step"]]["kind"] == "work"]
 dirs = sorted(d for d in glob.glob(os.path.join(run, "steps", "[0-9][0-9]-*")))
@@ -244,15 +245,17 @@ for h, d in zip(work, dirs):
     prompt = open(os.path.join(d, "prompt.md"), encoding="utf-8").read()
     spec = open(os.path.join(d, "spec.txt"), encoding="utf-8").read().rstrip("\n")
     res(spec in prompt, "%s: the worker's input carries the engine's spec verbatim (role handoff included)" % os.path.basename(d))
-# feedback travelled verbatim: after every non-pass verdict, the next worker's spec holds each item as recorded
-for i, h in enumerate(hist):
-    if "verdict" in h and h["outcome"] != "pass":
-        nxt = next((j for j, w in enumerate(work) if hist.index(w) > i), None)
-        if nxt is None:
-            continue
-        spec = open(os.path.join(dirs[nxt], "spec.txt"), encoding="utf-8").read()
-        missing = [it["id"] for it in h["verdict"]["feedback"] if json.dumps(it, ensure_ascii=False, separators=(",", ":")) not in spec]
-        res(not missing, "%s's %s feedback reached %s verbatim (%d item(s))%s" % (h["step"], h["outcome"], os.path.basename(dirs[nxt]), len(h["verdict"]["feedback"]), "" if not missing else " - missing " + ",".join(missing)))
+# feedback travelled verbatim: after every non-pass verdict, the next worker's spec holds each item the engine
+# hands on as recorded (a fail hands on its BLOCKER/IMPORTANT items: QA -> implementer, review -> verify-review,
+# verify-review -> implementer; the implementer never receives the reviewer's raw list)
+widx = [i for i, h in enumerate(hist) if steps[h["step"]]["kind"] == "work"]
+for k, i in enumerate(widx):
+    h = hist[i]
+    if "feedback" in h and h["outcome"] != "pass" and k + 1 < len(widx) and k + 1 < len(dirs):
+        spec = open(os.path.join(dirs[k + 1], "spec.txt"), encoding="utf-8").read()
+        items = [it for it in h["feedback"] if h["outcome"] != "fail" or it["severity"] in ("BLOCKER", "IMPORTANT")]
+        missing = [it["id"] for it in items if json.dumps(it, ensure_ascii=False, separators=(",", ":")) not in spec]
+        res(not missing, "%s's %s feedback reached %s verbatim (%d item(s))%s" % (h["step"], h["outcome"], os.path.basename(dirs[k + 1]), len(items), "" if not missing else " - missing " + ",".join(missing)))
 # loop counters never exceed their limits
 for name, used in st["loops"].items():
     res(used <= st["definition"]["loops"][name]["maxIterations"], "loop %s used %d of %d" % (name, used, st["definition"]["loops"][name]["maxIterations"]))
@@ -360,7 +363,9 @@ run=$(cat "$(dirname "$prompt")/run.path")
 # shellcheck disable=SC1090
 . "$(cat "$run/case.path")"
 FAKE_MODE=$(cat "$run/fake.mode" 2>/dev/null)
-final=$(cd "$cwd" && case_canned "$role" "$prompt" "$cwd")
+# shellcheck disable=SC1090
+. "$(dirname "$(cat "$run/case.path")")/../live-lib/canned.sh"
+final=$(cd "$cwd" && { canned_common "$role" "$prompt" "$cwd" || case_canned "$role" "$prompt" "$cwd"; })
 rolefile=$(grep -A1 '^Role source:' "$prompt" | tail -1 | tr -d ' ')
 mkdir -p "$sess"
 {

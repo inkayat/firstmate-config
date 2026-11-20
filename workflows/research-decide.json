@@ -1,0 +1,193 @@
+{
+  "$schema": "./workflow.schema.json",
+  "name": "research-decide",
+  "version": 1,
+  "description": "Research a question from primary sources, turn the findings into options with one recommendation, have the recommendation challenged, and record a decision. Changes no code.",
+  "when": "A question whose answer must become a recorded decision: adopt this library or design, choose between approaches, decide whether to do something at all. Not for a pure question or diagnosis (the researcher, scout or debugger role alone, no workflow) and not for work that changes code.",
+  "start": "research",
+  "roles": {
+    "researcher": "researcher",
+    "architect": "architecture",
+    "challenger": "tenth-man"
+  },
+  "gates": {},
+  "loops": {
+    "refine": {
+      "description": "The challenge failed or the decision asked for an amendment: the options are reworked, at most three times.",
+      "maxIterations": 3,
+      "onExhausted": "escalate"
+    },
+    "direction": {
+      "description": "A change of direction was raised and the orchestrator chose to reshape: research again, at most twice. A reshape starts the refinement rounds afresh.",
+      "maxIterations": 2,
+      "resets": [
+        "refine"
+      ],
+      "onExhausted": "escalate"
+    }
+  },
+  "steps": {
+    "research": {
+      "kind": "work",
+      "role": "researcher",
+      "instruction": "Answer the question from high-trust primary sources: detect the stack and versions first, cite full deep-link URLs, mark anything unfound as UNVERIFIED, and give a confidence per finding. Name missing access instead of faking a source. First line of the report: status: done, status: blocked (a source or access is missing and nothing can substitute) or status: change-direction (the question as framed is wrong or unanswerable, with the evidence). Findings and what would change your mind, not a recommendation.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "direction",
+          "from": "direction",
+          "optional": true
+        }
+      ],
+      "output": "report",
+      "on": {
+        "done": "options",
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "options": {
+      "kind": "work",
+      "role": "architect",
+      "instruction": "When an amendment input is present, rework the options to exactly what it says and no more. From the research report, give at most three options, each with cost, what it buys, what it forecloses and what must be true for it to be right; recommend one and say why the others lose; derive 3 to 6 gradeable criteria before comparing. State the decision as a bet where no outside judge can falsify it, with the cheapest test. If a feedback input is present it is the challenge that failed: answer each id. First line of the report: status: done, status: blocked or status: change-direction.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "research",
+          "from": "report",
+          "step": "research"
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "challenge"
+          ],
+          "optional": true
+        },
+        {
+          "name": "amendment",
+          "from": "decision",
+          "step": "decide",
+          "optional": true
+        },
+        {
+          "name": "direction",
+          "from": "direction",
+          "optional": true
+        }
+      ],
+      "output": "report",
+      "on": {
+        "done": "challenge",
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "challenge": {
+      "kind": "work",
+      "role": "challenger",
+      "instruction": "Challenge the recommendation: argue the opposite honestly from the artifact before reading the reasoning, steelman it first, rank objections by consequence, and mark each proven, argued or needs-access. PASS = proceed (mitigations as OPTIONAL); FAIL = a mitigation that must land first or stop, with the failing scenario; BLOCKED = cannot evaluate; CHANGE-DIRECTION = the whole approach is wrong, with the evidence. No manufactured doubt: no material objection is a PASS.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "research",
+          "from": "report",
+          "step": "research"
+        },
+        {
+          "name": "options",
+          "from": "report",
+          "step": "options"
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "challenge"
+          ],
+          "optional": true
+        }
+      ],
+      "output": "verdict",
+      "on": {
+        "pass": "decide",
+        "fail": {
+          "to": "options",
+          "loop": "refine"
+        },
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "decide": {
+      "kind": "decision",
+      "question": "Record the decision on the recommendation: adopt, amend, reject or escalate?",
+      "criteria": [
+        "adopt: the recommendation survived the challenge, answers the question the task asked, and stays within the authority and cost the captain granted. Record what was decided and why.",
+        "amend: the direction is right but the options need rework: say exactly what changes (the options step runs again, at most three times).",
+        "reject: the recommendation is wrong or not worth doing: the task closes with the reason.",
+        "escalate: the decision commits money, scope, authority or something irreversible, or the captain must choose between close options. Record the reason."
+      ],
+      "input": [
+        {
+          "name": "research",
+          "from": "report",
+          "step": "research"
+        },
+        {
+          "name": "options",
+          "from": "report",
+          "step": "options"
+        },
+        {
+          "name": "challenge",
+          "from": "report",
+          "step": "challenge"
+        }
+      ],
+      "on": {
+        "adopt": "@complete",
+        "amend": {
+          "to": "options",
+          "loop": "refine"
+        },
+        "reject": "@close",
+        "escalate": "@escalate"
+      }
+    },
+    "redirect": {
+      "kind": "decision",
+      "question": "A worker, reviewer or the plan reported that the approach itself is wrong (change-direction). Reshape and re-plan, close the task, or escalate?",
+      "criteria": [
+        "reshape: the reported direction is another route to the SAME authorized outcome - no wider scope, no new authority, no extra cost. The reshaped approach goes back in as input; this is not a licence to retry the old approach.",
+        "close: the goal is unreachable, no longer worth it, or already satisfied. Closing is cheap - the code was fast to write. Report why.",
+        "escalate: the direction changes scope, acceptance, authority, risk or cost, or this is the second reshape: the captain decides.",
+        "Never choose reshape to avoid closing, and never grind on a plan the evidence says is wrong. Record the reason; it is kept in the workflow state."
+      ],
+      "input": [
+        {
+          "name": "direction",
+          "from": "direction"
+        }
+      ],
+      "on": {
+        "reshape": {
+          "to": "research",
+          "loop": "direction"
+        },
+        "close": "@close",
+        "escalate": "@escalate"
+      }
+    }
+  }
+}
