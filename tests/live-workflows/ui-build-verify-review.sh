@@ -303,7 +303,25 @@ case_hidden() { # <repo> <kit-dir>
   ui_judge_run repo "$1" >> "$RUN/hidden.last" 2>&1 || return 1
 }
 
+# The service contract as the real browser of ui-verify observed it: docs/api.md describes a service that is not in the repository, so
+# review and QA cannot verify a docs/api.md or request-encoding change against anything in the repo. Once ui-verify has failed, the
+# recorded finding (from the engine state) and the method/path/status lines of the dev server log are handed to the roles that judge
+# the fix (qa, the reviewer, its verifier, the shipper) - never to the implementer (it only gets the feedback it always got) and never
+# before ui-verify failed. Nothing of the hidden kit, the judge or the case files is in it.
+UI_EVIDENCE_MARK='Recorded service evidence from the browser verification'
+ui_service_evidence() { # prints the paragraph, nothing when ui-verify has not failed yet
+  local fb log aux
+  fb=$(jq -r '[.history[] | select(.step == "ui-verify" and .outcome == "fail") | .feedback[]? | "- " + .what + " (" + .where + ")"] | join("\n")' "${STATE:-/nonexistent}" 2>/dev/null)
+  [ -n "$fb" ] || return 0
+  aux=$(dirname "$(svc_get EVIDENCE_DIR)")
+  log=$(grep -E 'POST /api/subscribe HTTP/1.1" [0-9]+' "$aux/server.log" 2>/dev/null | sed -E 's/^[^"]*"/"/' | head -6)
+  printf '%s (observed by the real browser of ui-verify against the running service; the service is not in this repository, so this is the authoritative record of its contract, and docs/api.md is what it contradicts):\n%s\n' "$UI_EVIDENCE_MARK" "$fb"
+  [ -z "$log" ] || printf 'Service request log (method, path, status):\n%s\n' "$log"
+  printf 'Judge a docs/api.md or request-encoding change against this record: a body the service answered 415 to is wrong, whatever the old documentation says.\n'
+}
+
 case_extra() { # <step> <role> <iteration> <kit-dir> <cwd> <data-dir>
+  case $2 in qa|code-reviewer|finding-verifier|release-engineer) ui_service_evidence ;; esac
   case $2 in
     qa) printf 'QA acceptance kit: run `node %s/kit.js .` from your working directory (it is the repository under test); it checks validateSignup in app.js without a browser. A failing expectation is a FAIL. Then do the rest of your QA as usual; a browser check follows in the next step.\n' "$4" ;;
     ui-qa) printf 'Environment facts for the browser verification: the app is ALREADY running at APP_URL=%s together with the subscription service it talks to, and serves the repository head under test: do not start another server (this overrides the general no-network note: that one localhost URL is allowed). Your browser is the chrome-devtools-axi CLI on PATH (run it from bash; chrome-devtools-axi --help lists its commands); CHROME_DEVTOOLS_AXI_SESSION=%s is already set in your environment, keep it for every call. Exercise every acceptance flow of the ticket end to end, the valid-email one included, and report what the page SHOWS in each. Save at least one screenshot of what you observed as a PNG file inside EVIDENCE_DIR=%s (an absolute path: give the screenshot command that path) and name that file path in your report. Do not edit anything in the repository.\n' "$(svc_get APP_URL)" "$(svc_get CHROME_DEVTOOLS_AXI_SESSION)" "$(svc_get EVIDENCE_DIR)" ;;
@@ -381,6 +399,30 @@ case_judge_selftest() { # prints one line per wrong verdict; nothing when the ju
   rm -rf "$d"
 }
 
+# offline-checkable: the recorded service evidence is in the prompts of qa/review after ui-verify failed (with the 415), and nowhere else
+ui_evidence_delivery() { # <run-dir>
+  local d n=0 role outcome p seen_fail=0 reviewed=0 qa_after=0 rows
+  rows=$(jq -r '. as $st | .history[] | select($st.definition.steps[.step].kind == "work") | [$st.definition.roles[$st.definition.steps[.step].role], .step, (.outcome // "")] | @tsv' "$1/data/workflow.json" 2>/dev/null)
+  for d in "$1"/steps/[0-9][0-9]-*; do
+    [ -d "$d" ] || continue
+    n=$((n + 1)); role=$(printf '%s\n' "$rows" | sed -n "${n}p" | cut -f1); outcome=$(printf '%s\n' "$rows" | sed -n "${n}p" | cut -f3); p=$d/prompt.md
+    [ -f "$p" ] || continue
+    case $role in
+      qa|code-reviewer|finding-verifier|release-engineer)
+        if [ "$seen_fail" = 1 ]; then
+          { grep -qF "$UI_EVIDENCE_MARK" "$p" && grep -qiE '415' "$p" && grep -qF 'x-www-form-urlencoded' "$p"; } || { echo "$(basename "$d") ($role): ran after the ui-verify failure but was not handed the 415 evidence"; return 1; }
+          case $role in qa) qa_after=1 ;; code-reviewer) reviewed=1 ;; esac
+        else
+          ! grep -qF "$UI_EVIDENCE_MARK" "$p" || { echo "$(basename "$d") ($role): was handed the service evidence before ui-verify had failed"; return 1; }
+        fi ;;
+      *)
+        ! grep -qF "$UI_EVIDENCE_MARK" "$p" || { echo "$(basename "$d") ($role): a worker that is not qa/review was handed the recorded service evidence"; return 1; } ;;
+    esac
+    if [ "$role" = ui-qa ] && [ "$outcome" = fail ]; then seen_fail=1; fi
+  done
+  [ "$qa_after" = 1 ] && [ "$reviewed" = 1 ] || { echo "no qa run and no review ran after the ui-verify failure, so the evidence delivery was not exercised (qa $qa_after, review $reviewed)"; return 1; }
+}
+
 case_assert() { # <run-dir> <repo>
   local st=$1/data/workflow.json d f png found fb first415 first200
   jq -e '[.history[] | select(.step == "ui-verify") | .outcome] | (index("fail") // 99) < (index("pass") // -1)' "$st" >/dev/null || { echo "ui-verify did not fail and then pass: $(jq -c '[.history[] | select(.step == "ui-verify") | .outcome]' "$st")"; return 1; }
@@ -400,6 +442,8 @@ case_assert() { # <run-dir> <repo>
       [ -z "$found" ] || { echo "$(basename "$d"): the transcript does not show the browser being driven: missing $found"; return 1; }
     fi
   done
+  # the ui-verify evidence reaches qa and the reviewing roles after the failure, and never the implementer or anyone before it
+  ui_evidence_delivery "$1" || return 1
   grep -q 'GET /app.js' "$1/aux/server.log" 2>/dev/null || { echo "the server never saw GET /app.js: the page was not loaded by a browser"; return 1; }
   first415=$(grep -n 'POST /api/subscribe HTTP/1.1" 415' "$1/aux/server.log" 2>/dev/null | head -1 | cut -d: -f1)
   first200=$(grep -n 'POST /api/subscribe HTTP/1.1" 200' "$1/aux/server.log" 2>/dev/null | head -1 | cut -d: -f1)
