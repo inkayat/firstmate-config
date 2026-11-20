@@ -87,6 +87,11 @@ seed_remote() { # <bare> <seed dir with files>
   git -C "$2" add -A
   git -C "$2" commit -qm seed
   git init -q --bare -b main "$1"
+  # A seed of more than 100 objects arrives as a pack, and the push then starts a DETACHED auto-maintenance that
+  # rewrites packs while the fixture clones the remote ("hardlink different from source ... tmp_pack"): none, ever.
+  git -C "$1" config receive.autogc false
+  git -C "$1" config gc.auto 0
+  git -C "$1" config maintenance.auto false
   git -C "$2" push -q "$1" main
 }
 

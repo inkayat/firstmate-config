@@ -5,14 +5,15 @@
 #   Nothing in the ticket says so, store.py never calls trail, and QA's kit only checks the
 #   rename, so the natural implementation passes QA and only the code-reviewer finds the
 #   missing audit entry.
-# Forced loop: implement -> qa PASS -> review FAIL -> address-review -> requalify (decision) -> ... -> review PASS.
-# Control: the address-review step run with the feedback block removed; the missing entry must stay missing.
+# Forced loop: implement -> classify -> qa PASS -> review FAIL -> verify-review (confirms the finding) -> implement
+#   (fixes from the verifier's confirmed list) -> classify -> qa -> review PASS -> ship PASS -> deliver.
+# Control: the fix round (implement run 2) with the feedback block removed; the missing entry must stay missing.
 CASE_WORKFLOW=build-test-review
 CASE_TASK='Add rename_user(user_id, new_name) to store.py: it changes the user'"'"'s name and returns the updated user dict; an unknown user_id raises KeyError. Keep the change small and add tests under tests/.'
-CASE_CONTROL_STEP=address-review
-CASE_CONTROL_RUN=1
+CASE_CONTROL_STEP=implement
+CASE_CONTROL_RUN=2
 CASE_CONTROL_STRIP=feedback
-CASE_EXPECT_PATH='^implement:done qa:pass review:fail address-review:done requalify:(yes|no)( .*)? review:pass deliver:done$'
+CASE_EXPECT_PATH='^implement:done classify:(low|medium|high) qa:pass review:fail verify-review:fail implement:done classify:(low|medium|high) qa:pass review:pass( security:pass)? ship:pass deliver:done$'
 CASE_FORCE_AFTER=implement:1  # the QA kit passes but the hidden audit check must FAIL after the first implementation
 CASE_FORCE_KIT_PASS=1         # ... and the QA kit alone passes at that point (QA must not be the one to catch it)
 
@@ -98,11 +99,12 @@ sys.exit(1 if bad else 0)
 R
 }
 
-# Captain additions per step: QA gets the kit; the REVIEWER gets the team checklist (the implementer gets neither).
+# Captain additions per step: QA gets the kit; the REVIEWER and the finding-VERIFIER get the team checklist (the implementer gets neither).
 case_extra() { # <step> <role> <iteration> <kit-dir> <cwd> <data-dir>
   case $2 in
     qa) printf 'QA acceptance kit: run `python3 %s/kit.py .` from your working directory (it is the repository under test); it checks the rename the ticket describes. A failing expectation is a FAIL. Then do the rest of your QA as usual.\n' "$4" ;;
     code-reviewer) printf 'Team review checklist (the implementer was not given it; each violated rule is a finding at the stated severity): R1 (IMPORTANT) no bare `except:`. R2 (BLOCKER) every function that modifies stored data must record it with trail.append(action, target) from trail.py, as billing.refund does. R3 (OPTIONAL) no print() in library code.\n' ;;
+    finding-verifier) printf 'Team review checklist the reviewer applied (the implementer was not given it; a finding that cites a violated rule below is a requirement, not an opinion): R1 (IMPORTANT) no bare `except:`. R2 (BLOCKER) every function that modifies stored data must record it with trail.append(action, target) from trail.py, as billing.refund does. R3 (OPTIONAL) no print() in library code.\n' ;;
   esac
 }
 
@@ -123,15 +125,18 @@ R
 
 case_assert() { # <run-dir> <repo>
   local st=$1/data/workflow.json fb
-  fb=$(jq -r '[.history[] | select(.step == "review" and .outcome == "fail") | .verdict.feedback[] | .what + " " + .where] | join("\n")' "$st")
+  fb=$(jq -r '[.history[] | select(.step == "review" and .outcome == "fail") | .feedback[] | .what + " " + .where] | join("\n")' "$st")
   printf '%s' "$fb" | grep -qiE 'trail|audit|R2' || { echo "the review finding never names the missing trail entry"; return 1; }
-  jq -e '[.history[] | select(.step == "requalify")] | length >= 1 and all(.[]; (.reason // "") != "")' "$st" >/dev/null || { echo "the decision step did not record a reason"; return 1; }
+  fb=$(jq -r '[.history[] | select(.step == "verify-review" and .outcome == "fail") | .feedback[] | .what + " " + .where] | join("\n")' "$st")
+  printf '%s' "$fb" | grep -qiE 'trail|audit|R2' || { echo "the verifier never confirmed the missing trail entry"; return 1; }
+  jq -e '[.history[] | select(.step == "implement")] | length >= 2 and (.[-1].answers | length) >= 1' "$st" >/dev/null || { echo "the fixing implementer run reported no answer to the confirmed finding"; return 1; }
 }
 
-case_canned() { # <role> <prompt-file> <cwd>
-  local role=$1 prompt=$2 cwd=$3
+case_canned() { # <role> <prompt-file> <cwd> (risk-classifier, finding-verifier, release-engineer: live-lib/canned.sh)
+  local role=$1 prompt=$2 cwd=$3 base
   case $role in
     senior-fullstack)
+      base=$(git -C "$cwd" rev-parse HEAD)
       if grep -q '^- feedback:' "$prompt"; then
         cat >> "$cwd/store.py" <<'R'
 
@@ -141,7 +146,7 @@ def rename_user(user_id, new_name):
     trail.append("rename_user", user_id)
     return get_user(user_id)
 R
-        sed -i '1i import trail' "$cwd/store.py"
+        { printf 'import trail\n'; cat "$cwd/store.py"; } > "$cwd/store.py.new" && mv "$cwd/store.py.new" "$cwd/store.py"
       else
         cat >> "$cwd/store.py" <<'R'
 
@@ -152,18 +157,17 @@ def rename_user(user_id, new_name):
 R
       fi
       git -C "$cwd" add -A && git -C "$cwd" commit -q -m "store: rename_user"
-      printf 'Implemented rename_user and committed it.\n' ;;
+      canned_result "$cwd" "$base" 'Implemented rename_user and committed it.' "$prompt" ;;
     qa)
       local kit
       kit=$(sed -n 's#^QA acceptance kit: run `python3 \(.*\)/kit.py.*#\1#p' "$prompt" | head -1)
-      python3 "$kit/kit.py" "$cwd" >/dev/null 2>&1 \
-        && printf 'Ran the kit: the rename passes.\n\n```verdict\n{"verdict":"PASS","feedback":[]}\n```\n' \
-        || printf 'Kit failed.\n\n```verdict\n{"verdict":"FAIL","feedback":[{"id":"QA-1","severity":"BLOCKER","what":"kit failure","where":"store.py"}]}\n```\n' ;;
+      if python3 "$kit/kit.py" "$cwd" >/dev/null 2>&1; then printf 'Ran the kit: the rename passes.\n\n'; canned_verdict PASS "$cwd" '[]'
+      else printf 'Kit failed.\n\n'; canned_verdict FAIL "$cwd" '[{"id":"QA-1","severity":"BLOCKER","what":"kit failure","where":"store.py"}]'; fi ;;
     code-reviewer)
       if grep -q 'trail.append' "$cwd/store.py"; then
-        printf 'R2 holds.\n\n```verdict\n{"verdict":"PASS","feedback":[]}\n```\n'
+        printf 'R2 holds.\n\n'; canned_verdict PASS "$cwd" '[]'
       else
-        printf 'R2 is violated.\n\n```verdict\n{"verdict":"FAIL","feedback":[{"id":"REV-1","severity":"BLOCKER","what":"R2: rename_user modifies stored data but never calls trail.append(action, target); billing.refund does","where":"store.py:rename_user"}]}\n```\n'
+        printf 'R2 is violated.\n\n'; canned_verdict FAIL "$cwd" '[{"id":"REV-1","severity":"BLOCKER","what":"R2: rename_user modifies stored data but never calls trail.append(action, target); billing.refund does","where":"store.py:rename_user"}]'
       fi ;;
   esac
 }

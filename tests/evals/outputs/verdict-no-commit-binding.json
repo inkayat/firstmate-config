@@ -1,0 +1,19 @@
+{
+  "raw": [
+    {
+      "what": "The verdict block has no commit binding, so any PASS can be replayed against another commit",
+      "where": "roles/qa/ROLE.md verdict contract"
+    },
+    {
+      "what": "Trace line omits the run number in one path",
+      "where": "bin/fm-workflow trace"
+    }
+  ],
+  "verified": [
+    {
+      "what": "Trace line omits the run number in one path",
+      "where": "bin/fm-workflow trace"
+    }
+  ],
+  "final": []
+}

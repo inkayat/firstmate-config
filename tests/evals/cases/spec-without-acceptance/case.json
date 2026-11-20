@@ -1,0 +1,9 @@
+{
+  "id": "spec-without-acceptance",
+  "set": "tuning",
+  "key": "A delegated brief carried no acceptance criteria, so QA had nothing to verify against.",
+  "keywords": [
+    "acceptance",
+    "missing"
+  ]
+}

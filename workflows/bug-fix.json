@@ -1,0 +1,552 @@
+{
+  "$schema": "./workflow.schema.json",
+  "name": "bug-fix",
+  "version": 1,
+  "description": "Diagnose the root cause from a red-capable reproduction, lock it with a failing regression test written by someone other than the fixer, fix it without touching that test, then classify, verify, review (findings verified), security when sensitive, ship-readiness and deliver.",
+  "when": "A reported defect with a symptom to reproduce: something broken, throwing, failing or wrong. Not for a feature, a refactor or a diagnosis that should stay a diagnosis (a pure diagnosis uses the debugger role alone, no workflow), and not when no-mistakes is the selected delivery path (delegated-build).",
+  "start": "diagnose",
+  "roles": {
+    "debugger": "debugger",
+    "tester": "test-engineer",
+    "implementer": "senior-fullstack",
+    "classifier": "risk-classifier",
+    "qa": "qa",
+    "reviewer": "code-reviewer",
+    "verifier": "finding-verifier",
+    "security": "security-engineer",
+    "shipper": "release-engineer"
+  },
+  "gates": {
+    "evidence": "observe",
+    "answers": "observe",
+    "commit": "observe",
+    "coverage": "observe"
+  },
+  "loops": {
+    "qa-fix": {
+      "description": "QA failed: the implementer fixes it, then the change is classified and verified again. After three rounds the author steps back instead of taking a fourth.",
+      "maxIterations": 3,
+      "onExhausted": {
+        "to": "step-back"
+      }
+    },
+    "review-fix": {
+      "description": "Confirmed review, security or ship findings went back: the implementer fixes them, then everything runs again on the new commit. After three rounds the author steps back instead of taking a fourth.",
+      "maxIterations": 3,
+      "onExhausted": {
+        "to": "step-back"
+      }
+    },
+    "direction": {
+      "description": "A change of direction was raised and the orchestrator chose to reshape: re-plan, at most twice. A reshape starts the QA and review rounds afresh.",
+      "maxIterations": 2,
+      "resets": [
+        "qa-fix",
+        "review-fix"
+      ],
+      "onExhausted": "escalate"
+    }
+  },
+  "steps": {
+    "diagnose": {
+      "kind": "work",
+      "role": "debugger",
+      "instruction": "Diagnose the reported failure: build a red-capable reproduction command first (one command you ran that goes red on the exact symptom, deterministic, fast, unattended), minimise it, rank falsifiable hypotheses, and trace the ROOT cause (the first place the system went wrong, not where it surfaced). Hand over: the reproduction command and its observed output, the traced cause, the smallest fix boundary, and the test seam where a regression test can honestly catch it (or that none exists - that is the finding). Source is read-only. First line of the report: status: done, status: blocked (no red-capable command can be built: name what is needed) or status: change-direction (not a defect, works as designed, or the premise is wrong, with the evidence).",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "direction",
+          "from": "direction",
+          "optional": true
+        }
+      ],
+      "output": "report",
+      "on": {
+        "done": "regression-test",
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "regression-test": {
+      "kind": "work",
+      "role": "tester",
+      "instruction": "Turn the diagnosis into a failing regression test at the honest seam. Show it fail for the INTENDED reason (an assertion on the exact symptom, not an error), derive the expected value from the requirement, and test behaviour not implementation. Edit tests only, never production source. Commit it to the task branch and report with the result block: base and commit and the red run as evidence. If no seam can catch the bug, end with status change-direction: that is the finding for the captain.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "diagnosis",
+          "from": "report",
+          "step": "diagnose"
+        },
+        {
+          "name": "direction",
+          "from": "direction",
+          "optional": true
+        }
+      ],
+      "output": "result",
+      "commits": true,
+      "on": {
+        "done": "fix",
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "fix": {
+      "kind": "work",
+      "role": "implementer",
+      "instruction": "Fix the root cause of the diagnosed bug so that the regression test from step regression-test goes green. Do not edit that test: it is the gate, and changing it after its commit is an IMPORTANT finding for QA and review. Fix where the first wrong state arises, not where it surfaces: a guard, retry, swallowed error or clamp that hides the bug is not a fix, and every place with the same fault gets the same fix. Show the regression test red before your change and green after, then the project cheap checks, then the real flow end to end. Commit to the task branch and report with the result block (base, commit, evidence, an answer for every feedback id handed to you). If the diagnosis turns out wrong or the fix needs another layer, end early with status change-direction and the evidence.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "diagnosis",
+          "from": "report",
+          "step": "diagnose"
+        },
+        {
+          "name": "regression-test",
+          "from": "report",
+          "step": "regression-test"
+        },
+        {
+          "name": "change",
+          "from": "change",
+          "optional": true
+        },
+        {
+          "name": "direction",
+          "from": "direction",
+          "optional": true
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "qa",
+            "verify-review",
+            "verify-security",
+            "ship"
+          ],
+          "optional": true
+        }
+      ],
+      "output": "result",
+      "commits": true,
+      "on": {
+        "done": "classify",
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "classify": {
+      "kind": "work",
+      "role": "classifier",
+      "instruction": "Classify the risk of the change from the diff itself (the change input, base..head): the tier low, medium or high, whether a security review is required, the sensitive surfaces touched, and the diff-triggered checklist items that match. The author and the task text do not set the tier; the diff does. Read the project REVIEW.md and risk rules from the BASE branch (git show), never from the change; an edit to those rules is itself high risk. Name the one fact the change is safe because of, or write unproven. Record the head commit you classified.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "change",
+          "from": "change"
+        }
+      ],
+      "output": "risk",
+      "on": {
+        "low": "qa",
+        "medium": "qa",
+        "high": "qa",
+        "blocked": "@escalate"
+      }
+    },
+    "qa": {
+      "kind": "work",
+      "role": "qa",
+      "instruction": "Verify the change independently against the task acceptance by RUNNING it: the project cheap checks, then the real flow end to end (the project verify convention if it has one), then probes beyond the implementer checks (boundary and error inputs, neighbouring behaviour; property or differential tests where they fit). Scale depth to the recorded risk tier and check only the checklist items whose trigger matches the diff. Rules and gates are read from the BASE branch, never from the change. Never edit the change. Run 1 verifies the whole change; on a re-run (feedback or delta present) first report each handed id (fixed or still failing, with the command that shows it), then verify the delta and re-run what the earlier run covered that the delta could affect. Record the head commit you ran on in the verdict block: a pass is valid only for that commit. If the acceptance itself is wrong or unreachable, end early with CHANGE-DIRECTION. The regression test from step regression-test is the gate: any change to it after its commit is an IMPORTANT finding.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "change",
+          "from": "change"
+        },
+        {
+          "name": "delta",
+          "from": "delta",
+          "optional": true
+        },
+        {
+          "name": "risk",
+          "from": "risk"
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "qa",
+            "verify-review",
+            "verify-security",
+            "ship"
+          ],
+          "optional": true
+        },
+        {
+          "name": "regression-test",
+          "from": "report",
+          "step": "regression-test"
+        }
+      ],
+      "output": "verdict",
+      "on": {
+        "pass": "review",
+        "fail": {
+          "to": "fix",
+          "loop": "qa-fix"
+        },
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "review": {
+      "kind": "work",
+      "role": "reviewer",
+      "instruction": "Review the change in fresh context: correctness first, then maintainability and safety. QA already ran it, so spend attention on what a run does not show. Every finding needs file:line, a concrete failing scenario and the evidence you produced; drop what you cannot demonstrate and anything style-only. Tag severity BLOCKER, IMPORTANT, OPTIONAL (a nit) or PRE-EXISTING (a defect that predates the change: never the author fault) and give the CLASS of bug so every instance is fixed. Run 1 reviews the whole change. Run 2 and later review only the delta (the delta input) plus each previously confirmed finding (fixed or still open), and report a new finding only for a defect the delta introduced or exposed; never repeat a finding listed under posted. If the same class of finding comes back after round 2, the approach is the problem: end with CHANGE-DIRECTION and the evidence. Read rules from the BASE branch. Record the head commit you reviewed. The regression test from step regression-test is the gate: any change to it after its commit is an IMPORTANT finding; confirm the root cause is fixed, not the symptom guarded.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "change",
+          "from": "change"
+        },
+        {
+          "name": "delta",
+          "from": "delta",
+          "optional": true
+        },
+        {
+          "name": "risk",
+          "from": "risk"
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "review",
+            "verify-review"
+          ],
+          "optional": true
+        },
+        {
+          "name": "posted",
+          "from": "feedback-all",
+          "steps": [
+            "review",
+            "verify-review"
+          ],
+          "optional": true
+        },
+        {
+          "name": "regression-test",
+          "from": "report",
+          "step": "regression-test"
+        }
+      ],
+      "output": "verdict",
+      "on": {
+        "pass": [
+          {
+            "to": "security",
+            "when": {
+              "security": [
+                "required"
+              ]
+            }
+          },
+          {
+            "to": "ship"
+          }
+        ],
+        "fail": "verify-review",
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "verify-review": {
+      "kind": "work",
+      "role": "verifier",
+      "instruction": "Try to disprove each finding in the feedback input before it goes back to the implementer. Reproduce each one by running the command or tracing the cited path; vote with up to three independent skeptics for BLOCKER and IMPORTANT findings; keep a finding only if a re-run shows the failure and the failure breaks the stated intent. Drop style-only, intended-behaviour and duplicate findings (merge duplicates by class) and findings that fail to reproduce and are refuted, each with evidence; a defect that predates the change stays as PRE-EXISTING. Every handed id appears exactly once, in feedback (confirmed) or in dropped. You add no findings of your own. Record the head commit.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "change",
+          "from": "change"
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "review"
+          ]
+        }
+      ],
+      "output": "verdict",
+      "verifies": [
+        "review"
+      ],
+      "on": {
+        "pass": [
+          {
+            "to": "security",
+            "when": {
+              "security": [
+                "required"
+              ]
+            }
+          },
+          {
+            "to": "ship"
+          }
+        ],
+        "fail": {
+          "to": "fix",
+          "loop": "review-fix"
+        },
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "security": {
+      "kind": "work",
+      "role": "security",
+      "instruction": "Security review of the change: threat-model first, then the sensitive-surface checklist (authn and authz, secrets, crypto, parsers and deserialization, injection, path traversal, SSRF, installers and updaters, CI workflow files, dependency and privilege changes, data deletion, network exposure, secret logging). This is a blocking gate: Critical and High map to BLOCKER, Medium to IMPORTANT, Low and Info to OPTIONAL. Cheapest safe proof only; never exploit; redact secrets. Read rules from the BASE branch. Record the head commit you reviewed.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "change",
+          "from": "change"
+        },
+        {
+          "name": "delta",
+          "from": "delta",
+          "optional": true
+        },
+        {
+          "name": "risk",
+          "from": "risk"
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "security",
+            "verify-security"
+          ],
+          "optional": true
+        },
+        {
+          "name": "posted",
+          "from": "feedback-all",
+          "steps": [
+            "security",
+            "verify-security"
+          ],
+          "optional": true
+        }
+      ],
+      "output": "verdict",
+      "on": {
+        "pass": "ship",
+        "fail": "verify-security",
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "verify-security": {
+      "kind": "work",
+      "role": "verifier",
+      "instruction": "Try to disprove each finding in the feedback input before it goes back to the implementer. Reproduce each one by running the command or tracing the cited path; vote with up to three independent skeptics for BLOCKER and IMPORTANT findings; keep a finding only if a re-run shows the failure and the failure breaks the stated intent. Drop style-only, intended-behaviour and duplicate findings (merge duplicates by class) and findings that fail to reproduce and are refuted, each with evidence; a defect that predates the change stays as PRE-EXISTING. Every handed id appears exactly once, in feedback (confirmed) or in dropped. You add no findings of your own. Record the head commit.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "change",
+          "from": "change"
+        },
+        {
+          "name": "feedback",
+          "from": "feedback",
+          "steps": [
+            "security"
+          ]
+        }
+      ],
+      "output": "verdict",
+      "verifies": [
+        "security"
+      ],
+      "on": {
+        "pass": "ship",
+        "fail": {
+          "to": "fix",
+          "loop": "review-fix"
+        },
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "ship": {
+      "kind": "work",
+      "role": "shipper",
+      "instruction": "Decide ship-readiness for the head commit and prepare the delivery package. Check that every recorded gate verdict was for THIS commit (a stale pass is a FAIL); run the project cheap checks again on the head; verify the docs, changelog and version conventions the project requires. Write the PR body: what changed and why; the verification stamp (every command and flow that actually ran, including none where nothing ran, and unchecked items listed as unchecked); the risk tier and the required human approvals (an agent approval never replaces a human one); how to revert (exact command or flag, data effects, time); the non-blocking notes verbatim. A change that is irreversible or hard to reverse is hold-for-human, not ready. Never push, merge or deploy.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "change",
+          "from": "change"
+        },
+        {
+          "name": "risk",
+          "from": "risk"
+        },
+        {
+          "name": "notes",
+          "from": "notes",
+          "optional": true
+        },
+        {
+          "name": "qa-report",
+          "from": "report",
+          "step": "qa",
+          "optional": true
+        },
+        {
+          "name": "review-report",
+          "from": "report",
+          "step": "review",
+          "optional": true
+        },
+        {
+          "name": "security-report",
+          "from": "report",
+          "step": "security",
+          "optional": true
+        }
+      ],
+      "output": "verdict",
+      "on": {
+        "pass": "deliver",
+        "fail": {
+          "to": "fix",
+          "loop": "review-fix"
+        },
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "deliver": {
+      "kind": "deliver",
+      "instruction": "QA, review and the other gates passed on the head commit. Deliver through the task own delivery mode: for direct-PR the worker that owns the branch pushes it and opens the PR ready for review, with the delivery package of the ship step as the body (Testing = the verification stamp below; Risk; How to revert; the non-blocking notes). Never merge: merging stays with the captain and the configured merge authority, and the human approvals required below are not satisfied by any agent verdict.",
+      "input": [
+        {
+          "name": "change",
+          "from": "change"
+        },
+        {
+          "name": "notes",
+          "from": "notes",
+          "optional": true
+        }
+      ],
+      "on": {
+        "done": "@complete",
+        "blocked": "@escalate"
+      }
+    },
+    "redirect": {
+      "kind": "decision",
+      "question": "A worker, reviewer or the plan reported that the approach itself is wrong (change-direction). Reshape and re-plan, close the task, or escalate?",
+      "criteria": [
+        "reshape: the reported direction is another route to the SAME authorized outcome - no wider scope, no new authority, no extra cost. The reshaped approach goes back in as input; this is not a licence to retry the old approach.",
+        "close: the goal is unreachable, no longer worth it, or already satisfied. Closing is cheap - the code was fast to write. Report why.",
+        "escalate: the direction changes scope, acceptance, authority, risk or cost, or this is the second reshape: the captain decides.",
+        "Never choose reshape to avoid closing, and never grind on a plan the evidence says is wrong. Record the reason; it is kept in the workflow state."
+      ],
+      "input": [
+        {
+          "name": "direction",
+          "from": "direction"
+        },
+        {
+          "name": "change",
+          "from": "change",
+          "optional": true
+        }
+      ],
+      "on": {
+        "reshape": {
+          "to": "diagnose",
+          "loop": "direction"
+        },
+        "close": "@close",
+        "escalate": "@escalate"
+      }
+    },
+    "step-back": {
+      "kind": "work",
+      "role": "implementer",
+      "instruction": "The round cap was reached. Do not fix anything and do not start another round. Step back and reconsider the approach itself: from every accumulated finding, name the class of defect that keeps returning and the premise it points at. If the approach is wrong, end with status change-direction and the reshaped approach (or the reason to close the task). If it stands, end with status done and the evidence that the next round would converge; the captain decides whether to grant it. If you cannot decide, end with status blocked.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "change",
+          "from": "change"
+        },
+        {
+          "name": "accumulated",
+          "from": "feedback-all",
+          "steps": [
+            "qa",
+            "review",
+            "verify-review",
+            "security",
+            "verify-security"
+          ]
+        }
+      ],
+      "output": "result",
+      "on": {
+        "done": "@escalate",
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    }
+  }
+}

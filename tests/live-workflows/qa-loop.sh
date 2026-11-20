@@ -4,14 +4,15 @@
 #   the QA acceptance kit, which the implementer is never given. Any natural first
 #   implementation fails the kit, so QA must FAIL it, and the implementer can only
 #   get the convention from QA's feedback.
-# Forced loop: implement -> qa FAIL (feedback) -> implement (fixes from the feedback) -> qa PASS -> review -> deliver.
+# Forced loop: implement -> classify -> qa FAIL (feedback, straight to the implementer) -> implement (fixes from the
+#   feedback) -> classify -> qa PASS -> review PASS -> ship PASS -> deliver.
 # Control: the fix round run with the feedback block removed; it must still fail the kit.
 CASE_WORKFLOW=build-test-review
 CASE_TASK='Add format_amount(cents) in a new module money.py: it returns the display string for an amount given in integer cents, for use on invoices. Keep the change small and add tests under tests/.'
 CASE_CONTROL_STEP=implement   # the step whose forcing input is removed in the control
 CASE_CONTROL_RUN=2            # its Nth run (the fix round)
 CASE_CONTROL_STRIP=feedback
-CASE_EXPECT_PATH='^implement:done qa:fail( implement:done qa:fail)* implement:done qa:pass review:pass deliver:done$'
+CASE_EXPECT_PATH='^implement:done classify:(low|medium|high) qa:fail( implement:done classify:(low|medium|high) qa:fail)* implement:done classify:(low|medium|high) qa:pass review:pass( security:pass)? ship:pass deliver:done$'
 CASE_FORCE_AFTER=implement:1  # the hidden check must FAIL after this step run (the loop was forced)
 
 case_setup() {
@@ -96,10 +97,11 @@ case_assert() { # <run-dir> <repo>
 }
 
 # Offline stand-in workers (self-test only): what a worker that followed / ignored the loop would do.
-case_canned() { # <role> <prompt-file> <cwd> -> final text on stdout
-  local role=$1 prompt=$2 cwd=$3
+case_canned() { # <role> <prompt-file> <cwd> -> final text on stdout (risk-classifier, release-engineer etc.: live-lib/canned.sh)
+  local role=$1 prompt=$2 cwd=$3 base
   case $role in
     senior-fullstack)
+      base=$(git -C "$cwd" rev-parse HEAD)
       # FAKE_MODE (offline self-test only): ignore = never applies the feedback; firsttry = right at once.
       if [ "${FAKE_MODE:-}" = firsttry ] || { [ "${FAKE_MODE:-}" != ignore ] && grep -q '^- feedback:' "$prompt"; }; then
         cat > "$cwd/money.py" <<'R'
@@ -116,21 +118,21 @@ def format_amount(cents):
 R
       fi
       git -C "$cwd" add -A && git -C "$cwd" commit -q -m "money: format_amount"
-      printf 'Implemented format_amount in money.py and committed it.\n' ;;
+      canned_result "$cwd" "$base" 'Implemented format_amount in money.py and committed it.' "$prompt" ;;
     qa)
       local kit out
       kit=$(sed -n 's#^QA acceptance kit: run `python3 \(.*\)/kit.py.*#\1#p' "$prompt" | head -1)
       out=$(python3 "$kit/kit.py" "$cwd" 2>&1); local rc=$?
       if [ $rc -eq 0 ]; then
-        printf 'Ran the kit: all expectations hold. Prior findings re-checked.\n\n```verdict\n{"verdict":"PASS","feedback":[]}\n```\n'
+        printf 'Ran the kit: all expectations hold. Prior findings re-checked.\n\n'; canned_verdict PASS "$cwd" '[]'
       else
         local items='[]' i=0 line
         while IFS= read -r line; do
           case $line in FAIL*) i=$((i + 1)); items=$(printf '%s' "$items" | jq -c --arg id "QA-$i" --arg w "$line" '. + [{id: $id, severity: "BLOCKER", what: $w, where: "money.py: format_amount"}]') ;; esac
         done <<<"$out"
-        printf 'Ran the kit.\n%s\n\n```verdict\n%s\n```\n' "$out" "$(jq -n --argjson i "$items" '{verdict: "FAIL", feedback: $i}')"
+        printf 'Ran the kit.\n%s\n\n' "$out"; canned_verdict FAIL "$cwd" "$items"
       fi ;;
     code-reviewer)
-      printf 'Reviewed money.py: small and clear.\n\n```verdict\n{"verdict":"PASS","feedback":[]}\n```\n' ;;
+      printf 'Reviewed money.py: small and clear.\n\n'; canned_verdict PASS "$cwd" '[]' ;;
   esac
 }

@@ -3,95 +3,86 @@
 # path. For each step that launches a worker, this script plays the Captain: it
 # asks bin/fm-workflow for the step's spec, scaffolds the brief with the real
 # bin/fm-brief.sh, fills `## Firstmate spec` with that spec and nothing else, and
-# launches the task with the unmodified official bin/fm-spawn.sh on an isolated
+# launches the task with the unmodified official bin/fm-spawn.sh on a private
 # tmux server into a real treehouse worktree. Only the `omp` executable is fake: it
 # records the argv it was launched with, which is the worker's FIRST input. Scripted
-# outcomes (verdict files, "done") are fed back to the engine, so BOTH workflows are
-# driven end to end: QA failing then passing, review feedback then "QA needed", and
-# plan -> build -> test -> review.
+# worker reports (result blocks for the implementer, risk blocks for the classifier,
+# verdict blocks for QA, review, the finding-verifier and ship; --outcome done for the
+# planner and deliver) are fed back to the engine, so BOTH workflows are driven end to
+# end: implement -> classify -> qa FAIL -> implement -> classify -> qa PASS -> review FAIL ->
+# verify-review (confirms) -> implement -> classify -> qa -> review PASS -> ship -> deliver,
+# and plan -> implement -> classify -> qa -> review -> ship -> deliver.
 #
 # Per launched worker this asserts: the role handoff is bin/fm-role-handoff's, verbatim,
 # for the role the step binds; the role's autoloadSkills paths and no other skill path;
-# the derived Workflow trace line; and the feedback block is EXACTLY the previous
-# verdict's feedback list (or absent when the step has none).
+# the COMPLETE `next ... --spec` output arrives unchanged, its first line being the
+# `Workflow step: <workflow> v<version>, step <step>, run #<n>` header built from the
+# state file, and no `Workflow:` trace line (chat-only, never in a brief); and the
+# feedback block is EXACTLY the list the definition hands that step (QA's failure
+# straight to the implementer; the reviewer's blocking list to the verifier; the
+# verifier's confirmed list, never the raw review, to the implementer), or absent when
+# the step has none; and the change/risk/plan inputs.
 #
 # What this proves: the briefs a real spawn delivers carry the right role handoff and
-# exactly the feedback of the previous step, in the order the definition says. What it
-# cannot prove: that a model reads or applies any of it (tests/workflows-live.sh), or
-# that the Captain chose the right workflow.
+# exactly the feedback of the engine's routing, in the order the definition says, and
+# the engine's whole spec survives the official brief and spawn path. It uses a FAKE
+# omp, so it cannot prove that a model reads or applies any of it
+# (tests/workflows-live.sh), that a real Captain pastes the spec whole
+# (tests/captain-live.sh), or that the Captain chose the right workflow.
 #
-# SKIPs (never PASS) without tmux, treehouse, or an official FirstMate checkout at
-# $FIRSTMATE_ROOT (default ~/Developer/tools/firstmate).
+# ISOLATED LAB (tests/e2e-lib/lab.sh has the full list): safe on a machine with a live
+# fleet, also when started from inside a fleet tmux pane or treehouse worktree. A private
+# tmux server, a throwaway HOME / FM_HOME / TMPDIR / project (its treehouse pool lives in
+# the project), `env -i` for every official script (no inherited TMUX or FM_*), recording
+# shims for tmux and treehouse and deny-and-record shims for the fleet tools. The run ends
+# with lab_guard's assertions over that record (every call was on the lab) and proves the
+# lab is gone. Tear-down is idempotent and also called explicitly, so it holds under a
+# harness that does not fire EXIT traps.
+#
+# SKIPs (never PASS) without tmux, treehouse, jq, or an official FirstMate checkout at
+# $FIRSTMATE_ROOT (default ~/Developer/tools/firstmate). FIRSTMATE_ROOT also lets a
+# deliberately broken launch be fed in: tests/e2e-lib/broken-firstmate.sh builds a
+# FirstMate whose launch drops the role handoff, alters the feedback, trims the spec,
+# pastes a trace line, or leaves the lab; the suite must FAIL on each.
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HANDOFF="$CONFIG_ROOT/bin/fm-role-handoff"
 W="$CONFIG_ROOT/bin/fm-workflow"
 FM_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
+# shellcheck source=tests/e2e-lib/lab.sh
+. "$CONFIG_ROOT/tests/e2e-lib/lab.sh"
 
-if ! command -v tmux >/dev/null 2>&1 || ! command -v treehouse >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 \
-   || [ ! -x "$FM_ROOT/bin/fm-spawn.sh" ] || [ ! -x "$FM_ROOT/bin/fm-brief.sh" ]; then
-  printf 'SKIP - workflows e2e: needs tmux, treehouse, jq, and %s/bin/fm-{brief,spawn}.sh (never reported as PASS)\n\nWORKFLOWS E2E SKIPPED\n' "$FM_ROOT"
-  exit 0
-fi
-shopt -u patsub_replacement 2>/dev/null || true
-
-failed=0
-pass() { printf 'ok   - %s\n' "$1"; }
-fail() { printf 'FAIL - %s\n' "$1" >&2; failed=1; }
-check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected '$3', got '$2')"; fi; }
-has() { case $2 in *"$3"*) pass "$1" ;; *) fail "$1 (missing '$3')" ;; esac; }
-lacks() { case $2 in *"$3"*) fail "$1 (unexpected '$3')" ;; *) pass "$1" ;; esac; }
-field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | tail -1; }
-
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-wf-e2e.XXXXXX") || exit 1
-TMP=$(cd "$TMP" && pwd)
-RUN=$$
-SEAM_TMUX=$(mktemp -d /tmp/fm-wf-tmux.XXXXXX) || exit 1
-cleanup() {
-  TMUX_TMPDIR="$SEAM_TMUX" tmux kill-server >/dev/null 2>&1 || true
-  sleep 0.3
-  chmod -R u+w "$TMP" "$SEAM_TMUX" /tmp/fm-wf-e2e-"$RUN"-* /tmp/fm-wf-e2e-"$RUN"-*+* 2>/dev/null
-  rm -rf "$TMP" "$SEAM_TMUX" /tmp/fm-wf-e2e-"$RUN"-* /tmp/fm-wf-e2e-"$RUN"-*+*
-}
-trap cleanup EXIT
-
-export FM_CONFIG_ROOT="$CONFIG_ROOT" FM_SKILLS_ROOT="$TMP/home/.agents/skills"
-home="$TMP/fm-home"
-proj="$home/projects/e2e-proj"
-mkdir -p "$home/state" "$home/config" "$home/data" "$TMP/home" "$TMP/bin" "$proj"
-printf 'manual\n' > "$home/config/backlog-backend"
-printf '# E2E project\n' > "$proj/AGENTS.md"
-printf 'max_trees = 24\nroot = "./"\n' > "$proj/treehouse.toml"
-git -C "$proj" init -q
-git -C "$proj" add -A
-git -C "$proj" -c user.email=t@example.invalid -c user.name=t commit -q -m init
-
-cat > "$TMP/bin/omp" <<'SH'
-#!/usr/bin/env bash
-[ "${1:-}" = --help ] && { printf 'usage: omp [options] [prompt]\n'; exit 0; }
-if [ "${1:-}" = models ]; then
-  printf '{"models":[{"provider":"anthropic","id":"claude-opus-5-5","selector":"anthropic/claude-opus-5-5"},{"provider":"anthropic","id":"claude-sonnet-5-5","selector":"anthropic/claude-sonnet-5-5"}]}\n'
-  exit 0
-fi
-printf '%s\n' "$@" > worker-argv.tmp
-mv worker-argv.tmp worker-argv.txt
-SH
-chmod +x "$TMP/bin/omp"
+lab_prereq workflows WORKFLOWS
+lab_up wf
 
 OPUS=anthropic/claude-opus-5-5
-SPAWN_ENV=(TMUX_TMPDIR="$SEAM_TMUX" PATH="$TMP/bin:$PATH" HOME="$TMP/home" FM_HOME="$home" FM_BACKEND=tmux)
 N=0
 
-# report <file> <PASS|FAIL> [id:SEVERITY:what]... - a worker report ending in the verdict block
+# report <file> <PASS|FAIL> <commit> [id:SEVERITY:what]... - a worker report ending in the verdict block
 report() {
-  local f=$1 v=$2 items='[]' it
-  shift 2
+  local f=$1 v=$2 c=$3 items='[]' it
+  shift 3
   for it in "$@"; do
     items=$(printf '%s' "$items" | jq -c --arg id "${it%%:*}" --arg sev "$(echo "$it" | cut -d: -f2)" --arg what "$(echo "$it" | cut -d: -f3-)" \
       '. + [{id: $id, severity: $sev, what: $what, where: "src/app.py:12"}]')
   done
-  { printf 'I checked the change.\n\n```verdict\n'; jq -n --arg v "$v" --argjson i "$items" '{verdict: $v, feedback: $i}'; printf '```\n'; } > "$f"
+  { printf 'I checked the change.\n\n```verdict\n'; jq -n --arg v "$v" --arg c "$c" --argjson i "$items" '{verdict: $v, commit: $c, feedback: $i}'; printf '```\n'; } > "$f"
+}
+# result_report <file> <base> <commit> [answered-id]... - an implementer report ending in the result block
+result_report() {
+  local f=$1 b=$2 c=$3 answers='[]' id
+  shift 3
+  for id in "$@"; do answers=$(printf '%s' "$answers" | jq -c --arg id "$id" '. + [{id: $id, status: "fixed", evidence: "re-ran the failing command, it now passes"}]'); done
+  { printf 'Implemented and committed.\n\n```result\n'
+    jq -n --arg b "$b" --arg c "$c" --argjson a "$answers" '{status: "done", base: $b, commit: $c, evidence: [{command: "make test", observed: "ok"}], answers: $a, unverified: []}'
+    printf '```\n'; } > "$f"
+}
+# risk_report <file> <commit> - a classifier report ending in the risk block (tier medium, no security review)
+risk_report() {
+  { printf 'Classified.\n\n```risk\n'
+    jq -n --arg c "$2" '{tier: "medium", security: "not-required", commit: $c, sensitive: [], checklist: [], reasons: ["small change, no sensitive surface"]}'
+    printf '```\n'; } > "$1"
 }
 # the feedback block of a first input: the fenced json after the "- feedback:" line
 feedback_block() { awk '/^- feedback:/ {f = 1; next} f && /^```json$/ {b = 1; next} f && b && /^```$/ {exit} f && b {print}' <<<"$1"; }
@@ -99,20 +90,22 @@ feedback_block() { awk '/^- feedback:/ {f = 1; next} f && /^```json$/ {b = 1; ne
 # launch <label> <workflow> <state> <expected-role> <expected-feedback-json|none> <expected-input-name:value>...
 # Plays the Captain for one worker step and asserts what its first input carries.
 launch() {
-  local label=$1 wf=$2 state=$3 role=$4 want_fb=$5 first spec id brief body meta wt waited got trace
+  local label=$1 wf=$2 state=$3 role=$4 want_fb=$5 first spec id brief body meta wt waited got head scaffold out
   shift 5
   N=$((N + 1))
   id="fm-wf-e2e-$RUN-$N"
   spec=$("$W" next "$wf" "$state" --spec) || { fail "$label: no spec: $spec"; return 1; }
-  if ! scaffold=$(env "${SPAWN_ENV[@]}" "$FM_ROOT/bin/fm-brief.sh" "$id" projects/e2e-proj --mode local-only 2>&1); then
+  # the header the spec must start with, built from the state file and not from the spec
+  head=$(jq -r '"Workflow step: \(.workflow) v\(.version), step \(.current), run #\(.runs[.current])"' "$state")
+  if ! scaffold=$(lab_run "$FM_ROOT/bin/fm-brief.sh" "$id" projects/e2e-proj --mode local-only 2>&1); then
     fail "$label: real fm-brief.sh scaffold failed: $scaffold"; return 1
   fi
   brief="$home/data/$id/brief.md"
   body=$(cat "$brief")
-  body=${body/'{TASK}'/"Workflow step $label (fixture)."}
+  body=${body/'{TASK}'/"E2E fixture: $label."}
   body=${body/'{FIRSTMATE_SPEC}'/$spec}
   printf '%s\n' "$body" > "$brief"
-  if ! out=$(env "${SPAWN_ENV[@]}" timeout 90 "$FM_ROOT/bin/fm-spawn.sh" "$id" projects/e2e-proj \
+  if ! out=$(lab_run ${LAB_TMO[@]+"${LAB_TMO[@]}"} "$FM_ROOT/bin/fm-spawn.sh" "$id" projects/e2e-proj \
       --mode local-only --yolo off --harness omp --model "$OPUS" --effort high 2>&1); then
     fail "$label: real fm-spawn failed: $out"; return 1
   fi
@@ -122,13 +115,16 @@ launch() {
   while [ ! -f "$wt/worker-argv.txt" ] && [ "$waited" -lt 150 ]; do sleep 0.1; waited=$((waited + 1)); done
   first=$(cat "$wt/worker-argv.txt" 2>/dev/null)
   if [ -z "$first" ]; then fail "$label: the fake worker recorded no first input"; return 1; fi
+  LAST_FIRST=$first
   has "$label: first input carries the role handoff of $role, verbatim" "$first" "$("$HANDOFF" "$role")"
   got=$(printf '%s\n' "$first" | grep -o "$FM_SKILLS_ROOT/[A-Za-z0-9_-]*/SKILL.md" | sed "s#^$FM_SKILLS_ROOT/\(.*\)/SKILL.md#\1#")
   check "$label: its skill paths are exactly $role's autoloadSkills" "$got" "$("$HANDOFF" --skills "$role")"
   check "$label: exactly one Assigned role field, the step's" "$(printf '%s\n' "$first" | grep -c '^Assigned role:')" 1
   has "$label: the Assigned role is $role" "$first" "Assigned role: $role"
-  trace=$("$W" trace "$state")
-  has "$label: the derived Workflow line is in the first input" "$first" "$trace"
+  check "$label: the engine's spec starts with the header built from the state file" "$(printf '%s\n' "$spec" | sed -n 1p)" "$head"
+  has "$label: the COMPLETE next --spec output travels unchanged, first line to last" "$first" "$spec"
+  check "$label: the delivered spec starts with the header" "$(printf '%s\n' "$first" | awk '/^## Firstmate spec$/ {getline; print; exit}')" "$head"
+  check "$label: the chat-only Workflow: trace line is not in the brief" "$(printf '%s\n' "$first" | grep -c 'Workflow:')" 0
   has "$label: the task text travels" "$first" "$TASK_TEXT"
   if [ "$want_fb" = none ]; then
     lacks "$label: no feedback input (none is open)" "$first" '- feedback:'
@@ -141,40 +137,65 @@ launch() {
   for pair in "$@"; do has "$label: input ${pair%%:*} is ${pair#*:}" "$first" "- ${pair%%:*}: ${pair#*:}"; done
   return 0
 }
-fbj() { "$W" verdict "$1" | jq -c .feedback; }
+# the blocking items (BLOCKER, IMPORTANT) of a verdict file: what the engine hands on after a fail
+fbj() { "$W" verdict "$1" | jq -c '.feedback | map(select(.severity == "BLOCKER" or .severity == "IMPORTANT"))'; }
 
-# --- A. build-test-review: QA fails then passes, review feedback, QA needed, review passes -------
+# --- A. build-test-review ------------------------------------------------------------------------
 WFA=build-test-review
 SA="$home/data/fm-wf-e2e-$RUN-wfA/workflow.json"
 TASK_TEXT='Add a --json flag to the cli list command (e2e task A)'
-report "$TMP/qa1.md" FAIL 'QA-1:BLOCKER:--json prints tabs, not JSON' 'QA-2:IMPORTANT:exit code is 0 on a bad flag'
-report "$TMP/rev1.md" FAIL 'REV-1:IMPORTANT:the retry swallows the error' 'REV-2:OPTIONAL:rename x'
-report "$TMP/pass.md" PASS
+B0=1111111; H1=a111111; H2=a222222; H3=a333333
+result_report "$TMP/impl1.md" $B0 $H1
+risk_report "$TMP/risk1.md" $H1
+report "$TMP/qa1.md" FAIL $H1 'QA-1:BLOCKER:--json prints tabs, not JSON' 'QA-2:IMPORTANT:exit code is 0 on a bad flag'
+result_report "$TMP/impl2.md" $B0 $H2 QA-1 QA-2
+risk_report "$TMP/risk2.md" $H2
+report "$TMP/qa2.md" PASS $H2
+report "$TMP/rev1.md" FAIL $H2 'REV-1:IMPORTANT:the retry swallows the error' 'REV-2:OPTIONAL:rename x'
+report "$TMP/ver1.md" FAIL $H2 'REV-1:IMPORTANT:confirmed by running it: the retry swallows the error'
+result_report "$TMP/impl3.md" $B0 $H3 REV-1
+risk_report "$TMP/risk3.md" $H3
+report "$TMP/qa3.md" PASS $H3
+report "$TMP/rev2.md" PASS $H3
+report "$TMP/ship.md" PASS $H3
 "$W" next "$WFA" "$SA" --task "$TASK_TEXT" >/dev/null
 launch 'A1 implement' "$WFA" "$SA" senior-fullstack none 'task:'"$TASK_TEXT"
-"$W" next "$WFA" "$SA" --outcome done --change 'base1..head1' >/dev/null
-launch 'A2 qa' "$WFA" "$SA" qa none 'change:base1..head1'
+"$W" next "$WFA" "$SA" --report "$TMP/impl1.md" >/dev/null
+launch 'A2 classify' "$WFA" "$SA" risk-classifier none "change:$B0..$H1"
+"$W" next "$WFA" "$SA" --report "$TMP/risk1.md" >/dev/null
+check 'A: the classifier outcome recorded is the tier word' "$(jq -r '.history[-1] | "\(.step):\(.outcome)"' "$SA")" classify:medium
+launch 'A3 qa' "$WFA" "$SA" qa none "change:$B0..$H1" 'risk:tier medium, security review not-required'
 "$W" next "$WFA" "$SA" --report "$TMP/qa1.md" >/dev/null
 want=$(fbj "$TMP/qa1.md")
-launch 'A3 implement (fix of QA feedback)' "$WFA" "$SA" senior-fullstack "$want" 'change:base1..head1'
-"$W" next "$WFA" "$SA" --outcome done --change 'base1..head2' >/dev/null
-launch 'A4 qa (re-evaluates against its feedback)' "$WFA" "$SA" qa "$want" 'change:base1..head2'
-"$W" next "$WFA" "$SA" --report "$TMP/pass.md" >/dev/null
-launch 'A5 review' "$WFA" "$SA" code-reviewer none 'change:base1..head2'
+launch 'A4 implement (fix of QA feedback, straight from QA)' "$WFA" "$SA" senior-fullstack "$want" "change:$B0..$H1"
+"$W" next "$WFA" "$SA" --report "$TMP/impl2.md" >/dev/null
+launch 'A5 classify (every fix is classified again)' "$WFA" "$SA" risk-classifier none "change:$B0..$H2"
+"$W" next "$WFA" "$SA" --report "$TMP/risk2.md" >/dev/null
+launch 'A6 qa (re-evaluates against its feedback, on the delta)' "$WFA" "$SA" qa "$want" "change:$B0..$H2" "delta:$H1..$H2"
+"$W" next "$WFA" "$SA" --report "$TMP/qa2.md" >/dev/null
+launch 'A7 review' "$WFA" "$SA" code-reviewer none "change:$B0..$H2" 'risk:tier medium, security review not-required'
 "$W" next "$WFA" "$SA" --report "$TMP/rev1.md" >/dev/null
 wantr=$(fbj "$TMP/rev1.md")
-launch 'A6 address-review' "$WFA" "$SA" senior-fullstack "$wantr" 'change:base1..head2'
-"$W" next "$WFA" "$SA" --outcome done --change 'base1..head3' >/dev/null
-check 'A: the orchestrator decides after the fix (no worker for it)' "$("$W" next "$WFA" "$SA" | jq -r '"\(.step) \(.kind)"')" 'requalify decision'
-"$W" next "$WFA" "$SA" --decide yes --reason 'the fix changed the retry logic' >/dev/null
-launch 'A7 qa (after review feedback)' "$WFA" "$SA" qa "$wantr" 'change:base1..head3'
-"$W" next "$WFA" "$SA" --report "$TMP/pass.md" >/dev/null
-launch 'A8 review (the delta, with its own findings)' "$WFA" "$SA" code-reviewer "$wantr" 'change:base1..head3'
-"$W" next "$WFA" "$SA" --report "$TMP/pass.md" >/dev/null
-check 'A: both passed, so the next step is delivery by Firstmate (no worker, no role)' "$("$W" next "$WFA" "$SA" | jq -r '"\(.step) \(.kind) \(.role)"')" 'deliver deliver null'
+launch 'A8 verify-review (receives the reviewer blocking list)' "$WFA" "$SA" finding-verifier "$wantr" "change:$B0..$H2"
+"$W" next "$WFA" "$SA" --report "$TMP/ver1.md" >/dev/null
+wantv=$(fbj "$TMP/ver1.md")
+launch 'A9 implement (fix of the verifier confirmed list)' "$WFA" "$SA" senior-fullstack "$wantv" "change:$B0..$H2"
+lacks 'A9: the implementer never sees the reviewer raw wording' "$LAST_FIRST" '"what":"the retry swallows the error"'
+"$W" next "$WFA" "$SA" --report "$TMP/impl3.md" >/dev/null
+launch 'A10 classify (again after the review fix)' "$WFA" "$SA" risk-classifier none "change:$B0..$H3"
+"$W" next "$WFA" "$SA" --report "$TMP/risk3.md" >/dev/null
+launch 'A11 qa (after review feedback; the confirmed list is still open)' "$WFA" "$SA" qa "$wantv" "change:$B0..$H3" "delta:$H2..$H3"
+"$W" next "$WFA" "$SA" --report "$TMP/qa3.md" >/dev/null
+launch 'A12 review (the delta, with the confirmed findings)' "$WFA" "$SA" code-reviewer "$wantv" "change:$B0..$H3" "delta:$H2..$H3"
+"$W" next "$WFA" "$SA" --report "$TMP/rev2.md" >/dev/null
+launch 'A13 ship (carries the non-blocking notes)' "$WFA" "$SA" release-engineer none "change:$B0..$H3" 'risk:tier medium, security review not-required' 'notes:non-blocking notes'
+"$W" next "$WFA" "$SA" --report "$TMP/ship.md" >/dev/null
+check 'A: ship passed, so the next step is delivery by Firstmate (no worker, no role)' "$("$W" next "$WFA" "$SA" | jq -r '"\(.step) \(.kind) \(.role)"')" 'deliver deliver null'
 "$W" next "$WFA" "$SA" --outcome done >/dev/null
 check 'A: the workflow is complete' "$("$W" next "$WFA" "$SA" | jq -r .status)" complete
-check 'A: eight workers were launched for the scripted path' "$N" 8
+check 'A: thirteen workers were launched for the scripted path' "$N" 13
+check 'A: the engine path is the scripted one' "$(jq -r '[.history[] | "\(.step):\(.outcome)"] | join(" ")' "$SA")" \
+  'implement:done classify:medium qa:fail implement:done classify:medium qa:pass review:fail verify-review:fail implement:done classify:medium qa:pass review:pass ship:pass deliver:done'
 check 'A: the state file sits in the task data folder and nowhere in the repository' "$(git -C "$CONFIG_ROOT" status --porcelain | grep -c workflow.json)" 0
 
 # --- B. plan-build-test-review: the plan reaches every later step ---------------------------
@@ -182,19 +203,29 @@ WFB=plan-build-test-review
 SB="$home/data/fm-wf-e2e-$RUN-wfB/workflow.json"
 TASK_TEXT='Make the report page export CSV (e2e task B)'
 printf '# Plan\nAssumptions: comma separated.\n' > "$home/data/plan-b.md"
+PLANB="$(cd "$home/data" && pwd -P)/plan-b.md"   # the engine records report paths canonically
+PLAN_IN="plan:the report of step plan, at $PLANB"
+result_report "$TMP/bimpl.md" b000001 b000002
+risk_report "$TMP/brisk.md" b000002
+report "$TMP/bqa.md" PASS b000002
+report "$TMP/brev.md" PASS b000002
+report "$TMP/bship.md" PASS b000002
 N0=$N
 "$W" next "$WFB" "$SB" --task "$TASK_TEXT" >/dev/null
 launch 'B1 plan' "$WFB" "$SB" planner none 'task:'"$TASK_TEXT"
 "$W" next "$WFB" "$SB" --outcome done --report "$home/data/plan-b.md" >/dev/null
-launch 'B2 implement (receives the plan)' "$WFB" "$SB" senior-fullstack none "plan:the report of step plan, at $home/data/plan-b.md"
-"$W" next "$WFB" "$SB" --outcome done --change 'b1..b2' >/dev/null
-launch 'B3 qa (receives the plan)' "$WFB" "$SB" qa none "plan:the report of step plan, at $home/data/plan-b.md" 'change:b1..b2'
-"$W" next "$WFB" "$SB" --report "$TMP/pass.md" >/dev/null
-launch 'B4 review (receives the plan)' "$WFB" "$SB" code-reviewer none "plan:the report of step plan, at $home/data/plan-b.md"
-"$W" next "$WFB" "$SB" --report "$TMP/pass.md" >/dev/null
+launch 'B2 implement (receives the plan)' "$WFB" "$SB" senior-fullstack none "$PLAN_IN"
+"$W" next "$WFB" "$SB" --report "$TMP/bimpl.md" >/dev/null
+launch 'B3 classify (receives the plan)' "$WFB" "$SB" risk-classifier none "$PLAN_IN" 'change:b000001..b000002'
+"$W" next "$WFB" "$SB" --report "$TMP/brisk.md" >/dev/null
+launch 'B4 qa (receives the plan)' "$WFB" "$SB" qa none "$PLAN_IN" 'change:b000001..b000002'
+"$W" next "$WFB" "$SB" --report "$TMP/bqa.md" >/dev/null
+launch 'B5 review (receives the plan)' "$WFB" "$SB" code-reviewer none "$PLAN_IN" 'change:b000001..b000002'
+"$W" next "$WFB" "$SB" --report "$TMP/brev.md" >/dev/null
+launch 'B6 ship (receives the plan)' "$WFB" "$SB" release-engineer none "$PLAN_IN" 'change:b000001..b000002'
+"$W" next "$WFB" "$SB" --report "$TMP/bship.md" >/dev/null
 "$W" next "$WFB" "$SB" --outcome done >/dev/null
 check 'B: the plan workflow completes' "$("$W" next "$WFB" "$SB" | jq -r .status)" complete
-check 'B: four workers were launched' "$((N - N0))" 4
+check 'B: six workers were launched' "$((N - N0))" 6
 
-printf '\nWORKFLOWS E2E %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
-[ "$failed" -eq 0 ]
+lab_finish WORKFLOWS

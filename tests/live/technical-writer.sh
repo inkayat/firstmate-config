@@ -8,16 +8,20 @@
 # <new ADR>". ROLE.md only says "follow the existing ADR location, naming and format";
 # it never mentions superseding or the status flip. The prompt only asks to write the
 # decision up for the repo's decision log.
-# Control (same role, no skill) usually writes the new ADR (location/numbering follow
-# from ROLE.md) but leaves ADR 0002 saying "Accepted", so it fails the status flip.
+# Control (same role, no skill) was expected to leave ADR 0002 saying "Accepted", so it would fail the
+# status flip. LIVE FINDING (rewritten ROLE.md, Sonnet 5.5): the control writes ADR 0004 AND flips ADR 0002 to
+# "Superseded by" from the model's own baseline (grep supersed roles/technical-writer/ROLE.md: no hit), so the
+# control is informational, not discriminating.
 # The src/ file still uses Redis: the writer must not edit code or the notes.
 # Grader accepts: exactly one new doc/arch/0004-*.md that names ADR 0002 and the new
 # LRU decision, doc/arch/0002-*.md still present with a status "Superseded by ... 4/0004",
-# and no changed file outside doc/arch/ (no code/config/notes edit).
+# and no changed file outside doc/arch/ (changes are judged against the fixture commit, so a
+# committed change is seen; the role contract commits).
 
 CASE_KIND=role
 CASE_ROLE=technical-writer
 CASE_SKILL_ONLY_TOKENS="Superseded .adr-dir"
+CASE_CONTROL_INFORMATIONAL='the no-skill control supersedes ADR 0002 and writes ADR 0004 in the adr-tools layout from the model baseline (passed in 6 of 6 full runs X1-X6; 20 of 21 saved controls pass the current grader); ROLE.md does not state the supersede rule'
 CASE_PROMPT='The team settled the session-cache question; the facts are in notes/cache-decision.txt.
 Write it up for the repo'"'"'s decision log. Documentation only: the code change is tracked separately.'
 

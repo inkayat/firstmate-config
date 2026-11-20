@@ -1,8 +1,9 @@
 # Live workflow case (iii): plan-build-test-review.
 # Problem: "add a late fee" is genuinely ambiguous (flat or percent, the rate, a grace period,
-#   a cap). The planner must settle it in its assumptions and end the plan with a machine-readable
-#   `decisions` block; the implementer, QA and the reviewer receive that plan. The grader reads
-#   the planner's own decisions and checks that the final code behaves exactly as they say.
+#   a cap). The planner (a report step) must settle it in its assumptions and end the plan with a
+#   machine-readable `decisions` block; the implementer, classify, QA, review and the other later steps
+#   receive that plan as their `plan` input. The grader reads the planner's own decisions and checks that
+#   the final code behaves exactly as they say.
 # Control: the implement step run WITHOUT the plan; its behaviour is graded against the same
 #   decisions (a guess matches them all only by coincidence).
 CASE_WORKFLOW=plan-build-test-review
@@ -10,7 +11,7 @@ CASE_TASK='Add a late fee for overdue invoices: implement late_fee_cents(amount_
 CASE_CONTROL_STEP=implement
 CASE_CONTROL_RUN=1
 CASE_CONTROL_STRIP=plan
-CASE_EXPECT_PATH='^plan:done implement:done( .*)? review:pass deliver:done$'
+CASE_EXPECT_PATH='^plan:done implement:done( .*)? review:pass( security:pass)? ship:pass deliver:done$'
 CASE_FORCE_AFTER=''           # no loop is forced here; the plan is
 
 case_setup() {
@@ -84,26 +85,30 @@ R
 }
 
 case_assert() { # <run-dir> <repo>
-  local run=$1 dec plan=$DATA/plan.md st=$1/data/workflow.json
+  local run=$1 dec plan=$DATA/plan.md st=$1/data/workflow.json recorded
+  # the engine records the plan report under its canonical path (it may differ from $DATA/plan.md by a symlink)
+  recorded=$(jq -r '[.history[] | select(.step == "plan" and .outcome == "done") | .report] | last // empty' "$st")
+  [ -n "$recorded" ] || { echo "the engine recorded no plan report"; return 1; }
   dec=$(case_decisions "$plan") || { echo "the plan has no parseable decisions block"; return 1; }
   grep -qiE 'assum' "$plan" || { echo "the plan has no assumptions section"; return 1; }
   # the plan reached implement, qa and review
   local s
   for s in implement qa review; do
     jq -e --arg p "$plan" '[.history[] | select(.step == "'"$s"'")] | length >= 1' "$st" >/dev/null || { echo "step $s never ran"; return 1; }
-    grep -qF "$plan" "$run"/steps/*-"$s"/prompt.md || { echo "the $s worker was never handed the plan path"; return 1; }
+    grep -qF "$recorded" "$run"/steps/*-"$s"/prompt.md || { echo "the $s worker was never handed the plan path"; return 1; }
   done
 }
 
-case_canned() { # <role> <prompt-file> <cwd>
-  local role=$1 prompt=$2 cwd=$3 plan
+case_canned() { # <role> <prompt-file> <cwd> (risk-classifier, release-engineer etc.: live-lib/canned.sh)
+  local role=$1 prompt=$2 cwd=$3 plan base
   case $role in
     planner)
       plan=$(sed -n 's#^Write the plan to \(.*/plan.md\) and report.*#\1#p' "$prompt" | head -1)
       mkdir -p "$(dirname "$plan")"
       printf '# Plan\n\n## Assumptions\n1. A flat fee after a grace period.\n\n```decisions\n{"fee_type":"flat","rate":750,"grace_days":3,"cap_cents":null}\n```\n' > "$plan"
-      printf 'Wrote the plan to %s\n' "$plan" ;;
+      printf 'status: done\n\nWrote the plan to %s\n' "$plan" ;;
     senior-fullstack)
+      base=$(git -C "$cwd" rev-parse HEAD)
       plan=$(sed -n 's#^- plan: the report of step plan, at \(.*\)$#\1#p' "$prompt" | head -1)
       if [ -n "$plan" ] && [ -s "$plan" ]; then
         printf 'def invoice_total_cents(lines):\n    return sum(unit * qty for unit, qty in lines)\n\n\ndef late_fee_cents(amount_cents, days_overdue):\n    return 750 if days_overdue > 3 else 0\n' > "$cwd/billing.py"
@@ -111,8 +116,8 @@ case_canned() { # <role> <prompt-file> <cwd>
         printf 'def invoice_total_cents(lines):\n    return sum(unit * qty for unit, qty in lines)\n\n\ndef late_fee_cents(amount_cents, days_overdue):\n    return (amount_cents * 2 + 50) // 100 if days_overdue > 0 else 0\n' > "$cwd/billing.py"
       fi
       git -C "$cwd" add -A && git -C "$cwd" commit -q -m "billing: late fee"
-      printf 'Implemented late_fee_cents and committed it.\n' ;;
-    qa) printf 'Checked the plan decisions against the code.\n\n```verdict\n{"verdict":"PASS","feedback":[]}\n```\n' ;;
-    code-reviewer) printf 'Matches the plan.\n\n```verdict\n{"verdict":"PASS","feedback":[]}\n```\n' ;;
+      canned_result "$cwd" "$base" 'Implemented late_fee_cents and committed it.' "$prompt" ;;
+    qa) printf 'Checked the plan decisions against the code.\n\n'; canned_verdict PASS "$cwd" '[]' ;;
+    code-reviewer) printf 'Matches the plan.\n\n'; canned_verdict PASS "$cwd" '[]' ;;
   esac
 }

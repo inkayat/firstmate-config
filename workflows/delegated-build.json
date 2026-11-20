@@ -1,0 +1,97 @@
+{
+  "$schema": "./workflow.schema.json",
+  "name": "delegated-build",
+  "version": 1,
+  "description": "Implement with the result-block evidence discipline, then hand delivery to no-mistakes, which owns review, fixes, tests, documentation, push, PR and CI. No independent QA or review step: nothing here is a second reviewer on top of no-mistakes.",
+  "when": "A code-changing task whose selected delivery path is no-mistakes. The orchestration, evidence record and change-direction outcome still apply, but review and testing belong to no-mistakes alone: this workflow adds no manual reviewer or gate on top of it.",
+  "start": "implement",
+  "roles": {
+    "implementer": "senior-fullstack"
+  },
+  "gates": {
+    "evidence": "observe",
+    "answers": "observe",
+    "commit": "observe",
+    "coverage": "observe"
+  },
+  "loops": {
+    "direction": {
+      "description": "A change of direction was raised and the orchestrator chose to reshape: implement again, at most twice.",
+      "maxIterations": 2,
+      "onExhausted": "escalate"
+    }
+  },
+  "steps": {
+    "implement": {
+      "kind": "work",
+      "role": "implementer",
+      "instruction": "Implement the task. Read the project instructions and its verify convention first; work in thin verifiable slices; run the project cheap checks and the real flow end to end and show what they printed. Commit to the task branch and report with the result block: base and commit, the evidence, what you could not verify. Review, testing, documentation, push, PR and CI belong to the delivery path that follows (no-mistakes): add no reviewer or gate of your own. If the plan or approach cannot meet the acceptance, stop early with status change-direction and the evidence.",
+      "input": [
+        {
+          "name": "task",
+          "from": "task"
+        },
+        {
+          "name": "change",
+          "from": "change",
+          "optional": true
+        },
+        {
+          "name": "direction",
+          "from": "direction",
+          "optional": true
+        }
+      ],
+      "output": "result",
+      "commits": true,
+      "on": {
+        "done": "deliver",
+        "blocked": "@escalate",
+        "change-direction": "redirect"
+      }
+    },
+    "deliver": {
+      "kind": "deliver",
+      "instruction": "The implementation is committed. Deliver through no-mistakes, the selected delivery path: it owns review, fixes, tests, documentation, push, PR and CI. Add no reviewer or gate of your own and do not hold the work for a manual verdict. The verification stamp below is what the implementer ran; for the rest say: review and testing owned by no-mistakes. Never merge.",
+      "input": [
+        {
+          "name": "change",
+          "from": "change"
+        }
+      ],
+      "on": {
+        "done": "@complete",
+        "blocked": "@escalate"
+      }
+    },
+    "redirect": {
+      "kind": "decision",
+      "question": "A worker, reviewer or the plan reported that the approach itself is wrong (change-direction). Reshape and re-plan, close the task, or escalate?",
+      "criteria": [
+        "reshape: the reported direction is another route to the SAME authorized outcome - no wider scope, no new authority, no extra cost. The reshaped approach goes back in as input; this is not a licence to retry the old approach.",
+        "close: the goal is unreachable, no longer worth it, or already satisfied. Closing is cheap - the code was fast to write. Report why.",
+        "escalate: the direction changes scope, acceptance, authority, risk or cost, or this is the second reshape: the captain decides.",
+        "Never choose reshape to avoid closing, and never grind on a plan the evidence says is wrong. Record the reason; it is kept in the workflow state."
+      ],
+      "input": [
+        {
+          "name": "direction",
+          "from": "direction"
+        },
+        {
+          "name": "change",
+          "from": "change",
+          "optional": true
+        }
+      ],
+      "on": {
+        "reshape": {
+          "to": "implement",
+          "loop": "direction"
+        },
+        "close": "@close",
+        "escalate": "@escalate"
+      }
+    }
+  }
+}

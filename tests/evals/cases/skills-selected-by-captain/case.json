@@ -1,0 +1,9 @@
+{
+  "id": "skills-selected-by-captain",
+  "set": "test",
+  "key": "The Captain chose skills per task (incident #32), so a worker ran with a skill set no role defined.",
+  "keywords": [
+    "captain",
+    "skills"
+  ]
+}

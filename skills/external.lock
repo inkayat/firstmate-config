@@ -3,7 +3,7 @@
 # install.sh clones each repository once into a machine-local cache, checks out
 # the exact commit below, and symlinks the named skill directory into
 # ~/.agents/skills/. Nothing is vendored into this repository, so their
-# licenses stay with their sources: all four are MIT (see the karpathy caveat
+# licenses stay with their sources: all are MIT (see the karpathy caveat
 # under Known deviations).
 #
 # To move a pin, review the release diff, change the sha, then run
@@ -18,6 +18,11 @@
 # addyosmani/agent-skills 0.6.13. Exact commits below, never moving tags.
 # multica-ai/andrej-karpathy-skills has no release or tag; its single skill was
 # reviewed 2026-11-19 at the main commit below.
+# Reviewed 2026-11-20 (each skill read in full; LICENSE files read; none is
+# tracked by branch): cursor/plugins pstack (MIT, Lauren Tan), mattpocock/skills
+# (MIT, Matt Pocock) and robonuggets/be-ambitious (MIT) have no release or tag,
+# so their commits are the default-branch heads reviewed that day. The new
+# addyosmani/agent-skills skills below stay at the existing 0.6.13 pin.
 #
 # Known deviations:
 #   - ponytail:implement does not exist upstream. The repository ships exactly
@@ -32,6 +37,11 @@
 #     frontmatter and in its README, but ships no standalone LICENSE file at the
 #     pinned commit. Attribution stays with the source (nothing is vendored);
 #     re-check for a LICENSE file when moving this pin.
+#   - cursor/plugins pstack skills carry `disable-model-invocation: true` (they were
+#     written for Cursor slash commands). Workers get them by path from a role's
+#     autoloadSkills, which that flag does not affect.
+#   - robonuggets/be-ambitious is a single-skill repository: its SKILL.md sits at
+#     the repository root, so its path-in-repo is `.`.
 
 superpowers:debug	obra/superpowers	bb92a77741419a4ab5f06e711a283343f1ada0c3	skills/systematic-debugging	systematic-debugging
 superpowers:verify	obra/superpowers	bb92a77741419a4ab5f06e711a283343f1ada0c3	skills/verification-before-completion	verification-before-completion
@@ -47,3 +57,10 @@ addy:spec	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skill
 addy:frontend	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/frontend-ui-engineering	frontend-ui-engineering
 addy:documentation	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/documentation-and-adrs	documentation-and-adrs
 karpathy:guidelines	multica-ai/andrej-karpathy-skills	2c606141936f1eeef17fa3043a72095b4765b9c2	skills/karpathy-guidelines	karpathy-guidelines
+addy:performance	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/performance-optimization	performance-optimization
+addy:source-driven	addyosmani/agent-skills	aeac41d4d005999432bb7312f7ff06383a91d59d	skills/source-driven-development	source-driven-development
+pstack:benchmark	cursor/plugins	0b46ec399d55f2829e88822998f53b84944837d3	pstack/skills/benchmark-checklist	benchmark-checklist
+pstack:test-behavior	cursor/plugins	0b46ec399d55f2829e88822998f53b84944837d3	pstack/skills/principle-test-behavior-not-implementation	principle-test-behavior-not-implementation
+pocock:retro	mattpocock/skills	abeeaf95660ba9e8b7c753eb38f441ca707a8823	skills/engineering/retro	retro
+pocock:codebase-design	mattpocock/skills	abeeaf95660ba9e8b7c753eb38f441ca707a8823	skills/engineering/codebase-design	codebase-design
+ambition:be-ambitious	robonuggets/be-ambitious	dc116a3ebd8cf772e4d0930626f67369bd60399d	.	be-ambitious

@@ -1,0 +1,20 @@
+{
+  "raw": [
+    {
+      "what": "The qa-fail cycle passes through no loop with a limit, so it can repeat without end",
+      "where": "workflows/build-test-review.json steps.qa.on.FAIL"
+    }
+  ],
+  "verified": [
+    {
+      "what": "The qa-fail cycle passes through no loop with a limit, so it can repeat without end",
+      "where": "workflows/build-test-review.json steps.qa.on.FAIL"
+    }
+  ],
+  "final": [
+    {
+      "what": "Role file wording: prefer active voice",
+      "where": "roles/qa/ROLE.md"
+    }
+  ]
+}

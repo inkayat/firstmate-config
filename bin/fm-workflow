@@ -10,23 +10,33 @@
 #
 # Usage:
 #   fm-workflow list                         every workflow: name, version, description, when
-#   fm-workflow validate <workflow|file>...  schema + roles exist + every outcome routed + every
-#                                            step reachable + every cycle passes a limited loop
-#   fm-workflow verdict <report-file>        strict parse of a QA/review report's final verdict
-#                                            block; exit 0 PASS, 1 FAIL (also any malformed
-#                                            or missing verdict), 3 BLOCKED, 2 usage
-#   fm-workflow next <workflow> <state-file> [--task <text>] [--spec]
-#                    [--report <file>] [--change <text>] [--outcome <name>]
-#                    [--decide <choice> --reason <text>]
+#   fm-workflow select [<kind>] --delivery <direct-pr|local-only|no-mistakes> | --none <reason>
+#                                            which workflow a kind of task MUST run (workflows/selection.json;
+#                                            --delivery is required for a kind that runs a workflow), or the
+#                                            named exception; no kind prints the closed table
+#   fm-workflow validate <workflow|file>...  schema + roles exist and can produce each step output +
+#                                            every outcome routed + every step reachable + every cycle
+#                                            passes a limited loop
+#   fm-workflow check                        the whole army: every workflow validates, the selection table
+#                                            resolves, the role manifest matches roles/ and the workflows,
+#                                            the call graph has one level, every role is reachable or ad hoc
+#   fm-workflow verdict <report-file>        strict parse of a report's final fenced `verdict` block; exit 0 PASS,
+#                                            1 FAIL (also any malformed or missing block), 3 BLOCKED,
+#                                            4 CHANGE-DIRECTION, 2 usage
+#   fm-workflow result <report-file>         strict parse of the final fenced `result` block; exit 0 valid, 1 not
+#   fm-workflow risk <report-file>           strict parse of the final fenced `risk` block; exit 0 valid, 1 not
+#   fm-workflow next <workflow> <state-file> [--task <text>] [--role <alias>=<role>]... [--spec]
+#                    [--report <file>] [--outcome <name>] [--decide <choice> --reason <text>]
 #       Without a result flag: print the current step (creating the state file at the start
-#       step when it does not exist; --task is required then). With one: record the result
-#       of the current step, take the transition the definition names, print the next step.
-#         verdict step   --report <file>   the outcome is parsed from the report, never given
-#         report step    --outcome <name>  (done|blocked), optionally --report/--change
-#         decision step  --decide <choice> --reason <text>
-#         deliver step   --outcome <name>  (done|blocked)
+#       step when it does not exist; --task is required then; --role swaps the role bound to a
+#       definition alias for this task only, validated like any definition). With one: record the
+#       result of the current step, take the transition the definition names, print the next step.
+#         result, verdict, risk step   --report <file>   the outcome is parsed from the final block
+#         report step                  --outcome <done|blocked|change-direction>, optionally --report
+#         decision step                --decide <choice> --reason <text>
+#         deliver step                 --outcome <done|blocked>
 #       Output is JSON (status, step, role, handoff, inputs, loops, trace, spec ...);
-#       --spec prints only the pasteable `spec`. An escalated state is terminal.
+#       --spec prints only the pasteable `spec`. An escalated or closed state is terminal.
 #   fm-workflow trace <state-file> [<captured-trace-file>]
 #       The trace line `Workflow: ...` derived from the state file. With a captured trace
 #       block, exit 1 unless its Workflow line equals the derived one.
@@ -34,11 +44,13 @@
 # The state file belongs to the task: put it in the task's own data folder
 # (`$FM_HOME/data/<task-id>/workflow.json`), never in a repository; a path inside
 # this configuration checkout is refused. It embeds the definition it started with, so
-# editing or updating workflows/ never changes a task already in flight.
+# editing or updating workflows/ never changes a task already in flight. Beside it the
+# engine appends retro.jsonl (bin/fm-retro reads it): one record per finding, answer, gate
+# result, escalation, change of direction and completion.
 #
 # FM_CONFIG_ROOT locates roles/ (default: this checkout); FM_WORKFLOWS_ROOT the
 # workflow definitions (default: <config root>/workflows); FM_SKILLS_ROOT is passed
-# to bin/fm-role-handoff. Needs jq (any jq 1.6+ or jaq).
+# to bin/fm-role-handoff. Needs jq (any jq 1.6+ or jaq). Runs under bash 3.2.
 set -u
 
 self=${BASH_SOURCE[0]}
@@ -52,6 +64,7 @@ CONFIG_ROOT="${FM_CONFIG_ROOT:-$SELF_ROOT}"
 WORKFLOWS_ROOT="${FM_WORKFLOWS_ROOT:-$CONFIG_ROOT/workflows}"
 SCHEMA="$SELF_ROOT/workflows/workflow.schema.json"
 HANDOFF="$SELF_DIR/fm-role-handoff"
+ENGINE=2
 
 die() { printf 'fm-workflow: %s\n' "$*" >&2; exit 1; }
 usage() { sed -n '/^# Usage:/,/^# The state file/p' "$self" | sed 's/^# \{0,1\}//' | sed '$d' >&2; exit 2; }
@@ -117,17 +130,24 @@ JQ
 )
 
 # --- 2. semantic validation: what a schema cannot express. Runs only on a
-# structurally valid definition. $roles: installed role names; $fname: the file
+# structurally valid definition. $roles: installed role names; $manifest: the
+# roles/manifest.json `roles` object (role -> {outputs, ...}); $fname: the file
 # name (without .json) the definition must carry, or "".
 JQ_SEMANTIC=$(cat <<'JQ'
-def tgt: if type == "string" then . else .to end;
-def lp: if type == "object" then .loop else null end;
-def has_item($x): any(.[]; . == $x);
+def alts: if type == "array" then . elif type == "string" then [{to: .}] else [.] end;
 def reserved: startswith("@");
+def has_item($x): any(.[]; . == $x);
 . as $d
 | ($schema[0]["x-outcomes"]) as $oc
+| ($schema[0]["x-attrs"]) as $attrs
 | ($d.steps | keys_unsorted) as $names
-| [ $d.steps | to_entries[] | .key as $sn | .value as $st | ($st.on | to_entries[] | {from: $sn, outcome: .key, to: (.value | tgt), loop: (.value | lp)}) ] as $edges
+| [ $d.steps | to_entries[] | .key as $sn | .value as $st
+    | $st.on | to_entries[] | .key as $o | .value as $v | ($v | alts) as $al
+    | range(0; $al | length) as $i
+    | {from: $sn, outcome: $o, i: $i, n: ($al | length), isarr: ($v | type == "array"), to: $al[$i].to, loop: $al[$i].loop, when: $al[$i].when} ] as $alts
+| [ $alts[] | select(.loop != null) | . as $e | (($d.loops[$e.loop] // {}).onExhausted // "escalate") as $ox
+    | select(($ox | type) == "object") | {from: $e.from, outcome: $e.outcome, to: $ox.to, loop: null, exh: true} ] as $exh
+| ($alts + $exh) as $edges
 | ($edges | map(select(.to | reserved | not))) as $step_edges
 | ( {seen: [], todo: [$d.start]}
     | until(.todo | length == 0;
@@ -140,13 +160,28 @@ def reserved: startswith("@");
         . as $g | ([$g.nodes[] | . as $n | select($g.edges | all(.[]; .[1] != $n))]) as $roots
         | {nodes: ($g.nodes - $roots), edges: [$g.edges[] | select(. as $e | ($roots | has_item($e[0])) | not)]})
     | .nodes ) as $cyclic
+| ([$d.steps[] | select(.kind == "work" and .output == "risk")] | length > 0) as $has_risk
+| ([$d.steps[] | select(.kind == "work" and .output == "result" and .commits == true)] | length > 0) as $has_commits
 | [
     ( if $fname != "" and $d.name != $fname then "name \"\($d.name)\" must equal the file name \"\($fname)\"" else empty end ),
     ( if ($names | has_item($d.start)) then empty else "start step \"\($d.start)\" is not a step" end ),
     ( $d.roles | to_entries[] | select(.value as $r | $roles | has_item($r) | not) | "role alias \"\(.key)\" -> \"\(.value)\": no such role (no roles/\(.value)/ROLE.md)" ),
+    ( $d.roles | to_entries[] | select(.value as $r | $roles | has_item($r)) | select(($manifest[.value] // null) == null) | "role alias \"\(.key)\" -> \"\(.value)\": the role is not in roles/manifest.json" ),
     ( $d.roles | keys_unsorted[] | . as $a | select([$d.steps[] | select(.role == $a)] | length == 0) | "role alias \"\($a)\" is used by no step" ),
     ( $d.steps | to_entries[] | .key as $sn | .value as $st
       | ( if $st.kind == "work" and (($d.roles | has($st.role)) | not) then "step \($sn): role \"\($st.role)\" is not an alias in roles" else empty end ),
+        ( if $st.kind == "work" and ($d.roles | has($st.role)) and (($manifest[$d.roles[$st.role]] // null) != null)
+            and ((($manifest[$d.roles[$st.role]].outputs // []) | has_item($st.output)) | not)
+          then "step \($sn): role \"\($d.roles[$st.role])\" cannot produce output \"\($st.output)\" (roles/manifest.json lists: \(($manifest[$d.roles[$st.role]].outputs // []) | join(", ")))" else empty end ),
+        ( if ($st | has("commits")) and ($st.kind != "work" or $st.output != "result") then "step \($sn): commits only applies to a work step with output result" else empty end ),
+        ( if ($st | has("verifies")) then
+            ( if $st.kind != "work" or $st.output != "verdict" then "step \($sn): verifies only applies to a work step with output verdict"
+              else
+                ( $st.verifies[] as $vs | if ($d.steps | has($vs)) and ($d.steps[$vs].output == "verdict") then empty else "step \($sn): verifies \"\($vs)\", which is not a verdict step" end ),
+                ( if ([($st.input // [])[] | select(.from == "feedback") | .steps[]] | . as $fs | ($st.verifies | all(.[]; . as $v | $fs | has_item($v)))) then empty
+                  else "step \($sn): verifies steps it takes no feedback from (add a feedback input over the same steps)" end )
+              end )
+          else empty end ),
         ( ( if $st.kind == "work" then $oc[$st.output] elif $st.kind == "deliver" then $oc.deliver else null end ) as $want
           | if $want == null then
               ( if ($st.on | length) < 2 then "step \($sn): a decision needs at least two choices in on" else empty end )
@@ -158,12 +193,27 @@ def reserved: startswith("@");
         ( ($st.input // []) | map(.name) | . as $ns | select(($ns | length) != ($ns | unique | length)) | "step \($sn): input names are not unique" ),
         ( ($st.input // [])[] | select(.from == "report") | .step as $rs
           | if ($d.steps | has($rs)) and ($d.steps[$rs].kind == "work") then empty else "step \($sn): input \(.name) reads the report of \"\($rs)\", which is not a work step" end ),
-        ( ($st.input // [])[] | select(.from == "feedback") | .name as $in | .steps[] as $fs
-          | if ($d.steps | has($fs)) and ($d.steps[$fs].output == "verdict") then empty else "step \($sn): input \($in) takes feedback from \"\($fs)\", which is not a verdict step" end ) ),
-    ( $edges[] | select(.to | reserved) | select(.to != "@complete" and .to != "@escalate") | "step \(.from) on \(.outcome): unknown reserved target \(.to)" ),
+        ( ($st.input // [])[] | select(.from == "decision") | .step as $ds
+          | if ($d.steps | has($ds)) and ($d.steps[$ds].kind == "decision") then empty else "step \($sn): input \(.name) reads the decision of \"\($ds)\", which is not a decision step" end ),
+        ( ($st.input // [])[] | select(.from == "feedback" or .from == "feedback-all") | .name as $in | .steps[] as $fs
+          | if ($d.steps | has($fs)) and ($d.steps[$fs].output == "verdict") then empty else "step \($sn): input \($in) takes feedback from \"\($fs)\", which is not a verdict step" end ),
+        ( ($st.input // [])[] | select(.from == "change" or .from == "delta") | if $has_commits then empty else "step \($sn): input \(.name) reads the change, but no step of this workflow commits (set commits on a result step)" end ),
+        ( ($st.input // [])[] | select(.from == "risk") | if $has_risk then empty else "step \($sn): input \(.name) reads the risk classification, but no step has output risk" end ) ),
+    ( $alts[] | select(.isarr and .i < (.n - 1) and (.when == null)) | "step \(.from) on \(.outcome): only the last alternative may omit when" ),
+    ( $alts[] | select(.isarr and .i == (.n - 1) and (.when != null)) | "step \(.from) on \(.outcome): the last alternative must have no when (the default)" ),
+    ( $alts[] | select((.isarr | not) and (.when != null)) | "step \(.from) on \(.outcome): when is only meaningful in a list of alternatives" ),
+    ( $alts[] | select(.when != null) | . as $e | $e.when | to_entries[] | .key as $k | .value[] as $val
+      | if (($attrs[$k] // []) | has_item($val)) then empty else "step \($e.from) on \($e.outcome): when \($k) cannot be \($val | tojson) (allowed: \(($attrs[$k] // []) | join(", ")))" end ),
+    ( if ([$alts[] | select(.when != null)] | length) > 0 and ($has_risk | not) then "a transition branches on run attributes, but no step has output risk to set them" else empty end ),
+    ( $edges[] | select(.to | reserved) | select(.to != "@complete" and .to != "@escalate" and .to != "@close") | "step \(.from) on \(.outcome): unknown reserved target \(.to)" ),
     ( $step_edges[] | select(.to as $t | $names | has_item($t) | not) | "step \(.from) on \(.outcome): target \"\(.to)\" is not a step" ),
-    ( $edges[] | select(.loop != null) | . as $e | select(($d.loops | has($e.loop)) | not) | "step \($e.from) on \($e.outcome): loop \"\($e.loop)\" is not defined in loops" ),
-    ( $d.loops | keys_unsorted[] | . as $l | select([$edges[] | select(.loop == $l)] | length == 0) | "loop \"\($l)\" is used by no transition" ),
+    ( $alts[] | select(.loop != null) | . as $e | select(($d.loops | has($e.loop)) | not) | "step \($e.from) on \($e.outcome): loop \"\($e.loop)\" is not defined in loops" ),
+    ( $d.loops | keys_unsorted[] | . as $l | select([$alts[] | select(.loop == $l)] | length == 0) | "loop \"\($l)\" is used by no transition" ),
+    ( $d.loops | to_entries[] | .key as $l | (.value.resets // [])[] | . as $r | select((($d.loops | has($r)) and $r != $l) | not) | "loop \"\($l)\" resets \"\($r)\", which is not another defined loop" ),
+    ( $d.loops | to_entries[] | select((.value.onExhausted | type) == "object") | .key as $l | .value.onExhausted.to as $sb
+      | if ($d.steps | has($sb)) | not then "loop \"\($l)\": onExhausted.to \"\($sb)\" is not a step"
+        else ( $alts[] | select(.from == $sb and .outcome != "change-direction" and .to != "@escalate" and .to != "@close")
+               | "loop \"\($l)\": its step-back step \"\($sb)\" routes \(.outcome) to \"\(.to)\"; after a round cap the only ways on are escalating to the captain, closing, or a change of direction" ) end ),
     ( $names[] | . as $n | select($reach | has_item($n) | not) | "step \($n) is unreachable from start \"\($d.start)\"" ),
     ( if ([$edges[] | . as $e | select($e.to == "@complete" and ($reach | has_item($e.from)))] | length) == 0 then "no reachable transition leads to @complete" else empty end ),
     ( if ($cyclic | length) > 0 then "steps \($cyclic | join(", ")) form a cycle that passes through no loop: tag a transition of the cycle with a loop that has maxIterations" else empty end )
@@ -171,12 +221,12 @@ def reserved: startswith("@");
 JQ
 )
 
-# --- 3. the verdict contract. A QA or code-review report ends with exactly one
-# fenced block tagged `verdict` holding {"verdict": "PASS|FAIL|BLOCKED",
-# "feedback": [{"id","severity","what","where"}...]} and nothing after it. The
-# parser decides without judgement; anything else is a FAIL whose one feedback
-# item says why. roles/qa and roles/code-reviewer carry the same contract.
-AWK_VERDICT=$(cat <<'AWK'
+# --- 3. the final-block contracts. A report ends with exactly one fenced block
+# tagged verdict, result or risk (as its step's output says) and nothing after
+# it. The parsers decide without judgement. A malformed verdict is a FAIL whose
+# one feedback item says why; a malformed result or risk is invalid (the engine
+# re-runs the step). roles/<role>/ROLE.md files carry the same contracts.
+AWK_BLOCK=$(cat <<'AWK'
 { sub(/\r$/, "") }
 /^```/ && !inb { inb = 1; info = substr($0, 4); sub(/[ \t]+$/, "", info); body = ""; next }
 inb && /^```[ \t]*$/ { inb = 0; last_info = info; last_body = body; last_end = NR; seen = 1; next }
@@ -185,71 +235,168 @@ $0 ~ /[^ \t]/ { tail = NR }
 END {
   if (NR == 0) { print "ERR:the report is empty"; exit }
   if (inb) { print "ERR:a fenced block is never closed"; exit }
-  if (!seen) { print "ERR:the report has no fenced block, so no verdict block"; exit }
-  if (tail > last_end) { print "ERR:text follows the last fenced block; the verdict block must be the last thing in the report"; exit }
-  if (last_info != "verdict") { print "ERR:the last fenced block is tagged \"" last_info "\", not \"verdict\""; exit }
+  if (!seen) { print "ERR:the report has no fenced block, so no " tag " block"; exit }
+  if (tail > last_end) { print "ERR:text follows the last fenced block; the " tag " block must be the last thing in the report"; exit }
+  if (last_info != tag) { print "ERR:the last fenced block is tagged \"" last_info "\", not \"" tag "\""; exit }
   print "OK"; printf "%s", last_body
 }
 AWK
 )
 
-JQ_VERDICT=$(cat <<'JQ'
+JQ_COMMON=$(cat <<'JQ'
 def has_item($x): any(.[]; . == $x);
 def isstr: type == "string" and (gsub("[ \t\r\n]"; "") | length) > 0;
+def issha: type == "string" and test("^[0-9a-f]{7,40}$");
+def iskebab: type == "string" and test("^[a-z0-9]+(-[a-z0-9]+)*$");
+def present($k): has($k) and .[$k] != null;
+JQ
+)
+
+JQ_VERDICT=$(cat <<'JQ'
 def fail($why): {
-  verdict: "FAIL", valid: false, problems: $why,
+  kind: "verdict", outcome: "fail", verdict: "FAIL", valid: false, problems: $why, commit: null, dropped: [],
   feedback: [{id: "VERDICT-1", severity: "BLOCKER",
     what: ("The report carries no valid verdict: " + ($why | join("; ")) + ". It must end with the fenced verdict block its role file defines, as the last thing in the report."),
     where: "end of the report"}]
 };
+def item_problems($i; $it):
+  if ($it | type) != "object" then ["feedback[\($i)] is not an object"]
+  else
+    [ ( ["id", "severity", "what", "where"][] as $k | if ($it[$k] | isstr) then empty else "feedback[\($i)].\($k) must be a non-empty string" end ),
+      ( if ($it.severity | isstr) and ((["BLOCKER", "IMPORTANT", "OPTIONAL", "PRE-EXISTING"] | has_item($it.severity)) | not) then "feedback[\($i)].severity must be BLOCKER, IMPORTANT, OPTIONAL or PRE-EXISTING" else empty end ),
+      ( if ($it | present("class")) and (($it.class | iskebab) | not) then "feedback[\($i)].class must be a short kebab-case name" else empty end ),
+      ( if ($it | present("rootCause")) and (($it.rootCause | isstr) | not) then "feedback[\($i)].rootCause must be a non-empty string" else empty end ),
+      ( if ($it | present("layer")) and ((["author", "qa", "review", "security", "ci", "spec", "checklist"] | has_item($it.layer)) | not) then "feedback[\($i)].layer must be author, qa, review, security, ci, spec or checklist" else empty end ) ]
+  end;
 if $extract != "" then fail([$extract])
 elif type != "object" then fail(["the verdict block is not a JSON object"])
 else
   . as $b
   | ( [
-      ( if (["PASS", "FAIL", "BLOCKED"] | has_item($b.verdict)) then empty else "verdict must be exactly PASS, FAIL or BLOCKED" end ),
+      ( if (["PASS", "FAIL", "BLOCKED", "CHANGE-DIRECTION"] | has_item($b.verdict)) then empty else "verdict must be exactly PASS, FAIL, BLOCKED or CHANGE-DIRECTION" end ),
+      ( if ($b | present("commit")) and (($b.commit | issha) | not) then "commit must be a hex commit sha (7 to 40 characters)" else empty end ),
       ( if ($b.feedback | type) != "array" then "feedback must be an array (empty when there is nothing to report)"
         else
-          ( $b.feedback | to_entries[] | .key as $i | .value as $it
-            | if ($it | type) != "object" then "feedback[\($i)] is not an object"
-              else
-                ( ["id", "severity", "what", "where"][] as $k | if ($it[$k] | isstr) then empty else "feedback[\($i)].\($k) must be a non-empty string" end ),
-                ( if ($it.severity | isstr) and ((["BLOCKER", "IMPORTANT", "OPTIONAL"] | has_item($it.severity)) | not) then "feedback[\($i)].severity must be BLOCKER, IMPORTANT or OPTIONAL" else empty end )
-              end ),
+          ( $b.feedback | to_entries[] | item_problems(.key; .value)[] ),
           ( [$b.feedback[] | objects | .id] | if length != (unique | length) then "feedback ids are not unique" else empty end )
-        end )
+        end ),
+      ( if ($b | present("dropped")) then
+          ( if ($b.dropped | type) != "array" then "dropped must be an array"
+            else
+              ( $b.dropped | to_entries[] | .key as $i | .value as $x
+                | if ($x | type) != "object" then "dropped[\($i)] is not an object"
+                  else
+                    ( if ($x.id | isstr) then empty else "dropped[\($i)].id must be a non-empty string" end ),
+                    ( if ((["not-reproducible", "style-only", "pre-existing", "duplicate", "intended", "out-of-scope"] | has_item($x.reason))) then empty else "dropped[\($i)].reason must be not-reproducible, style-only, pre-existing, duplicate, intended or out-of-scope" end ),
+                    ( if ($x.evidence | isstr) then empty else "dropped[\($i)].evidence must be a non-empty string" end )
+                  end ),
+              ( ([$b.dropped[] | objects | .id] + [($b.feedback // [])[] | objects | .id]) | if length != (unique | length) then "an id appears twice across feedback and dropped" else empty end )
+            end )
+        else empty end )
     ] ) as $shape
   | ( if ($shape | length) > 0 then $shape
       else
         ([$b.feedback[] | select(.severity == "BLOCKER" or .severity == "IMPORTANT")] | length) as $blocking
         | [ ( if $b.verdict == "PASS" and $blocking > 0 then "a PASS verdict cannot carry BLOCKER or IMPORTANT items" else empty end ),
             ( if $b.verdict == "FAIL" and $blocking == 0 then "a FAIL verdict needs at least one BLOCKER or IMPORTANT item" else empty end ),
-            ( if $b.verdict == "BLOCKED" and ($b.feedback | length) == 0 then "a BLOCKED verdict needs at least one item saying what blocks the evaluation" else empty end ) ]
+            ( if $b.verdict == "BLOCKED" and ($b.feedback | length) == 0 then "a BLOCKED verdict needs at least one item saying what blocks the evaluation" else empty end ),
+            ( if $b.verdict == "CHANGE-DIRECTION" and ($b.feedback | length) == 0 then "a CHANGE-DIRECTION verdict needs at least one item stating the wrong premise and the evidence" else empty end ) ]
       end ) as $problems
   | if ($problems | length) > 0 then fail($problems)
-    else {verdict: $b.verdict, valid: true, problems: [], feedback: [$b.feedback[] | {id, severity, what, where}]} end
+    else {kind: "verdict", outcome: ($b.verdict | ascii_downcase), verdict: $b.verdict, valid: true, problems: [], commit: ($b.commit // null),
+          dropped: [($b.dropped // [])[] | {id, reason, evidence}],
+          feedback: [$b.feedback[] | with_entries(select(.key | IN("id", "severity", "what", "where", "class", "rootCause", "layer")))]} end
 end
 JQ
 )
 
-# verdict_json <report-file>: the normalized verdict, always valid JSON on stdout.
-verdict_json() {
-  local ext first body reason='' n
-  ext=$(awk "$AWK_VERDICT" "$1"; printf x)
+JQ_RESULT=$(cat <<'JQ'
+def invalid($why): {kind: "result", outcome: null, status: null, valid: false, problems: $why, base: null, commit: null, evidence: [], answers: [], unverified: [], blocker: null, direction: null};
+if $extract != "" then invalid([$extract])
+elif type != "object" then invalid(["the result block is not a JSON object"])
+else
+  . as $b
+  | [ ( if (["done", "blocked", "change-direction"] | has_item($b.status)) then empty else "status must be exactly done, blocked or change-direction" end ),
+      ( if ($b | present("evidence")) then
+          ( if ($b.evidence | type) != "array" then "evidence must be an array"
+            else ( $b.evidence | to_entries[] | .key as $i | .value as $e
+                   | if ($e | type) != "object" then "evidence[\($i)] is not an object"
+                     else ( ["command", "observed"][] as $k | if ($e[$k] | isstr) then empty else "evidence[\($i)].\($k) must be a non-empty string" end ) end ) end )
+        else empty end ),
+      ( if ($b | present("base")) != ($b | present("commit")) then "base and commit go together: report both or neither" else empty end ),
+      ( if ($b | present("base")) and (($b.base | issha) | not) then "base must be a hex commit sha (7 to 40 characters)" else empty end ),
+      ( if ($b | present("commit")) and (($b.commit | issha) | not) then "commit must be a hex commit sha (7 to 40 characters)" else empty end ),
+      ( if ($b | present("answers")) then
+          ( if ($b.answers | type) != "array" then "answers must be an array"
+            else
+              ( $b.answers | to_entries[] | .key as $i | .value as $a
+                | if ($a | type) != "object" then "answers[\($i)] is not an object"
+                  else
+                    ( if ($a.id | isstr) then empty else "answers[\($i)].id must be a non-empty string" end ),
+                    ( if (["fixed", "rejected"] | has_item($a.status)) then empty else "answers[\($i)].status must be fixed or rejected" end ),
+                    ( if $a.status == "fixed" and (($a.evidence | isstr) | not) then "answers[\($i)] is fixed: evidence must be a non-empty string" else empty end ),
+                    ( if $a.status == "rejected" and (($a.reason | isstr) | not) then "answers[\($i)] is rejected: reason must be a non-empty string" else empty end ),
+                    ( if ($a | present("class")) and (($a.class | iskebab) | not) then "answers[\($i)].class must be a short kebab-case name" else empty end )
+                  end ),
+              ( [$b.answers[] | objects | .id] | if length != (unique | length) then "answers ids are not unique" else empty end )
+            end )
+        else empty end ),
+      ( if ($b | present("unverified")) and ((($b.unverified | type) != "array") or ([$b.unverified[] | (isstr | not)] | any)) then "unverified must be an array of non-empty strings" else empty end ),
+      ( if $b.status == "blocked" and (($b.blocker | isstr) | not) then "a blocked result needs blocker: what blocks and what is needed" else empty end ),
+      ( if $b.status == "change-direction" and (($b.direction | isstr) | not) then "a change-direction result needs direction: the wrong premise, the evidence and the reshaped approach or the reason to close" else empty end )
+    ] as $problems
+  | if ($problems | length) > 0 then invalid($problems)
+    else {kind: "result", outcome: $b.status, status: $b.status, valid: true, problems: [], base: ($b.base // null), commit: ($b.commit // null),
+          evidence: [($b.evidence // [])[] | {command, observed}],
+          answers: [($b.answers // [])[] | with_entries(select(.key | IN("id", "status", "evidence", "reason", "rootCause", "class")))],
+          unverified: ($b.unverified // []), blocker: ($b.blocker // null), direction: ($b.direction // null)} end
+end
+JQ
+)
+
+JQ_RISK=$(cat <<'JQ'
+def invalid($why): {kind: "risk", outcome: null, tier: null, valid: false, problems: $why, security: null, commit: null, sensitive: [], checklist: [], reasons: []};
+def strs($k): ($k | type) == "array" and ([$k[] | (isstr | not)] | any | not);
+if $extract != "" then invalid([$extract])
+elif type != "object" then invalid(["the risk block is not a JSON object"])
+else
+  . as $b
+  | [ ( if (["low", "medium", "high", "blocked"] | has_item($b.tier)) then empty else "tier must be exactly low, medium, high or blocked" end ),
+      ( if $b.tier != "blocked" and ((["required", "not-required"] | has_item($b.security)) | not) then "security must be required or not-required" else empty end ),
+      ( if $b.tier != "blocked" and (($b.commit | issha) | not) then "commit must be the hex sha of the head commit classified (7 to 40 characters)" else empty end ),
+      ( if ($b | present("sensitive")) and ((strs($b.sensitive)) | not) then "sensitive must be an array of non-empty strings" else empty end ),
+      ( if ($b | present("checklist")) and ((strs($b.checklist)) | not) then "checklist must be an array of non-empty strings" else empty end ),
+      ( if ((($b.reasons | type) != "array") or ($b.reasons | length) == 0 or ($b.reasons | strs(.) | not)) then "reasons must be a non-empty array of non-empty strings" else empty end ),
+      ( if $b.tier != "blocked" and ((($b.sensitive // []) | length) > 0) and ($b.tier == "low" or $b.security != "required") then "a sensitive surface means tier medium or high and a required security review" else empty end ),
+      ( if $b.tier == "high" and $b.security != "required" then "a high tier requires a security review" else empty end )
+    ] as $problems
+  | if ($problems | length) > 0 then invalid($problems)
+    else {kind: "risk", outcome: $b.tier, tier: $b.tier, valid: true, problems: [], security: ($b.security // null), commit: ($b.commit // null),
+          sensitive: ($b.sensitive // []), checklist: ($b.checklist // []), reasons: $b.reasons} end
+end
+JQ
+)
+
+# parse_block <verdict|result|risk> <report-file>: the normalized block, always valid JSON on stdout.
+parse_block() {
+  local kind=$1 file=$2 ext first body reason='' n prog
+  case $kind in verdict) prog=$JQ_VERDICT ;; result) prog=$JQ_RESULT ;; risk) prog=$JQ_RISK ;; *) die "unknown block kind $kind" ;; esac
+  prog="$JQ_COMMON $prog"
+  ext=$(awk -v tag="$kind" "$AWK_BLOCK" "$file"; printf x)
   ext=${ext%x}
   first=${ext%%$'\n'*}
   if [ "$first" != OK ]; then
     reason=${first#ERR:}
     [ -n "$reason" ] || reason='the report could not be read'
-    jq -n --arg extract "$reason" "$JQ_VERDICT"
+    jq -n --arg extract "$reason" "$prog"
     return
   fi
   body=${ext#*$'\n'}
-  if ! n=$(printf '%s' "$body" | jq -s 'length' 2>/dev/null); then reason='the verdict block is not valid JSON'
-  elif [ "$n" != 1 ]; then reason='the verdict block must hold exactly one JSON value'
+  if ! n=$(printf '%s' "$body" | jq -s 'length' 2>/dev/null); then reason="the $kind block is not valid JSON"
+  elif [ "$n" != 1 ]; then reason="the $kind block must hold exactly one JSON value"
   fi
-  if [ -n "$reason" ]; then jq -n --arg extract "$reason" "$JQ_VERDICT"; return; fi
-  printf '%s' "$body" | jq --arg extract '' "$JQ_VERDICT"
+  if [ -n "$reason" ]; then jq -n --arg extract "$reason" "$prog"; return; fi
+  printf '%s' "$body" | jq --arg extract '' "$prog"
 }
 
 # --- 4. state: the trace line, the inputs a step receives, the pasteable spec.
@@ -258,75 +405,227 @@ def trace($st):
   "Workflow: \($st.workflow) v\($st.version) | step \($st.current) #\($st.runs[$st.current]) | loops "
   + ( [$st.definition.loops | keys_unsorted[] | "\(.) \($st.loops[.])/\($st.definition.loops[.].maxIterations)"] | if length == 0 then "none" else join(", ") end )
   + " | \($st.status)";
+def inlist($xs): . as $x | $xs | any(.[]; . == $x);
+def sha_match($a; $b): ($a | length) as $la | ($b | length) as $lb
+  | $la >= 7 and $lb >= 7 and (if $la <= $lb then ($b | startswith($a)) else ($a | startswith($b)) end);
+def change_text($c): if $c == null then null else "\($c.base)..\($c.head)" end;
 def resolve_inputs($st; $step):
   [ ($step.input // [])[] | . as $i
     | if $i.from == "task" then {name: $i.name, from: "task", text: $st.task}
       elif $i.from == "change" then
-        ([$st.history[] | select(.change != null)] | .[-1]) as $h
-        | if $h == null and $i.optional then empty else {name: $i.name, from: "change", step: ($h.step // null), value: ($h.change // null)} end
+        if $st.change == null and $i.optional then empty else {name: $i.name, from: "change", value: change_text($st.change)} end
+      elif $i.from == "delta" then
+        ([$st.history[] | select(.step == $st.current and .commit != null and .outcome != "redo")] | .[-1]) as $h
+        | (if $h == null or $st.change == null or sha_match($h.commit; $st.change.head) then null else "\($h.commit)..\($st.change.head)" end) as $v
+        | if $v == null then empty else {name: $i.name, from: "delta", value: $v} end
       elif $i.from == "report" then
         ([$st.history[] | select(.step == $i.step and .report != null)] | .[-1]) as $h
         | if $h == null and $i.optional then empty else {name: $i.name, from: "report", step: $i.step, report: ($h.report // null)} end
+      elif $i.from == "direction" then
+        if $st.direction == null and $i.optional then empty else {name: $i.name, from: "direction", direction: $st.direction} end
+      elif $i.from == "notes" then
+        if ($st.notes | length) == 0 and $i.optional then empty else {name: $i.name, from: "notes", notes: $st.notes} end
+      elif $i.from == "risk" then
+        if ($st.attrs | length) == 0 and $i.optional then empty else {name: $i.name, from: "risk", attrs: $st.attrs} end
+      elif $i.from == "decision" then
+        ([$st.history[] | select(.step == $i.step and .reason != null)] | .[-1]) as $h
+        | if $h == null then (if $i.optional then empty else {name: $i.name, from: "decision", step: $i.step, outcome: null, reason: null} end)
+          else {name: $i.name, from: "decision", step: $i.step, outcome: $h.outcome, reason: $h.reason} end
+      elif $i.from == "feedback-all" then
+        ([$st.feedback[] | select((.step | inlist($i.steps)) and .outcome != "redo")]) as $all
+        | if ($all | length) == 0 and $i.optional then empty else {name: $i.name, from: "feedback-all", steps: $i.steps, entries: $all} end
       else
-        ([$st.feedback[] | select(.open and (. as $f | $i.steps | any(.[]; . == $f.step)))] | .[-1]) as $f
+        ([$st.feedback[] | select(.open and (.step | inlist($i.steps)) and .outcome != "redo")] | .[-1]) as $f
         | if $f == null then (if $i.optional then empty else {name: $i.name, from: "feedback", steps: $i.steps, source: null, items: null} end)
           else {name: $i.name, from: "feedback", steps: $i.steps, source: {step: $f.step, run: $f.run, outcome: $f.outcome}, items: $f.items} end
       end ];
 def items_block($items): "```json\n[\n" + ($items | map(tojson) | join(",\n")) + "\n]\n```";
+def render_attrs($a): "tier \($a.tier), security review \($a.security), approvals required from humans: \($a.approvals), sensitive surfaces: \(if ($a.sensitive | length) == 0 then "none" else ($a.sensitive | join(", ")) end), checklist items matched: \(if ($a.checklist | length) == 0 then "none" else ($a.checklist | join(", ")) end), commit \($a.commit // "unknown")";
 def render_input:
   if .from == "task" then "- \(.name): \(.text)"
-  elif .from == "change" then "- \(.name): " + (if .value == null then "not recorded yet; the orchestrator attaches the change under work" else "\(.value) (recorded by step \(.step))" end)
+  elif .from == "change" then "- \(.name): " + (if .value == null then "not recorded yet; the orchestrator attaches it" else "\(.value) (the commit range of the whole change under work)" end)
+  elif .from == "delta" then "- \(.name): \(.value) (the commits since the last commit this step judged: re-check the open findings and this delta, not the whole change again)"
   elif .from == "report" then "- \(.name): " + (if .report == null then "no report recorded for step \(.step); the orchestrator attaches it" else "the report of step \(.step), at \(.report)" end)
+  elif .from == "direction" then "- \(.name): change of direction raised by step \(.direction.step) run \(.direction.run): " + (if .direction.text != null then .direction.text elif .direction.items != null then "\n" + items_block(.direction.items) else "see the report at \(.direction.report)" end)
+  elif .from == "notes" then "- \(.name): non-blocking notes (OPTIONAL and PRE-EXISTING; none blocks, none blames the author), verbatim:\n" + items_block([.notes[] | .items[] ])
+  elif .from == "risk" then "- \(.name): " + render_attrs(.attrs)
+  elif .from == "feedback-all" then "- \(.name): every finding recorded by \(.steps | join(", ")), oldest first, open and closed, verbatim:\n" + ([.entries[] | "step \(.step) run \(.run) (\(.outcome), \(if .open then "open" else "closed" end)):\n" + items_block(.items)] | join("\n"))
+  elif .from == "decision" then "- \(.name): " + (if .reason == null then "no decision recorded at step \(.step) yet" else "the decision recorded at step \(.step) was \(.outcome): \(.reason)" end)
   elif .items == null then "- \(.name): no open findings recorded; the orchestrator attaches them"
   else "- \(.name): the findings of step \(.source.step) run \(.source.run) (\(.source.outcome)), verbatim. Address or re-check every item by id; never summarise or drop one:\n" + items_block(.items) end;
 def feedback_dump($st):
-  if ($st.feedback | length) == 0 then "none recorded"
-  else [$st.feedback[] | "- step \(.step) run \(.run) (\(.outcome), \(if .open then "open" else "closed" end)):\n" + items_block(.items)] | join("\n") end;
-def contract_text($out):
-  if $out == "verdict" then "a final report that ends with the verdict block your role file defines (the last fenced block, tagged verdict). The outcome is parsed from that block; a missing or malformed block counts as FAIL."
-  else "a final report: what you did, what you ran and saw, and what you could not verify. Report the commit range of any change you made." end;
+  [$st.feedback[] | select(.outcome != "redo")] as $fb
+  | if ($fb | length) == 0 then "none recorded"
+    else [$fb[] | "- step \(.step) run \(.run) (\(.outcome), \(if .open then "open" else "closed" end)):\n" + items_block(.items)] | join("\n") end;
+def contract_text($step):
+  ( if $step.output == "verdict" then "a final report that ends with the verdict block your role file defines (the last fenced block, tagged verdict, naming the head commit you judged). The outcome is parsed from that block; a missing or malformed block counts as FAIL."
+    elif $step.output == "result" then "a final report that ends with the result block your role file defines (the last fenced block, tagged result): status, the evidence (each command you ran and what it printed), an answer for every feedback id handed to you" + (if $step.commits == true then ", and the base and commit of the work you committed to the task branch" else "" end) + ". The outcome is its status; a malformed block is sent back, twice, then counts as blocked."
+    elif $step.output == "risk" then "a final report that ends with the risk block your role file defines (the last fenced block, tagged risk): tier, security, the head commit classified, sensitive surfaces, matched checklist items, reasons. The outcome is its tier."
+    else "a final report whose first line is status: done, status: blocked or status: change-direction (the orchestrator records that as the outcome), then what you did, what you ran and saw, and what you could not verify." end )
+  + " A step that finds the approach itself wrong ends with change-direction, raised as soon as it is established, never after finishing a doomed version.";
+def stamp_lines($st):
+  [ $st.definition.steps | to_entries[] | select(.value.kind == "work" and (.value.output == "verdict" or .value.output == "risk")) | .key as $sn
+    | ([$st.history[] | select(.step == $sn)] | .[-1]) as $h | select($h != null)
+    | "- \($sn): \($h.outcome)"
+      + (if $h.commit != null then " at commit \($h.commit)" + (if $st.change != null and (sha_match($h.commit; $st.change.head) | not) then " - STALE: the change head is \($st.change.head), a pass is valid only for the commit it ran on" else "" end) else " (no commit recorded)" end)
+      + " (run \($h.run))" ]
+  + [ $st.definition.steps | to_entries[] | select(.value.kind == "work" and .value.output == "result") | .key as $sn
+    | ([$st.history[] | select(.step == $sn and .outcome == "done")] | .[-1]) as $h | select($h != null)
+    | "- \($sn): done" + (if $h.commit != null then " at commit \($h.commit)" else "" end) + ", \(($h.evidence // []) | length) command(s) shown (run \($h.run))" ];
 JQ
 )
 
 JQ_INIT=$(cat <<'JQ'
-{workflow: $d.name, version: $d.version, task: $task, status: "running", current: $d.start,
+{engine: $engine, workflow: $d.name, version: $d.version, task: $task, status: "running", current: $d.start,
  runs: {($d.start): 1}, loops: ($d.loops | with_entries(.value = 0)),
- history: [], feedback: [], escalation: null, definition: $d}
+ history: [], feedback: [], notes: [], attrs: {}, change: null, direction: null, stepBack: null,
+ redos: {}, gateBlocks: {}, escalation: null, definition: $d}
 JQ
 )
 
 # Applies one recorded result ($ev) to the current step and takes the transition
 # the embedded definition names. All decisions are the definition's; nothing here
-# knows a step or role by name.
+# knows a step or role by name. $ev: {outcome, report, reason, parsed}, where
+# parsed is the normalized block of a result/verdict/risk step or null. The
+# result carries .emit, the retro records for the caller to append (and strip).
 JQ_APPLY=$(cat <<'JQ'
-def tgt: if type == "string" then {to: .} else . end;
+def alts: if type == "array" then . elif type == "string" then [{to: .}] else [.] end;
+def matches($attrs): (.when // {}) | to_entries | all(.[]; . as $c | ($attrs[$c.key] // null) as $v | $v != null and ($c.value | any(.[]; . == $v)));
+def pick($attrs): (alts | map(select(matches($attrs))) | .[0]);
+def blocking: select(.severity == "BLOCKER" or .severity == "IMPORTANT");
+def nonblocking: select(.severity == "OPTIONAL" or .severity == "PRE-EXISTING");
 . as $st
 | .definition as $d
 | .current as $cur
 | $d.steps[$cur] as $step
-| $ev.outcome as $o
-| ($step.on[$o] | tgt) as $t
+| ($d.roles[$step.role // ""] // null) as $rolename
 | .runs[$cur] as $run
+| ($ev.parsed) as $p
+| ($ev.outcome) as $o0
+| ($d.steps | to_entries | map(select(.value.verifies != null and (.value.verifies | inlist([$cur]))) | .key)) as $verifiers
+| ([$cur] + ($step.verifies // []) + $verifiers) as $closing
+| ( [ ($step.input // [])[] | select(.from == "feedback") | .steps as $ss
+      | ($st.feedback | map(select(.open and (.step | inlist($ss)) and .outcome != "redo")) | .[-1]) | select(. != null) | .items[] ] ) as $handed
+| ( [ ($step.verifies // [])[] as $vs | ($st.feedback | map(select(.open and .step == $vs and .outcome != "redo")) | .[-1]) | select(. != null) | .items[] ] ) as $to_verify
+| ( [ ($step.input // [])[] | select(.from == "change" or .from == "delta") ] | length > 0 ) as $judges_change
+# --- gates over the structured block
+| ( if $p == null or $p.valid != true then []
+    else
+      [ ( if $step.kind == "work" and $step.output == "result" and $p.status == "done" then
+            { gate: "evidence",
+              problems: ( ( if ($p.evidence | length) == 0 then ["no evidence: report each command you ran and what it printed (observed output, not done)"] else [] end )
+                        + ( if $step.commits == true and ($p.commit == null) then ["the step commits its work: report base and commit"] else [] end ) ) }
+          else empty end ),
+        ( if $step.kind == "work" and $step.output == "result" and $p.status == "done" and ($handed | length) > 0 then
+            { gate: "answers",
+              problems: ( [ $handed[] | .id as $hid | select(([$p.answers[] | select(.id == $hid)] | length) == 0) | "feedback \($hid) is not answered: report it fixed (with evidence) or rejected (with a concrete reason)" ] ) }
+          else empty end ),
+        ( if $judges_change and ($step.output == "verdict" or $step.output == "risk") and $st.change != null and $p.outcome != "blocked" then
+            { gate: "commit",
+              problems: ( if $p.commit == null then ["the block names no commit: record the head commit you judged (a pass is valid only for the commit it ran on)"]
+                          elif sha_match($p.commit; $st.change.head) then []
+                          else ["the block judged commit \($p.commit), but the change head is \($st.change.head): the result is stale (a new commit invalidates a pass)"] end ) }
+          else empty end ),
+        ( if $step.kind == "work" and $step.output == "verdict" and ($step.verifies != null) then
+            ( ([$p.feedback[].id] + [$p.dropped[].id]) as $given | ($to_verify | map(.id)) as $want
+              | { gate: "coverage",
+                  problems: ( [ $want[] | select(inlist($given) | not) | "finding \(.) is in neither feedback nor dropped" ]
+                            + [ $given[] | select(inlist($want) | not) | "id \(.) was not handed to this step" ] ) } )
+          else empty end ) ]
+      | map(select(.problems | length > 0))
+    end ) as $failed
+| ( $failed | map(. + {mode: ($d.gates[.gate] // "observe")} | . + {status: (if .mode == "observe" then "would-block" elif (($st.gateBlocks[$cur][.gate] // 0) < 2) then "blocked" else "escaped" end)}) ) as $gatelog
+| ( ($gatelog | map(select(.status == "blocked")) | length) > 0 ) as $gate_redo
+| ( ($p != null and $p.valid == false and ($step.output == "result" or $step.output == "risk" or $step.verifies != null)) ) as $format_bad
+| ( if $format_bad and (($st.redos[$cur] // 0) >= 2) then "blocked" else $o0 end ) as $o1
+| ( $format_bad and (($st.redos[$cur] // 0) < 2) ) as $format_redo
+| ( if $format_redo or $gate_redo then "redo" else ($o1 // $o0) end ) as $o
 | ({step: $cur, run: $run, outcome: $o, at: $at}
    + (if $ev.report != null then {report: $ev.report} else {} end)
-   + (if $ev.change != null then {change: $ev.change} else {} end)
-   + (if $ev.verdict != null then {verdict: {valid: $ev.verdict.valid, problems: $ev.verdict.problems, feedback: $ev.verdict.feedback}} else {} end)
-   + (if $ev.reason != null then {reason: $ev.reason} else {} end)) as $entry
+   + (if $ev.reason != null then {reason: $ev.reason} else {} end)
+   + (if $p != null then {valid: $p.valid, problems: $p.problems} else {} end)
+   + (if $p != null and ($p.commit // null) != null then {commit: $p.commit} else {} end)
+   + (if $p != null and $p.kind == "verdict" then {feedback: $p.feedback, dropped: $p.dropped} else {} end)
+   + (if $p != null and $p.kind == "result" then {evidence: $p.evidence, answers: $p.answers, unverified: $p.unverified} else {} end)
+   + (if $p != null and $p.kind == "risk" then {tier: $p.tier, security: $p.security, sensitive: $p.sensitive, checklist: $p.checklist, reasons: $p.reasons} else {} end)
+   + (if ($gatelog | length) > 0 then {gates: ($gatelog | map({gate, mode, status, problems}))} else {} end)) as $entry
+| (($d.roles[$step.role // ""]) // "") as $rn
+| ( $gatelog | map({event: "gate", step: $cur, run: $run, role: $rn, detail: {gate, mode, status, problems}}) ) as $gate_emit
 | .history += [$entry]
-| ( if $step.output == "verdict" then
-      .feedback |= ( map(if .step == $cur then .open = false else . end)
-                     + (if $o != "pass" then [{step: $cur, run: $run, outcome: $o, open: true, items: $ev.verdict.feedback}] else [] end) )
-    else . end )
-| if $t.loop != null and .loops[$t.loop] >= $d.loops[$t.loop].maxIterations then
-    .status = "escalated"
-    | .escalation = {reason: "loop \($t.loop) is exhausted: its \($d.loops[$t.loop].maxIterations) iteration(s) are used and step \($cur) ended \($o) again", loop: $t.loop, step: $cur, outcome: $o, feedback: .feedback}
+| if $format_redo or $gate_redo then
+    ( ( [ $gatelog[] | select(.status == "blocked") | {id: "GATE-\(.gate)", severity: "BLOCKER", what: (.problems | join("; ")), where: "the final report of step \($cur) run \($run)"} ]
+        + (if $format_redo then [{id: "FORMAT-1", severity: "BLOCKER", what: ("the final block is invalid: " + ($p.problems | join("; "))), where: "the end of the report of step \($cur) run \($run)"}] else [] end) ) as $items
+      | .feedback |= (map(if .step == $cur and .outcome == "redo" then .open = false else . end) + [{step: $cur, run: $run, outcome: "redo", open: true, items: $items}])
+      | (if $gate_redo then reduce ($gatelog[] | select(.status == "blocked") | .gate) as $g (.; .gateBlocks[$cur][$g] = ((.gateBlocks[$cur][$g] // 0) + 1)) else . end)
+      | (if $format_redo then .redos[$cur] = ((.redos[$cur] // 0) + 1) else . end)
+      | .runs[$cur] = ($run + 1)
+      | .emit = ($gate_emit + (if $format_redo then [{event: "gate", step: $cur, run: $run, role: $rn, detail: {gate: "format", mode: "enforce", status: "blocked", problems: $p.problems}}] else [] end)) )
   else
-    ( if $t.loop != null then .loops[$t.loop] += 1 else . end )
-    | if $t.to == "@escalate" then
-        .status = "escalated"
-        | .escalation = {reason: "step \($cur) ended \($o), which the definition routes to the captain", loop: null, step: $cur, outcome: $o, feedback: .feedback}
-      elif $t.to == "@complete" then .status = "complete"
-      else .current = $t.to | .runs[$t.to] = ((.runs[$t.to] // 0) + 1) end
+    # --- a recorded outcome: attributes, change, feedback, notes, direction
+    ( if $p != null and $p.kind == "risk" and $p.valid and $p.tier != "blocked" then
+        .attrs = {tier: $p.tier, security: $p.security, sensitive: $p.sensitive, checklist: $p.checklist, reasons: $p.reasons, commit: $p.commit,
+                  approvals: (if $p.tier == "high" then 2 elif $p.tier == "medium" then 1 else 0 end)}
+      else . end )
+    | ( if $p != null and $p.kind == "result" and $p.valid and $p.commit != null then
+          (if $st.change == null then .change = {base: $p.base, head: $p.commit} else .change.head = $p.commit end)
+        else . end )
+    | .feedback |= map(if (.step | inlist($closing)) then .open = false else . end)
+    | ( if $p != null and $p.kind == "verdict" then
+          ( ($p.feedback | map(blocking)) as $blk | ($p.feedback | map(nonblocking)) as $nb
+            | ( if $o == "fail" then
+                  .feedback += [{step: $cur, run: $run, outcome: $o, open: true, items: $blk, commit: $p.commit}]
+                elif $o == "blocked" or $o == "change-direction" then
+                  .feedback += [{step: $cur, run: $run, outcome: $o, open: true, items: $p.feedback, commit: $p.commit}]
+                else . end )
+            | ( if ($nb | length) > 0 and ($o == "pass" or $o == "fail") then .notes += [{step: $cur, run: $run, commit: $p.commit, items: $nb}] else . end ) )
+        else . end )
+    | ( if $step.kind == "work" then .direction = null else . end )
+    | ( if $o == "change-direction" then
+          .direction = ({step: $cur, run: $run}
+                        + (if $p != null and $p.kind == "result" then {text: $p.direction}
+                           elif $p != null and $p.kind == "verdict" then {items: $p.feedback}
+                           elif $ev.report != null then {report: $ev.report}
+                           else {text: ($ev.reason // "the step raised a change of direction")} end))
+        else . end )
+    | .redos[$cur] = 0
+    | .gateBlocks[$cur] = {}
+    | .emit = ( $gate_emit
+        + ( if $p != null and $p.kind == "verdict" then
+              [ $p.feedback[] | {event: (if $step.verifies != null and .id != "VERDICT-1" then "confirmed" else "finding" end), step: $cur, run: $run, role: $rn, caughtBy: $rn, outcome: $o, severity, class: (.class // (if .id == "VERDICT-1" then "malformed-report" else null end)), id, what, where, rootCause, layer, disposition: "open", commit: $p.commit} ]
+              + [ $p.dropped[] | {event: "dropped", step: $cur, run: $run, role: $rn, id, disposition: "dropped", detail: {reason, evidence}} ]
+            else [] end )
+        + ( if $p != null and $p.kind == "result" then
+              [ $p.answers[] | {event: "answer", step: $cur, run: $run, role: $rn, id, class, rootCause, disposition: .status, detail: {evidence, reason}} ]
+            else [] end )
+        + ( if $o == "change-direction" then [{event: "change-direction", step: $cur, run: $run, role: $rn, detail: {text: (.direction.text // $ev.reason // null)}}] else [] end ) )
+    | . as $cs
+    | ( $d.steps[$cur].on[$o] | pick($cs.attrs) ) as $t
+    | ( if $t.loop != null then $d.loops[$t.loop] else null end ) as $lp
+    | if $t.loop != null and .loops[$t.loop] >= $lp.maxIterations then
+        ( if ($lp.onExhausted | type) == "object" then
+            .current = $lp.onExhausted.to
+            | .runs[$lp.onExhausted.to] = ((.runs[$lp.onExhausted.to] // 0) + 1)
+            | .stepBack = {loop: $t.loop, from: $cur, outcome: $o, max: $lp.maxIterations, to: $lp.onExhausted.to}
+            | .emit += [{event: "round-cap", step: $cur, run: $run, role: $rn, detail: {loop: $t.loop, max: $lp.maxIterations, to: $lp.onExhausted.to}}]
+          else
+            .status = "escalated"
+            | .escalation = {reason: "loop \($t.loop) is exhausted: its \($lp.maxIterations) iteration(s) are used and step \($cur) ended \($o) again", loop: $t.loop, step: $cur, outcome: $o, feedback: .feedback}
+            | .emit += [{event: "escalation", step: $cur, run: $run, role: $rn, detail: {reason: "loop exhausted", loop: $t.loop}}]
+          end )
+      else
+        ( if $t.loop != null then (.loops[$t.loop] += 1 | (if (($lp.resets // []) | length) > 0 then .feedback |= map(.open = false) else . end) | reduce (($lp.resets // [])[]) as $r (.; .loops[$r] = 0)) else . end )
+        | if $t.to == "@escalate" then
+            .status = "escalated"
+            | .escalation = {reason: "step \($cur) ended \($o), which the definition routes to the captain", loop: null, step: $cur, outcome: $o, feedback: .feedback}
+            | .emit += [{event: "escalation", step: $cur, run: $run, role: $rn, detail: {reason: "routed to the captain", loop: null}}]
+          elif $t.to == "@close" then
+            .status = "closed"
+            | .emit += [{event: "closed", step: $cur, run: $run, role: $rn, outcome: $o, detail: {reason: ($ev.reason // null)}}]
+          elif $t.to == "@complete" then
+            .status = "complete"
+            | .emit += [{event: "complete", step: $cur, run: $run, outcome: $o, detail: {rounds: .loops, runs: .runs}}]
+          else .current = $t.to | .runs[$t.to] = ((.runs[$t.to] // 0) + 1) end
+      end
   end
 JQ
 )
@@ -334,6 +633,15 @@ JQ
 # The object `next` prints. $handoff is bin/fm-role-handoff's output for the
 # current step's role ("" for a step without a role); $roleName its role.
 JQ_VIEW=$(cat <<'JQ'
+def approvals_text($st):
+  if ($st.attrs | length) > 0 then "Required human approvals before merge: \($st.attrs.approvals) (risk tier \($st.attrs.tier), set by the change). An agent verdict - QA, review, security, release, or your own - never satisfies one. This workflow never merges."
+  else "Required human approvals before merge: none recorded (no risk classification ran in this workflow). This workflow never merges." end;
+def notes_text($st):
+  if ($st.notes | length) == 0 then "Non-blocking notes: none."
+  else "Non-blocking notes for the delivery (OPTIONAL and PRE-EXISTING items; none blocks, none blames the author), verbatim:\n" + items_block([$st.notes[] | .items[] ]) end;
+def stamp_text($st):
+  "Verification stamp (derived from the recorded results; put it in the delivery, and say so when it is none):\n"
+  + (stamp_lines($st) | if length == 0 then "- none: no gate recorded a result in this workflow" else join("\n") end);
 . as $st
 | .definition as $d
 | $d.steps[$st.current] as $step
@@ -341,22 +649,37 @@ JQ_VIEW=$(cat <<'JQ'
 | (if $st.status == "running" then resolve_inputs($st; $step) else [] end) as $inputs
 | (if $step.kind == "work" then $oc[$step.output] elif $step.kind == "deliver" then $oc.deliver else ($step.on | keys_unsorted) end) as $outcomes
 | trace($st) as $trace
+| ($st.history | .[-1]) as $last
+| (if $last != null and (($last.gates // []) | length) > 0 then
+     "\n\nGate observations on the last recorded result (observe = logged, not blocking; blocked = the step was sent back; escaped = let through after two blocks):\n" + ([$last.gates[] | "- \(.gate) (\(.mode), \(.status)): \(.problems | join("; "))"] | join("\n"))
+   else "" end) as $gatenote
+| ([$st.feedback[] | select(.step == $st.current and .open and .outcome == "redo")] | .[-1]) as $redo
+| (if $redo != null then "\n\nYour previous report for this step was refused: fix it and report again (a refusal is not a verdict):\n" + items_block($redo.items) else "" end) as $redonote
+| (if $st.stepBack != null and $st.stepBack.to == $st.current then
+     "\n\nROUND CAP REACHED: loop \($st.stepBack.loop) used its \($st.stepBack.max) rounds and step \($st.stepBack.from) ended \($st.stepBack.outcome) again. Do not fix anything and do not start another round. Step back and reconsider the approach itself: from every accumulated finding name the class of defect that keeps returning and the premise it points at. If the approach is wrong, end with change-direction (the reshaped approach, or the reason to close). If it stands, end with done and the evidence that the next round would converge; the captain decides whether to grant it. Your result block fixes nothing: leave `answers` empty (\"answers\": []); an answer can only be fixed or rejected, and the accumulated findings are context for this step, not items to answer."
+   else "" end) as $stepbacknote
 | (if $st.status == "complete" then
-     "Workflow complete\n\n\($trace)\n\nEvery step passed. Report the delivery per the task's delivery mode; merging stays the captain's word."
+     "Workflow complete\n\n\($trace)\n\nEvery step passed. Report the delivery per the task delivery mode; merging stays the captain word.\n\n\(stamp_text($st))\n\n\(approvals_text($st))\n\n\(notes_text($st))"
+   elif $st.status == "closed" then
+     "Workflow closed\n\n\($trace)\n\nThe task was closed deliberately: nothing is delivered. Report the closing reason" + (if ($last.reason // null) != null then " (\($last.reason))" else "" end) + " and the accumulated feedback:\n\(feedback_dump($st))"
    elif $st.status == "escalated" then
-     "Workflow escalated to the captain\n\n\($trace)\n\nReason: \($st.escalation.reason)\n\nAccumulated feedback, every entry verbatim:\n\(feedback_dump($st))"
+     "Workflow escalated to the captain\n\n\($trace)\n\nReason: \($st.escalation.reason)"
+     + (if $st.escalation.loop != null or ($st.stepBack != null and $st.escalation.step == $st.stepBack.to) then "\n\nThe round cap is reached: no further round is taken. The author must step back and reconsider the approach before anything continues; granting more rounds, reshaping or closing the task is the captain decision, never an edit of the state file." else "" end)
+     + "\n\nAccumulated feedback, every entry verbatim:\n\(feedback_dump($st))"
    elif $step.kind == "work" then
-     "Workflow step\n\n\($trace)\nStep \($st.current), role \($step.role) -> \($roleName). A fresh worker with this role handoff; everything it needs is in this step.\n\nStep instruction: \($step.instruction)\n\nInputs:\n"
+     "Workflow step: \($st.workflow) v\($st.version), step \($st.current), run #\($st.runs[$st.current])\n\nStep \($st.current), role \($step.role) -> \($roleName). A fresh worker with this role handoff; everything it needs is in this step.\n\nStep instruction: \($step.instruction)"
+     + $stepbacknote + $redonote + $gatenote + "\n\nInputs:\n"
      + ($inputs | map(render_input) | join("\n"))
-     + "\n\nOutput: " + contract_text($step.output) + "\n\n" + $handoff
+     + "\n\nOutput: " + contract_text($step) + "\n\n" + $handoff
    elif $step.kind == "decision" then
-     "Workflow step: decision for the orchestrator\n\n\($trace)\nStep \($st.current). Decide; no worker is launched.\n\nQuestion: \($step.question)\nCriteria:\n"
+     "Workflow step: \($st.workflow) v\($st.version), step \($st.current), run #\($st.runs[$st.current]), a decision for the orchestrator\n\nStep \($st.current). Decide; no worker is launched.\n\nQuestion: \($step.question)\nCriteria:\n"
      + ($step.criteria | map("- " + .) | join("\n"))
-     + "\n\nInputs:\n" + ($inputs | map(render_input) | join("\n"))
+     + $gatenote + "\n\nInputs:\n" + ($inputs | map(render_input) | join("\n"))
      + "\n\nChoices: \($outcomes | join(", ")). Record the choice and the reason with --decide <choice> --reason <why>."
    else
-     "Workflow step: delivery, performed by Firstmate\n\n\($trace)\nStep \($st.current). No role and no worker is chosen for this step.\n\nInstruction: \($step.instruction)\n\nInputs:\n"
-     + ($inputs | map(render_input) | join("\n"))
+     "Workflow step: \($st.workflow) v\($st.version), step \($st.current), run #\($st.runs[$st.current]), delivery performed by Firstmate\n\nStep \($st.current). No role and no worker is chosen for this step.\n\nInstruction: \($step.instruction)"
+     + $gatenote + "\n\nInputs:\n" + ($inputs | map(render_input) | join("\n"))
+     + "\n\n\(stamp_text($st))\n\n\(approvals_text($st))\n\n\(notes_text($st))"
      + "\n\nRecord the result with --outcome \($outcomes | join("|"))."
    end) as $spec
 | {
@@ -368,27 +691,41 @@ JQ_VIEW=$(cat <<'JQ'
     handoff: (if $handoff == "" then null else $handoff end),
     decision: (if $step.kind == "decision" then {question: $step.question, criteria: $step.criteria, choices: $outcomes} else null end),
     loops: ($d.loops | with_entries(.value = {used: $st.loops[.key], max: .value.maxIterations, onExhausted: .value.onExhausted})),
+    attrs: $st.attrs, change: $st.change, notes: $st.notes, stepBack: $st.stepBack,
+    gates: ($last.gates // []),
     trace: $trace, escalation: $st.escalation, spec: $spec
   }
 JQ
 )
 
 # --- 5. validation entry points.
+roles_manifest() { # prints the roles object of roles/manifest.json, or fails
+  local f="$CONFIG_ROOT/roles/manifest.json"
+  [ -f "$f" ] || return 1
+  jq -ec '.roles | select(type == "object")' "$f" 2>/dev/null
+}
+
 # validate_json <expected-name|""> - reads a definition on stdin, prints one error per line.
 validate_json() {
-  local def roles errs
+  local def roles manifest errs
   def=$(cat)
   printf '%s' "$def" | jq -e . >/dev/null 2>&1 || { echo 'not valid JSON'; return 1; }
   errs=$(printf '%s' "$def" | jq -r --slurpfile schema "$SCHEMA" "$JQ_SCHEMA" 2>&1) || { printf '%s\n' "$errs"; return 1; }
   [ -z "$errs" ] || { printf '%s\n' "$errs"; return 1; }
   roles=$(FM_CONFIG_ROOT="$CONFIG_ROOT" "$HANDOFF" --roles | jq -R . | jq -sc .)
-  errs=$(printf '%s' "$def" | jq -r --slurpfile schema "$SCHEMA" --argjson roles "$roles" --arg fname "$1" "$JQ_SEMANTIC" 2>&1) || { printf '%s\n' "$errs"; return 1; }
+  manifest=$(roles_manifest) || { echo "roles/manifest.json is missing or not valid (looked in $CONFIG_ROOT/roles)"; return 1; }
+  errs=$(printf '%s' "$def" | jq -r --slurpfile schema "$SCHEMA" --argjson roles "$roles" --argjson manifest "$manifest" --arg fname "$1" "$JQ_SEMANTIC" 2>&1) || { printf '%s\n' "$errs"; return 1; }
   [ -z "$errs" ] || { printf '%s\n' "$errs"; return 1; }
   return 0
 }
 
 def_file() { # <name|path> -> path
   case $1 in */*|*.json) printf '%s\n' "$1" ;; *) printf '%s/%s.json\n' "$WORKFLOWS_ROOT" "$1" ;; esac
+}
+
+is_definition() { # <path> - a workflow definition, not the schema or the selection table
+  case $(basename "$1") in workflow.schema.json|selection.json) return 1 ;; esac
+  return 0
 }
 
 cmd_validate() {
@@ -412,24 +749,160 @@ cmd_list() {
   local f found=0
   for f in "$WORKFLOWS_ROOT"/*.json; do
     [ -f "$f" ] || continue
-    [ "$(basename "$f")" = workflow.schema.json ] && continue
+    is_definition "$f" || continue
     found=1
     jq -r '"\(.name // "?") v\(.version // "?")\n  \(.description // "")\n  when: \(.when // "")\n"' "$f" 2>/dev/null || printf '%s: not valid JSON\n\n' "$f"
   done
   [ "$found" -eq 1 ] || printf 'no workflows in %s\n' "$WORKFLOWS_ROOT"
 }
 
-cmd_verdict() {
-  [ "$#" -eq 1 ] || usage
-  [ -f "$1" ] || { printf 'fm-workflow: cannot read %s\n' "$1" >&2; exit 2; }
+cmd_block() { # <verdict|result|risk> <report-file>
+  [ "$#" -eq 2 ] || usage
+  [ -f "$2" ] || { printf 'fm-workflow: cannot read %s\n' "$2" >&2; exit 2; }
   local out v
-  out=$(verdict_json "$1")
+  out=$(parse_block "$1" "$2")
   printf '%s\n' "$out"
-  v=$(printf '%s' "$out" | jq -r .verdict)
-  case $v in PASS) exit 0 ;; BLOCKED) exit 3 ;; *) exit 1 ;; esac
+  case $1 in
+    verdict)
+      v=$(printf '%s' "$out" | jq -r .verdict)
+      case $v in PASS) exit 0 ;; BLOCKED) exit 3 ;; CHANGE-DIRECTION) exit 4 ;; *) exit 1 ;; esac ;;
+    *) [ "$(printf '%s' "$out" | jq -r .valid)" = true ] && exit 0 || exit 1 ;;
+  esac
 }
 
-# --- 6. next: the one command that moves a workflow.
+# --- 6. select: the closed table of which workflow a kind of task must run.
+cmd_select() {
+  local sel="$WORKFLOWS_ROOT/selection.json" kind='' delivery='' none='' have_none=0
+  while [ "$#" -gt 0 ]; do
+    case $1 in
+      --delivery) [ "$#" -ge 2 ] || usage; delivery=$2; shift 2 ;;
+      --none) [ "$#" -ge 2 ] || usage; none=$2; have_none=1; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$kind" ] || usage; kind=$1; shift ;;
+    esac
+  done
+  [ -f "$sel" ] || die "no selection table: $sel"
+  jq -e '.kinds and .exceptions and .deliveryModes' "$sel" >/dev/null 2>&1 || die "not a selection table: $sel"
+  if [ -z "$kind" ]; then
+    [ "$have_none" -eq 0 ] || usage
+    jq -r '"Every kind of task and what it runs (the closed list; an unlisted kind is not a case):",
+      (.kinds | to_entries[] | "  \(.key): " + (if .value.workflow then "workflow \(.value.workflow)" elif .value.exception then "no workflow (exception \(.value.exception))" else "outside the rule" end) + " - \(.value.meaning)"),
+      "Delivery modes (required for a kind that runs a workflow): \(.deliveryModes | join(", "))",
+      (.deliveryOverrides | to_entries[] | "  delivery \(.key): \(.value.applies | join(", ")) run \(.value.workflow) instead - \(.value.why)"),
+      "Exceptions (the only ways a code-changing task runs no workflow):",
+      (.exceptions | to_entries[] | "  \(.key): \(.value)")' "$sel"
+    return 0
+  fi
+  jq -e --arg k "$kind" '.kinds | has($k)' "$sel" >/dev/null || { printf 'fm-workflow: unknown kind "%s"; kinds: %s\n' "$kind" "$(jq -r '.kinds | keys | join(", ")' "$sel")" >&2; exit 2; }
+  if [ "$have_none" -eq 1 ]; then
+    [ -n "$none" ] || die '--none needs the captain choice, stated'
+    printf 'none: captain-none - %s\nkind: %s\n' "$none" "$kind"
+    return 0
+  fi
+  if [ -n "$delivery" ]; then
+    jq -e --arg m "$delivery" '.deliveryModes | index($m) != null' "$sel" >/dev/null || { printf 'fm-workflow: unknown delivery mode "%s"; modes: %s\n' "$delivery" "$(jq -r '.deliveryModes | join(", ")' "$sel")" >&2; exit 2; }
+  elif jq -e --arg k "$kind" '[.deliveryOverrides[].applies[]] | index($k) != null' "$sel" >/dev/null; then
+    printf 'fm-workflow: the delivery path decides which workflow kind "%s" runs: pass --delivery <%s> (no-mistakes runs delegated-build, never a second reviewer on top of it)\n' "$kind" "$(jq -r '.deliveryModes | join("|")' "$sel")" >&2
+    exit 2
+  fi
+  jq -r --arg k "$kind" --arg m "$delivery" '
+    .kinds[$k] as $kd
+    | if $kd.exception then "none: \($kd.exception) - \(.exceptions[$kd.exception])\nkind: \($k) - \($kd.meaning)"
+      elif $kd.outOfScope then "none: out-of-scope - \($kd.outOfScope)\nkind: \($k) - \($kd.meaning)"
+      else
+        ((.deliveryOverrides[$m] // null) as $ov
+         | if $ov != null and ($ov.applies | index($k)) != null then
+             "workflow: \($ov.workflow)\nkind: \($k) - \($kd.meaning)\ndelivery: \($m) - \($ov.why)"
+           else "workflow: \($kd.workflow)\nkind: \($k) - \($kd.meaning)" end)
+      end' "$sel"
+}
+
+# --- 7. check: the army as a whole.
+cmd_check() {
+  [ "$#" -eq 0 ] || usage
+  local rc=0 f wf errs line manifest roles sel="$WORKFLOWS_ROOT/selection.json" n=0
+  fail() { printf 'FAIL - %s\n' "$1"; rc=1; }
+  # shellcheck source=../firstmate/fm-roles-lib.sh
+  export ROLES_ROOT="$CONFIG_ROOT/roles"
+  . "$CONFIG_ROOT/firstmate/fm-roles-lib.sh"
+  for f in "$WORKFLOWS_ROOT"/*.json; do
+    [ -f "$f" ] || continue
+    is_definition "$f" || continue
+    n=$((n + 1))
+    wf=$(basename "$f" .json)
+    if errs=$(validate_json "$wf" < "$f"); then printf 'ok   - workflow %s validates\n' "$wf"
+    else printf '%s\n' "$errs" | while IFS= read -r line; do printf 'FAIL - workflow %s: %s\n' "$wf" "$line"; done; rc=1; fi
+  done
+  [ "$n" -gt 0 ] || fail "no workflows in $WORKFLOWS_ROOT"
+  roles=$(role_names | jq -R . | jq -sc .)
+  if ! manifest=$(roles_manifest); then fail "roles/manifest.json is missing or not valid (looked in $CONFIG_ROOT/roles)"; return 1; fi
+  errs=$(jq -rn --argjson m "$manifest" --argjson roles "$roles" '
+    ( ($m | keys) as $mk
+      | [ ($roles - $mk)[] | "role \(.) has a ROLE.md but no entry in roles/manifest.json" ],
+        [ ($mk - $roles)[] | "roles/manifest.json lists \(.), which has no roles/\(.)/ROLE.md" ] ) | .[],
+    ( $m | to_entries[] | .key as $r | .value as $v
+      | ( ["mode", "mutates", "outputs", "spawns", "contract"][] as $k | select(($v | has($k)) | not) | "manifest role \($r): missing \($k)" ),
+        ( if ($v.mode // "" | IN("ship", "verify", "review", "plan", "decide", "diagnose", "scout", "research", "challenge", "classify", "orchestrate", "improve")) then empty else "manifest role \($r): mode \(($v.mode // null) | tojson) is not a known mode" end ),
+        ( if ($v.mutates // "" | IN("none", "files-named", "docs", "tests", "source")) then empty else "manifest role \($r): mutates \(($v.mutates // null) | tojson) is not none, files-named, docs, tests or source" end ),
+        ( ($v.outputs // [])[] | select(IN("report", "result", "verdict", "risk") | not) | "manifest role \($r): unknown output \(.)" ),
+        ( if ($v.outputs // [] | length) == 0 then "manifest role \($r): a role needs at least one output" else empty end ),
+        ( ($v.spawns // [])[] as $s
+          | if $s == $r then "manifest role \($r): calls itself"
+            elif ($m | has($s) | not) then "manifest role \($r): calls \($s), which is not a role"
+            elif (($m[$s].spawns // []) | length) > 0 then "manifest role \($r): calls \($s), which itself calls others: nothing recurses beyond one level"
+            else empty end) )' 2>&1) || { fail "manifest check could not run: $errs"; return 1; }
+  if [ -n "$errs" ]; then printf '%s\n' "$errs" | while IFS= read -r line; do printf 'FAIL - %s\n' "$line"; done; rc=1; else printf 'ok   - manifest and roles/ agree; the call graph has one level\n'; fi
+  local r sp tl want got
+  for r in $(role_names); do
+    jq -e --arg r "$r" 'has($r)' <<<"$manifest" >/dev/null || continue
+    if ! sp=$(role_frontmatter_list "$r" spawns); then fail "role $r: frontmatter spawns is not a plain block list"; continue; fi
+    if ! tl=$(role_frontmatter_list "$r" tools); then fail "role $r: frontmatter tools is not a plain block list"; continue; fi
+    want=$(jq -r --arg r "$r" '.[$r].spawns | map("fm-" + .) | sort | join(",")' <<<"$manifest")
+    got=$(printf '%s\n' "$sp" | grep . | sort | tr '\n' ',' | sed 's/,$//')
+    [ "$want" = "$got" ] || fail "role $r: frontmatter spawns [$got] differ from roles/manifest.json [$want]"
+    if [ -n "$want" ]; then printf '%s\n' "$tl" | grep -qx task || fail "role $r: calls sub-agents but its tools lack task"
+    else ! printf '%s\n' "$tl" | grep -qx task || fail "role $r: calls no sub-agent, so its tools must not include task"; fi
+    [ -n "$tl" ] || fail "role $r: tools must be listed explicitly (an omitted list would inherit every tool, task included)"
+    case $(jq -r --arg r "$r" '.[$r].mutates' <<<"$manifest") in
+      none) ! printf '%s\n' "$tl" | grep -qxE 'edit|write' || fail "role $r: mutates none but its tools include edit or write" ;;
+      files-named) ! printf '%s\n' "$tl" | grep -qx edit || fail "role $r: mutates files-named only, so its tools must not include edit" ;;
+      tests|docs|source) printf '%s\n' "$tl" | grep -qx edit || fail "role $r: mutates $(jq -r --arg r "$r" '.[$r].mutates' <<<"$manifest") but its tools lack edit" ;;
+    esac
+  done
+  [ "$rc" -ne 0 ] || printf 'ok   - every role lists its tools; frontmatter spawns match the manifest\n'
+  errs=$(for f in "$WORKFLOWS_ROOT"/*.json; do
+      [ -f "$f" ] || continue
+      is_definition "$f" || continue
+      jq -c '.roles | to_entries[] | {r: .value}' "$f"
+    done | jq -rs --argjson m "$manifest" '
+      ([.[].r] | unique) as $bound
+      | ($bound | map(. as $b | ($m[$b].spawns // [])[]) | unique) as $spawned
+      | ($bound + $spawned | unique) as $reach
+      | ( $m | to_entries[] | .key as $r | .value as $v
+          | if ($reach | index($r)) != null then (if ($v | has("adhoc")) then "manifest role \($r): marked adhoc but a workflow binds it or a bound role calls it" else empty end)
+            else (if ($v | has("adhoc")) and (($v.adhoc | type) == "string") and ($v.adhoc | length) > 0 then empty else "manifest role \($r): no workflow binds it and no bound role calls it, and it is not documented adhoc" end) end ) ' 2>&1) || { fail "reachability check could not run: $errs"; return 1; }
+  if [ -n "$errs" ]; then printf '%s\n' "$errs" | while IFS= read -r line; do printf 'FAIL - %s\n' "$line"; done; rc=1; else printf 'ok   - every role is reachable from a workflow or documented adhoc\n'; fi
+  if [ ! -f "$sel" ]; then fail "no selection table: $sel"; else
+    errs=$(jq -rn --slurpfile s "$sel" --argjson wfs "$(for f in "$WORKFLOWS_ROOT"/*.json; do [ -f "$f" ] && is_definition "$f" && basename "$f" .json; done | jq -R . | jq -sc .)" '
+      $s[0] as $s
+      | ( $s.kinds | to_entries[] | .key as $k | .value as $v
+          | if $v.exception then (if ($s.exceptions | has($v.exception)) then empty else "kind \($k): exception \($v.exception) is not in the closed exceptions list" end)
+            elif $v.workflow then (if ($wfs | index($v.workflow)) != null then empty else "kind \($k): workflow \($v.workflow) does not exist" end)
+            elif $v.outOfScope then (if $v.changesCode == false then empty else "kind \($k): an out-of-scope kind must change no code" end)
+            else "kind \($k) resolves to neither a workflow, an exception nor an out-of-scope statement" end ),
+        ( $s.kinds | to_entries[] | select(.value.changesCode == true and (.value.exception | not) and (.value.workflow | not)) | "kind \(.key) changes code, is not an exception, and has no workflow" ),
+        ( $s.deliveryOverrides | to_entries[] | .key as $m | .value as $o
+          | ( if ($s.deliveryModes | index($m)) != null then empty else "delivery override \($m) is not a delivery mode" end ),
+            ( if ($wfs | index($o.workflow)) != null then empty else "delivery override \($m): workflow \($o.workflow) does not exist" end ),
+            ( $o.applies[] | select(. as $k | ($s.kinds | has($k)) | not) | "delivery override \($m): applies to unknown kind \(.)" ) ),
+        ( $wfs[] | . as $w | select(([$s.kinds[] | .workflow] + [$s.deliveryOverrides[] | .workflow]) | index($w) | not) | "workflow \($w) is selected by no kind and no delivery override" ),
+        ( if ($s.exceptions | keys | sort) == ["captain-none", "question-or-diagnosis", "trivial-chore"] then empty else "the exceptions list is closed: captain-none, question-or-diagnosis, trivial-chore" end )' 2>&1) || { fail "selection check could not run: $errs"; return 1; }
+    if [ -n "$errs" ]; then printf '%s\n' "$errs" | while IFS= read -r line; do printf 'FAIL - %s\n' "$line"; done; rc=1; else printf 'ok   - every code-changing kind of task resolves to an existing workflow or a closed exception\n'; fi
+  fi
+  return "$rc"
+}
+
+# --- 8. next: the one command that moves a workflow.
 state_guard() { # <state-file>: never inside a git work tree that would track it
   local dir
   dir=$(dirname "$1")
@@ -445,6 +918,21 @@ write_state() { # <state-file> <json>
   tmp=$(mktemp "$1.XXXXXX") || die "cannot write $1"
   printf '%s\n' "$2" > "$tmp" || die "cannot write $1"
   mv "$tmp" "$1" || die "cannot write $1"
+}
+
+# append_retro <state-file> <records-jsonl>: bin/fm-retro reads these. The task id is the
+# name of the task data folder the state file lives in.
+append_retro() {
+  local st=$1 records=$2 dir task wf ver
+  [ -n "$records" ] || return 0
+  dir=$(cd "$(dirname "$st")" && pwd -P)
+  task=$(basename "$dir")
+  wf=$(jq -r .workflow "$st")
+  ver=$(jq -r .version "$st")
+  printf '%s\n' "$records" | jq -c --arg task "$task" --arg wf "$wf" --argjson ver "$ver" --argjson ts "$(date +%s)" \
+    '. + {ts: $ts, task: $task, workflow: $wf, version: $ver}
+     | (if has("detail") then .detail |= with_entries(select(.value != null)) else . end)
+     | with_entries(select(.value != null))' >> "$dir/retro.jsonl" || die "cannot append to $dir/retro.jsonl"
 }
 
 render() { # <state-file> <spec-only 0|1>
@@ -468,16 +956,16 @@ abs_path() { # <file>
 
 cmd_next() {
   [ "$#" -ge 2 ] || usage
-  local wf=$1 state=$2 task='' have_task=0 spec_only=0 report='' change='' outcome='' decide='' reason='' have_reason=0
+  local wf=$1 state=$2 task='' have_task=0 spec_only=0 report='' outcome='' decide='' reason='' have_reason=0 swaps='' defjson sw
   shift 2
   while [ "$#" -gt 0 ]; do
     case $1 in
       --spec) spec_only=1; shift ;;
       --task) [ "$#" -ge 2 ] || usage; task=$2; have_task=1; shift 2 ;;
       --report) [ "$#" -ge 2 ] || usage; report=$2; shift 2 ;;
-      --change) [ "$#" -ge 2 ] || usage; change=$2; shift 2 ;;
       --outcome) [ "$#" -ge 2 ] || usage; outcome=$2; shift 2 ;;
       --decide) [ "$#" -ge 2 ] || usage; decide=$2; shift 2 ;;
+      --role) [ "$#" -ge 2 ] || usage; case $2 in *=*) ;; *) usage ;; esac; swaps="$swaps$2"$'\n'; shift 2 ;;
       --reason) [ "$#" -ge 2 ] || usage; reason=$2; have_reason=1; shift 2 ;;
       *) usage ;;
     esac
@@ -486,54 +974,67 @@ cmd_next() {
   wfname=$(basename "$(def_file "$wf")" .json)
   state_guard "$state"
   if [ ! -e "$state" ]; then
-    [ -z "$outcome$report$change$decide" ] && [ "$have_reason" -eq 0 ] || die "there is no state file yet: start the workflow with --task before recording a result"
+    [ -z "$outcome$report$decide" ] && [ "$have_reason" -eq 0 ] || die "there is no state file yet: start the workflow with --task before recording a result"
     [ "$have_task" -eq 1 ] && [ -n "$task" ] || die 'the state file does not exist: --task <text> is required to start the workflow'
     file=$(def_file "$wf")
     [ -f "$file" ] || die "no such workflow: $wf"
-    st_json=$(validate_json "$wfname" < "$file") || { printf '%s\n' "$st_json" | sed "s#^#fm-workflow: $file: #" >&2; exit 1; }
-    write_state "$state" "$(jq -n --argjson d "$(jq -c . "$file")" --arg task "$task" "$JQ_INIT")"
+    defjson=$(jq -c . "$file") || die "not valid JSON: $file"
+    while IFS= read -r sw; do
+      [ -n "$sw" ] || continue
+      defjson=$(printf '%s' "$defjson" | jq -c --arg a "${sw%%=*}" --arg r "${sw#*=}" 'if (.roles | has($a)) then .roles[$a] = $r else error("no such role alias") end') \
+        || die "cannot apply --role $sw: the workflow has no role alias \"${sw%%=*}\""
+    done <<EOF
+$swaps
+EOF
+    st_json=$(printf '%s' "$defjson" | validate_json "$wfname") || { printf '%s\n' "$st_json" | sed "s#^#fm-workflow: $file: #" >&2; exit 1; }
+    write_state "$state" "$(jq -n --argjson d "$defjson" --arg task "$task" --argjson engine "$ENGINE" "$JQ_INIT")"
   else
     [ "$have_task" -eq 0 ] || die '--task only applies when the state file is created'
+    [ -z "$swaps" ] || die '--role only applies when the state file is created'
     jq -e '.workflow and .definition and .status and .history' "$state" >/dev/null 2>&1 || die "not a workflow state file: $state"
+    jq -e --argjson e "$ENGINE" '.engine == $e' "$state" >/dev/null 2>&1 || die "state file $state predates engine $ENGINE (no matching engine marker): finish it with the engine it started with, or start a new workflow state"
     [ "$(jq -r .workflow "$state")" = "$wfname" ] || die "state file $state belongs to workflow $(jq -r .workflow "$state"), not $wfname"
   fi
   st_json=$(jq -c .definition "$state" | validate_json "$wfname") || { printf '%s\n' "$st_json" | sed 's#^#fm-workflow: embedded definition: #' >&2; exit 1; }
 
-  if [ -n "$outcome$report$change$decide" ] || [ "$have_reason" -eq 1 ]; then
+  if [ -n "$outcome$report$decide" ] || [ "$have_reason" -eq 1 ]; then
     [ "$(jq -r .status "$state")" = running ] || die "the workflow is $(jq -r .status "$state"); nothing more can be recorded"
-    local kind output ev v new rep='' ch=''
+    local kind output ev new rep='' parsed=null emit
     kind=$(jq -r '.definition.steps[.current].kind' "$state")
     output=$(jq -r '.definition.steps[.current].output // ""' "$state")
     [ -z "$report" ] || rep=$(abs_path "$report")
-    [ -z "$change" ] || ch=$change
     case $kind in
       work)
         [ -z "$decide" ] && [ "$have_reason" -eq 0 ] || die 'a work step takes no --decide/--reason'
-        if [ "$output" = verdict ]; then
-          [ -z "$outcome" ] || die 'a verdict step takes its outcome from --report; --outcome is refused'
-          [ -n "$rep" ] || die 'a verdict step needs --report <the worker report ending in the verdict block>'
-          v=$(verdict_json "$rep")
-          outcome=$(printf '%s' "$v" | jq -r '.verdict | ascii_downcase')
-        else
-          [ -n "$outcome" ] || die 'a report step needs --outcome <name>'
-          v=null
-        fi ;;
+        case $output in
+          verdict|result|risk)
+            [ -z "$outcome" ] || die "a $output step takes its outcome from --report (the final $output block); --outcome is refused"
+            [ -n "$rep" ] || die "a $output step needs --report <the worker report ending in the $output block>"
+            parsed=$(parse_block "$output" "$rep")
+            outcome=$(printf '%s' "$parsed" | jq -r '.outcome // empty') ;;
+          *)
+            [ -n "$outcome" ] || die 'a report step needs --outcome <name>' ;;
+        esac ;;
       decision)
-        [ -z "$outcome" ] && [ -z "$rep" ] && [ -z "$ch" ] || die 'a decision step takes only --decide and --reason'
+        [ -z "$outcome" ] && [ -z "$rep" ] || die 'a decision step takes only --decide and --reason'
         [ -n "$decide" ] || die 'a decision step needs --decide <choice>'
         [ -n "$reason" ] || die 'a decision step needs --reason <why>; the reason is recorded'
-        outcome=$decide; v=null ;;
+        outcome=$decide ;;
       *)
         [ -z "$decide" ] && [ "$have_reason" -eq 0 ] || die 'a deliver step takes no --decide/--reason'
-        [ -n "$outcome" ] || die 'a deliver step needs --outcome <name>'
-        v=null ;;
+        [ -n "$outcome" ] || die 'a deliver step needs --outcome <name>' ;;
     esac
-    jq -e --arg o "$outcome" '.definition.steps[.current].on | has($o)' "$state" >/dev/null \
-      || die "step $(jq -r .current "$state") has no outcome \"$outcome\" (it routes: $(jq -r '.definition.steps[.current].on | keys_unsorted | join(", ")' "$state"))"
-    ev=$(jq -n --arg o "$outcome" --arg r "$rep" --arg c "$ch" --arg why "$reason" --argjson v "$v" \
-      '{outcome: $o, report: (if $r == "" then null else $r end), change: (if $c == "" then null else $c end), reason: (if $why == "" then null else $why end), verdict: $v}')
-    new=$(jq --argjson ev "$ev" --argjson at "$(date +%s)" "$JQ_APPLY" "$state") || die 'cannot apply the result'
+    if [ -n "$outcome" ]; then
+      jq -e --arg o "$outcome" '.definition.steps[.current].on | has($o)' "$state" >/dev/null \
+        || die "step $(jq -r .current "$state") has no outcome \"$outcome\" (it routes: $(jq -r '.definition.steps[.current].on | keys_unsorted | join(", ")' "$state"))"
+    fi
+    ev=$(jq -n --arg o "$outcome" --arg r "$rep" --arg why "$reason" --argjson p "$parsed" \
+      '{outcome: (if $o == "" then null else $o end), report: (if $r == "" then null else $r end), reason: (if $why == "" then null else $why end), parsed: $p}')
+    new=$(jq --argjson ev "$ev" --argjson at "$(date +%s)" "$JQ_LIB $JQ_APPLY" "$state") || die 'cannot apply the result'
+    emit=$(printf '%s' "$new" | jq -c '.emit[]?')
+    new=$(printf '%s' "$new" | jq 'del(.emit)')
     write_state "$state" "$new"
+    append_retro "$state" "$emit"
   fi
   render "$state" "$spec_only"
 }
@@ -556,8 +1057,12 @@ cmd=$1
 shift
 case $cmd in
   list) [ "$#" -eq 0 ] || usage; cmd_list ;;
+  select) cmd_select "$@" ;;
   validate) cmd_validate "$@" ;;
-  verdict) cmd_verdict "$@" ;;
+  check) cmd_check "$@" ;;
+  verdict) cmd_block verdict "$@" ;;
+  result) cmd_block result "$@" ;;
+  risk) cmd_block risk "$@" ;;
   next) cmd_next "$@" ;;
   trace) cmd_trace "$@" ;;
   *) usage ;;

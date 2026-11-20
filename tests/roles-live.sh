@@ -8,7 +8,8 @@
 #   tests/roles-live.sh                  offline self-test of this harness (canned
 #                                        sessions, no model); then SKIP the live run
 #   FM_ROLE_LIVE=1 tests/roles-live.sh [case...]
-#                                        run the live cases (default: all in tests/live/)
+#                                        run the live cases (default: all in tests/live/); the pre-flight self-test
+#                                        covers just the cases it runs
 #   tests/roles-live.sh selftest         only the offline self-test
 #
 # Environment (live):
@@ -50,13 +51,35 @@
 #                                   no other role's behaviour bled in; print the reason on stdout
 #   CASE_SKILL_ONLY_TOKENS="a b"    literal strings (no spaces) that exist in the role's skill text and in
 #                                   NO ROLE.md, prompt or fixture file: the convention only the skill holds
+#   CASE_BODY_PHRASE='<ERE>'        optional, role cases only: the role body carries this behaviour ON PURPOSE
+#                                   (distilled from the skill), so a control without the skill may pass. When set:
+#                                   (a) the self-test asserts the ERE matches roles/<role>/ROLE.md, so the claim is
+#                                   checked and the flag cannot hide a gap, and it skips the "skill-only token must
+#                                   not be in ROLE.md" check for the case (the tokens must still be in the skill text);
+#                                   (b) live, a control that PASSES is reported 'passes (role body carries it)' and
+#                                   does not fail the case; the read check and the outcome check stay mandatory and a
+#                                   control that fails is still 'fails (good)'. Quote the ROLE.md line in the case comment.
+#   CASE_CONTROL_INFORMATIONAL='<reason>'  optional, role cases only, exclusive with CASE_BODY_PHRASE: the no-skill control passes
+#                                   on the model's OWN BASELINE (the body does not carry the rule either), so this case proves only
+#                                   that the skill was READ and the OUTCOME is right, not that the skill is needed. Read and outcome
+#                                   stay mandatory; a control that passes is NOT a failure but is reported 'passes (model baseline;
+#                                   informational)' with the reason in the results table and the live line; the self-test requires the
+#                                   reason to be non-empty; a control that fails is still 'fails (good)'.
 #   case_canned <role> good|bad     offline stand-in for a worker that followed / ignored the skill:
-#                                   write $RUN/final.txt and $RUN/calls.tsv (tool<TAB>json args; a
-#                                   good worker has a read call on every autoloaded SKILL.md) and edit
-#                                   the repo as such a worker would leave it. The self-test grades both
-#                                   through case_grade: good must pass, bad must fail.
+#                                   write $RUN/final.txt and $RUN/calls.tsv (tool<TAB>json args) and edit
+#                                   the repo as such a worker would leave it. After a good canned worker the
+#                                   harness itself appends a read call for every skill the role autoloads that
+#                                   is missing from calls.tsv (a worker that followed the handoff reads them all).
+#                                   The self-test grades both through case_grade: good must pass, bad must fail.
+#   case_variants                   optional: prints TAB-separated lines <role> <good|bad> <mode> <ERE>; the self-test runs
+#                                   case_canned <role> <mode> for each and grades it with case_grade <role>. A good variant must
+#                                   pass; a bad one must fail with a reason matching the ERE. Every grader relaxation needs a bad
+#                                   variant here that the relaxed grader still rejects (and a good one for the lawful form it admits).
 #   Grader helpers: final_has <ERE>, final_lacks <ERE>, call_has <ERE> (any tool call argument),
-#                   changed_files (porcelain paths), skill_read <name>.
+#                   changed_files / changed_tracked / added_files (paths changed, resp. tracked-changed, resp. added,
+#                   relative to the fixture commit: committed + uncommitted + untracked-not-ignored, so a role that
+#                   commits is graded like one that does not), unchanged_since_base <path...>, skill_read <name>,
+#                   sed_inplace <script> <file...> (portable in-place sed for canned workers).
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -85,7 +108,27 @@ fail() { printf 'FAIL - %s\n' "$1" >&2; failed=1; }
 final_has() { grep -Eiq -- "$1" "$RUN/final.txt"; }
 final_lacks() { ! final_has "$1"; }
 call_has() { cut -f2- "$RUN/calls.tsv" | grep -Eq -- "$1"; }
-changed_files() { git -C "$REPO" status --porcelain | sed 's/^...//'; }
+# The fixture commit is recorded by the harness in $RUN/base.sha (case_setup may make its own commits; the base is
+# the state the worker was handed, not the first commit of the repo).
+base_rev() { cat "$RUN/base.sha" 2>/dev/null || git -C "$REPO" rev-list --max-parents=0 HEAD | tail -n 1; }
+changed_tracked() { git -C "$REPO" diff --no-renames --name-only "$(base_rev)" --; }
+changed_files() { { changed_tracked; git -C "$REPO" ls-files --others --exclude-standard; } | sort -u; }
+added_files() { { git -C "$REPO" diff --no-renames --name-only --diff-filter=A "$(base_rev)" --; git -C "$REPO" ls-files --others --exclude-standard; } | sort -u; }
+unchanged_since_base() { git -C "$REPO" diff --no-renames --quiet "$(base_rev)" -- "$@"; }
+sed_inplace() { # <sed-script> <file...>: GNU and BSD sed disagree on -i, so write through a temp file
+  local script=$1 f tmp; shift
+  for f in "$@"; do
+    tmp=$(mktemp "${TMPDIR:-/tmp}/fm-sedi.XXXXXX") && sed -e "$script" "$f" > "$tmp" && cat "$tmp" > "$f"
+    rm -f "$tmp"
+  done
+}
+# load_case <case-file>: source a case with nothing left over from a previously loaded one.
+load_case() {
+  unset CASE_KIND CASE_ROLE CASE_ROLES CASE_PROMPT CASE_SKILL_ONLY_TOKENS CASE_BODY_PHRASE CASE_CONTROL_INFORMATIONAL CASE_MECHANISM
+  unset -f case_setup case_grade case_canned case_mechanism_setup case_variants 2>/dev/null
+  # shellcheck source=/dev/null
+  . "$1"
+}
 skill_read() { # <skill-name>: a read-like tool call on that skill's SKILL.md
   awk -F'\t' -v p="/$1/SKILL.md" '($1 == "read" || $1 == "bash" || $1 == "grep" || $1 == "eval") && index($2, p) { found = 1 } END { exit !found }' "$RUN/calls.tsv"
 }
@@ -133,60 +176,76 @@ SPENT=0
 spent_add() { SPENT=$(python3 -c 'import sys; print("%.6f" % (float(sys.argv[1]) + float(sys.argv[2])))' "$SPENT" "$1"); }
 over_budget() { [ -n "$BUDGET" ] && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)' "$SPENT" "$BUDGET"; }
 
-# run_one <case-file> <label> <role|""> <with|without> <grade-role> -> sets RUN, REPO; prints one result line
+# run_one <case-file> <label> <role|""> <with|without> <grade-role> -> sets RUN, REPO, CFG; prints one result line
+# Everything the worker can reach lives in a scratch dir OUTSIDE the checkout (fixture repo, skill copies, and a
+# SANITIZED copy of the config root: roles, bin, firstmate, workflows, skills lock, top-level docs - never tests/), so
+# the worker cannot read the judge, the fixtures or another run's grade. After grading, the repo is copied back into
+# $RUN/repo for inspection and the scratch dir is removed.
 run_one() {
-  local case_file=$1 label=$2 role=$3 mode=$4 grade_role=$5 name fx
+  local case_file=$1 label=$2 role=$3 mode=$4 grade_role=$5 name fx scr wcfg
   name=$(basename "$case_file" .sh)
   RUN="$ART/$name/$label"
-  REPO="$RUN/repo"
-  fx="$RUN/home"
-  mkdir -p "$REPO" "$fx/.agents/skills" "$RUN/session"
+  scr=$(mktemp -d "${TMPDIR:-/tmp}/fm-roles-live.XXXXXX") || { fail "$name/$label: no scratch dir"; return 1; }
+  REPO="$scr/repo"
+  fx="$scr/home"
+  wcfg="$scr/config"
+  rm -rf "$RUN"
+  mkdir -p "$REPO" "$fx/.agents/skills" "$RUN/session" "$wcfg"
   # Fixture-local skill copies: the worker can only read these.
   local s
   for s in "$SKILL_SRC"/*/; do s=$(basename "$s"); cp -rL "$SKILL_SRC/$s" "$fx/.agents/skills/$s" 2>/dev/null; done
   # addyosmani skills read ../../references/*.md, which resolves to <home>/.agents/references.
   [ ! -d "$(dirname "$SKILL_SRC")/references" ] || cp -rL "$(dirname "$SKILL_SRC")/references" "$fx/.agents/references" 2>/dev/null
   # Mechanism cases bring their own fixture-only config root (roles) and skills; the real roles/ is not used.
-  CFG="$CONFIG_ROOT"
-  if ( . "$case_file"; [ "${CASE_MECHANISM:-}" = 1 ] ); then
-    CFG="$RUN/config"; mkdir -p "$CFG/roles"; ln -sfn "$CONFIG_ROOT/firstmate" "$CFG/firstmate"
-    ( . "$case_file"; case_mechanism_setup "$CFG" "$fx/.agents/skills" ) || { fail "$name/$label: case_mechanism_setup failed"; return 1; }
+  local mech=0
+  ( load_case "$case_file"; [ "${CASE_MECHANISM:-}" = 1 ] ) && mech=1
+  if [ $mech = 1 ]; then
+    mkdir -p "$wcfg/roles"; ln -sfn "$CONFIG_ROOT/firstmate" "$wcfg/firstmate"
+    ( load_case "$case_file"; case_mechanism_setup "$wcfg" "$fx/.agents/skills" ) || { rm -rf "$scr"; fail "$name/$label: case_mechanism_setup failed"; return 1; }
+  else
+    ( cd "$CONFIG_ROOT" && tar -cf - roles bin firstmate workflows skills REVIEW.md README.md AGENTS.md 2>/dev/null ) | tar -xf - -C "$wcfg"
   fi
+  CFG="$wcfg"
   # No credential handling: the worker uses the existing omp login in place (HOME is the real one).
   (
     cd "$REPO" || exit 1
     git init -q . && git config user.email live@example.invalid && git config user.name live
     printf '__pycache__/\n*.pyc\n' >> .git/info/exclude
-    # shellcheck source=/dev/null
-    . "$case_file"
+    load_case "$case_file"
     case_setup
     git add -A && git commit -q --allow-empty -m fixture
-  ) || { fail "$name/$label: fixture setup failed"; return 1; }
-  # shellcheck source=/dev/null
-  CASE_PROMPT='' && . "$case_file"
+    git rev-parse HEAD > "$RUN/base.sha"
+  ) || { rm -rf "$scr"; fail "$name/$label: fixture setup failed"; return 1; }
+  load_case "$case_file"
   build_prompt "$role" "$mode" "$CASE_PROMPT" "$fx/.agents/skills" > "$RUN/prompt.md"
-  if over_budget; then fail "$name/$label: budget $BUDGET USD reached (spent $SPENT); run not started"; return 1; fi
+  if over_budget; then rm -rf "$scr"; fail "$name/$label: budget $BUDGET USD reached (spent $SPENT); run not started"; return 1; fi
   ( cd "$REPO" && env -i HOME="$HOME" PATH="$PATH" TERM=dumb LANG=C.UTF-8 OMP_SKIP_SETUP=1 PYTHONDONTWRITEBYTECODE=1 \
       timeout 900 "$OMP_BIN" -p --model "$MODEL" --thinking "$THINKING" --no-extensions --no-skills --no-rules --no-context-files \
       --no-lsp --no-pty --no-title --tools read,grep,glob,bash,edit,write --system-prompt "$SYSTEM_PROMPT" \
-      --session-dir "$RUN/session" "${COST_ARGS[@]}" --auto-approve --cwd "$REPO" "@$RUN/prompt.md" \
+      --session-dir "$RUN/session" ${COST_ARGS[@]+"${COST_ARGS[@]}"} --auto-approve --cwd "$REPO" "@$RUN/prompt.md" \
       > "$RUN/stdout.txt" 2> "$RUN/stderr.txt" ) || true
   parse_session "$RUN/session" "$RUN"
   spent_add "$(cat "$RUN/cost.txt")"
-  # shellcheck source=/dev/null
-  . "$case_file"
+  load_case "$case_file"
   ( cd "$REPO" && case_grade "$grade_role" "$REPO" "$RUN" ) > "$RUN/grade.txt" 2>&1
   GRADE_RC=$?
+  # keep the evidence, drop the scratch; later steps (run_case's skill list) use the real config root, or the fixture
+  # config of a mechanism case, both of which now live under $RUN or the checkout
+  cp -R "$REPO" "$RUN/repo" 2>/dev/null
+  if [ $mech = 1 ]; then rm -rf "$RUN/config"; cp -R "$wcfg" "$RUN/config" 2>/dev/null; CFG="$RUN/config"; else CFG="$CONFIG_ROOT"; fi
+  REPO="$RUN/repo"
+  rm -rf "$scr"
   return 0
 }
 
 # run_case <case-file>: runs the with-skill run(s) and the control, prints the verdict row.
 run_case() {
-  local case_file=$1 name roles role read_ok=1 outcome_ok=1 control_ok=1 why='' s
+  local case_file=$1 name roles role read_ok=1 outcome_ok=1 control_ok=1 why='' s body control_col='fails (good)' info
   name=$(basename "$case_file" .sh)
-  # shellcheck source=/dev/null
-  ( . "$case_file"; printf '%s|%s\n' "${CASE_KIND:-role}" "${CASE_ROLES:-${CASE_ROLE:-}}" ) > "$ART/.kind" 
-  IFS='|' read -r kind roles < "$ART/.kind"
+  ( load_case "$case_file"; printf '%s|%s|%s\n' "${CASE_KIND:-role}" "${CASE_ROLES:-${CASE_ROLE:-}}" "${CASE_BODY_PHRASE:+body}" ) > "$ART/.kind"
+  IFS='|' read -r kind roles body < "$ART/.kind"
+  ( load_case "$case_file"; printf '%s' "${CASE_CONTROL_INFORMATIONAL:-}" ) > "$ART/.info"
+  info=$(cat "$ART/.info")
   for role in $roles; do
     run_one "$case_file" "$role" "$role" with "$role" || { fail "$name: run for $role did not complete"; return; }
     for s in $(FM_CONFIG_ROOT="$CFG" "$HANDOFF" --skills "$role"); do
@@ -200,11 +259,26 @@ run_case() {
   else
     run_one "$case_file" control-noskill "$first" without "$first" || { fail "$name: control did not complete"; return; }
   fi
-  if [ "$GRADE_RC" -eq 0 ]; then control_ok=0; why="$why [control showed the skill-only behaviour: the problem does not discriminate]"; fi
+  if [ "$GRADE_RC" -eq 0 ]; then
+    if [ -n "$body" ]; then
+      control_col='passes (role body carries it)'
+    elif [ -n "$info" ]; then
+      control_col="passes (model baseline; informational: $info)"
+    else
+      control_ok=0; control_col='PASSES (bad)'
+      why="$why [control showed the skill-only behaviour: the problem does not discriminate]"
+    fi
+  fi
   printf '| %s | %s | %s | %s | %s |\n' "$name" "$( [ $read_ok = 1 ] && echo yes || echo NO)" \
-    "$( [ $outcome_ok = 1 ] && echo pass || echo FAIL)" "$( [ $control_ok = 1 ] && echo 'fails (good)' || echo 'PASSES (bad)')" "$SPENT" >> "$ART/results.md"
+    "$( [ $outcome_ok = 1 ] && echo pass || echo FAIL)" "$control_col" "$SPENT" >> "$ART/results.md"
   if [ $read_ok = 1 ] && [ $outcome_ok = 1 ] && [ $control_ok = 1 ]; then
-    pass "live $name: skill read, outcome carries the skill-only behaviour, control without the skill does not"
+    if [ -n "$body" ]; then
+      pass "live $name: skill read, outcome carries the behaviour; control without the skill: $control_col"
+    elif [ "$control_col" != 'fails (good)' ] && [ -n "$info" ]; then
+      pass "live $name: skill read, outcome right; control without the skill: passes (model baseline; informational) - $info"
+    else
+      pass "live $name: skill read, outcome carries the skill-only behaviour, control without the skill does not"
+    fi
   else
     fail "live $name:$why"
   fi
@@ -268,36 +342,55 @@ CASE
 # selftest_cases: every tests/live/*.sh case is checked OFFLINE, for free:
 #   - its CASE_SKILL_ONLY_TOKENS exist in the role's skill text and nowhere the worker could
 #     get them otherwise (ROLE.md, the prompt, the fixture files) - the problem can only be
-#     solved by following the skill;
+#     solved by following the skill; a case with CASE_BODY_PHRASE (the role body carries the
+#     behaviour on purpose) instead must have that ERE match every graded ROLE.md, and is exempt
+#     from the ROLE.md half of this check only;
 #   - case_canned <role> good|bad (a worker that followed / ignored the skill) is graded by the
-#     real case_grade: good must pass, bad must fail, and good must have read every skill.
+#     real case_grade: good must pass, bad must fail. The harness completes a good worker's reads
+#     (a read call on every autoloaded SKILL.md missing from its calls.tsv) before grading.
 selftest_cases() {
-  local c name roles role s tok t found src kind cfg skra skrb mech
+  local c name roles role s tok t found src kind cfg skra skrb mech body leak gr rc infoset infoval
   t=$(mktemp -d "${TMPDIR:-/tmp}/fm-roles-live-cases.XXXXXX") || return 1
   for c in "$CASES_DIR"/*.sh; do
     [ -f "$c" ] || continue
     name=$(basename "$c" .sh)
     if [ "${#SELFTEST_ONLY[@]}" -gt 0 ]; then case " ${SELFTEST_ONLY[*]} " in *" $name "*) ;; *) continue ;; esac; fi
-    kind=$( ( . "$c"; printf '%s' "${CASE_KIND:-role}" ) )
-    roles=$( ( . "$c"; printf '%s' "${CASE_ROLES:-${CASE_ROLE:-}}" ) )
+    kind=$( ( load_case "$c"; printf '%s' "${CASE_KIND:-role}" ) )
+    roles=$( ( load_case "$c"; printf '%s' "${CASE_ROLES:-${CASE_ROLE:-}}" ) )
     [ -n "$roles" ] || { fail "case $name: defines no CASE_ROLE/CASE_ROLES"; continue; }
-    mech=$( ( . "$c"; printf '%s' "${CASE_MECHANISM:-}" ) )
-    cfg=$CONFIG_ROOT skra="$CONFIG_ROOT/skills" skrb="$HOME/.agents/skills"
+    mech=$( ( load_case "$c"; printf '%s' "${CASE_MECHANISM:-}" ) )
+    body=$( ( load_case "$c"; printf '%s' "${CASE_BODY_PHRASE:-}" ) )
+    cfg=$CONFIG_ROOT skra="$CONFIG_ROOT/skills" skrb=$SKILL_SRC
     if [ "$mech" = 1 ]; then
       cfg="$t/$name/config" skra="$t/$name/skills" skrb="$t/$name/skills"
       mkdir -p "$cfg/roles" "$skra"; ln -sfn "$CONFIG_ROOT/firstmate" "$cfg/firstmate"
-      ( . "$c"; case_mechanism_setup "$cfg" "$skra" ) || { fail "case $name: case_mechanism_setup failed"; continue; }
+      ( load_case "$c"; case_mechanism_setup "$cfg" "$skra" ) || { fail "case $name: case_mechanism_setup failed"; continue; }
     fi
     for role in $roles; do
       [ -f "$cfg/roles/$role/ROLE.md" ] && pass "case $name: role $role exists" || { fail "case $name: no role $role"; continue; }
     done
     [ "$kind" = mixed ] && { [ "$(printf '%s\n' $roles | grep -c .)" -eq 2 ] && pass "case $name: a mixed case names exactly two roles" || fail "case $name: mixed needs two roles"; }
+    if [ -n "$body" ]; then
+      [ "$kind" = mixed ] && fail "case $name: CASE_BODY_PHRASE is for role cases (a mixed control has no role body at all)"
+      for role in $roles; do
+        grep -Eq -- "$body" "$cfg/roles/$role/ROLE.md" \
+          && pass "case $name: CASE_BODY_PHRASE matches roles/$role/ROLE.md (the body carries the behaviour)" \
+          || fail "case $name: CASE_BODY_PHRASE '$body' does NOT match roles/$role/ROLE.md: the body does not carry the behaviour"
+      done
+    fi
+    infoset=$( ( load_case "$c"; printf '%s' "${CASE_CONTROL_INFORMATIONAL+set}" ) )
+    if [ -n "$infoset" ]; then
+      infoval=$( ( load_case "$c"; printf '%s' "${CASE_CONTROL_INFORMATIONAL:-}" ) )
+      [ -n "$infoval" ] && pass "case $name: CASE_CONTROL_INFORMATIONAL carries a reason" || fail "case $name: CASE_CONTROL_INFORMATIONAL is set but the reason is empty"
+      [ "$kind" = mixed ] && fail "case $name: CASE_CONTROL_INFORMATIONAL is for role cases (a mixed control has no role body at all)"
+      [ -z "$body" ] || fail "case $name: CASE_CONTROL_INFORMATIONAL and CASE_BODY_PHRASE are exclusive: the body either carries the rule or the baseline does"
+    fi
     # fixture, for the token-exclusivity check
     REPO="$t/$name/fixture"; RUN="$t/$name/run"; mkdir -p "$REPO" "$RUN"
-    ( cd "$REPO" && git init -q . && . "$c" && case_setup ) || { fail "case $name: case_setup failed"; continue; }
+    ( cd "$REPO" && git init -q . && load_case "$c" && case_setup ) || { fail "case $name: case_setup failed"; continue; }
     local toks prompt
-    toks=$( ( . "$c"; printf '%s' "${CASE_SKILL_ONLY_TOKENS:-}" ) )
-    prompt=$( ( . "$c"; printf '%s' "${CASE_PROMPT:-}" ) )
+    toks=$( ( load_case "$c"; printf '%s' "${CASE_SKILL_ONLY_TOKENS:-}" ) )
+    prompt=$( ( load_case "$c"; printf '%s' "${CASE_PROMPT:-}" ) )
     [ -n "$toks" ] && pass "case $name: declares skill-only tokens" || fail "case $name: no CASE_SKILL_ONLY_TOKENS"
     for tok in $toks; do
       found=0; src=''
@@ -314,37 +407,70 @@ selftest_cases() {
       if [ -z "$src" ]; then printf 'SKIP - case %s: no installed skill text to check token %s against\n' "$name" "$tok"; continue; fi
       [ $found = 1 ] && pass "case $name: token '$tok' is in the role's skill text" || fail "case $name: token '$tok' is NOT in the role's skill text"
       leak=0
-      for role in $roles; do grep -qF -- "$tok" "$cfg/roles/$role/ROLE.md" && leak=1; done
+      if [ -z "$body" ]; then for role in $roles; do grep -qF -- "$tok" "$cfg/roles/$role/ROLE.md" && leak=1; done; fi
       case $prompt in *"$tok"*) leak=1 ;; esac
       grep -rqF --exclude-dir=.git -- "$tok" "$REPO" && leak=1
-      [ $leak = 0 ] && pass "case $name: token '$tok' appears in no ROLE.md, prompt or fixture file" || fail "case $name: token '$tok' leaks outside the skill text"
+      if [ -n "$body" ]; then
+        [ $leak = 0 ] && pass "case $name: token '$tok' appears in no prompt or fixture file (ROLE.md exempt: CASE_BODY_PHRASE)" || fail "case $name: token '$tok' leaks into the prompt or fixture"
+      else
+        [ $leak = 0 ] && pass "case $name: token '$tok' appears in no ROLE.md, prompt or fixture file" || fail "case $name: token '$tok' leaks outside the skill text"
+      fi
     done
-    # canned good/bad workers through the real grader
+    # canned good/bad workers through the real grader, then the case's named variants
     for role in $roles; do
-      for mode in good bad; do
-        rm -rf "$t/$name/$role-$mode"; mkdir -p "$t/$name/$role-$mode"
-        REPO="$t/$name/$role-$mode/repo"; RUN="$t/$name/$role-$mode"; mkdir -p "$REPO"
-        ( cd "$REPO" && git init -q . && git config user.email a@b && git config user.name a && . "$c" && case_setup && git add -A && git commit -q --allow-empty -m f ) || { fail "case $name: setup for $role-$mode failed"; continue; }
-        : > "$RUN/calls.tsv"; : > "$RUN/final.txt"
-        ( cd "$REPO" && . "$c" && RUN="$RUN" REPO="$REPO" case_canned "$role" "$mode" ) || { fail "case $name: case_canned $role $mode failed"; continue; }
-        gr=$( cd "$REPO" && . "$c" && RUN="$RUN" REPO="$REPO" case_grade "$role" "$REPO" "$RUN" 2>&1 ); rc=$?
-        if [ "$mode" = good ]; then
-          [ $rc -eq 0 ] && pass "case $name: grader accepts a worker that followed the $role skill" || fail "case $name: grader rejected the canned good $role worker: $gr"
-          for s in $(FM_CONFIG_ROOT="$cfg" "$HANDOFF" --skills "$role"); do
-            ( RUN="$RUN"; skill_read "$s" ) && pass "case $name: canned good $role worker read $s" || fail "case $name: canned good worker never read $s"
-          done
-        else
-          [ $rc -ne 0 ] && pass "case $name: grader rejects a worker that ignored the $role skill" || fail "case $name: grader accepted the canned bad $role worker"
-        fi
-      done
+      selftest_canned "$c" "$t" "$name" "$cfg" "$role" good good
+      selftest_canned "$c" "$t" "$name" "$cfg" "$role" bad bad
     done
+    # case_variants prints one line per extra canned worker: <role> TAB <good|bad> TAB <mode passed to case_canned> TAB <ERE the rejection must match>.
+    # Every grader relaxation needs a bad variant here that the relaxed grader still rejects, for the reason named.
+    if ( load_case "$c"; declare -F case_variants >/dev/null ); then
+      while IFS="$(printf '\t')" read -r role kind mode why; do
+        [ -n "$mode" ] || continue
+        case " $roles " in *" $role "*) ;; *) fail "case $name: case_variants names role '$role', which the case does not run"; continue ;; esac
+        case $kind in good|bad) ;; *) fail "case $name: case_variants line [$role $kind $mode] must say good or bad"; continue ;; esac
+        selftest_canned "$c" "$t" "$name" "$cfg" "$role" "$mode" "$kind" "$why"
+      done <<EOF
+$( load_case "$c"; case_variants )
+EOF
+    fi
   done
   rm -rf "$t"
 }
 
+# selftest_canned <case-file> <tmpdir> <name> <config-root> <role> <mode> <good|bad> [reason ERE]: one canned worker through the real grader.
+# A good worker must pass (and, in mode good, have read every skill); a bad one must fail, for the reason when one is given.
+selftest_canned() {
+  local c=$1 t=$2 name=$3 cfg=$4 role=$5 mode=$6 expect=$7 why=${8:-} s gr rc
+  rm -rf "$t/$name/$role-$mode"; mkdir -p "$t/$name/$role-$mode"
+  REPO="$t/$name/$role-$mode/repo"; RUN="$t/$name/$role-$mode"; mkdir -p "$REPO"
+  ( cd "$REPO" && git init -q . && git config user.email a@b && git config user.name a && load_case "$c" && case_setup && git add -A && git commit -q --allow-empty -m f && git rev-parse HEAD > "$RUN/base.sha" ) || { fail "case $name: setup for $role-$mode failed"; return; }
+  : > "$RUN/calls.tsv"; : > "$RUN/final.txt"
+  ( cd "$REPO" && load_case "$c" && RUN="$RUN" REPO="$REPO" case_canned "$role" "$mode" ) || { fail "case $name: case_canned $role $mode failed"; return; }
+  if [ "$expect" = good ]; then
+    for s in $(FM_CONFIG_ROOT="$cfg" "$HANDOFF" --skills "$role"); do
+      ( RUN="$RUN"; skill_read "$s" ) || printf 'read\t{"path":"/fixture-home/.agents/skills/%s/SKILL.md"}\n' "$s" >> "$RUN/calls.tsv"
+    done
+  fi
+  gr=$( cd "$REPO" && load_case "$c" && RUN="$RUN" REPO="$REPO" case_grade "$role" "$REPO" "$RUN" 2>&1 ); rc=$?
+  if [ "$expect" = good ]; then
+    [ $rc -eq 0 ] && pass "case $name: grader accepts a worker that followed the $role skill ($mode)" || fail "case $name: grader rejected the canned $mode $role worker: $gr"
+    for s in $(FM_CONFIG_ROOT="$cfg" "$HANDOFF" --skills "$role"); do
+      ( RUN="$RUN"; skill_read "$s" ) && pass "case $name: canned $mode $role worker read $s" || fail "case $name: canned $mode worker never read $s"
+    done
+  elif [ $rc -eq 0 ]; then
+    fail "case $name: grader accepted the canned $mode $role worker"
+  elif [ -n "$why" ] && ! printf '%s' "$gr" | grep -E -i -q -- "$why"; then
+    fail "case $name: the bad $role worker $mode was rejected, but not for its reason /$why/: $(printf '%s' "$gr" | cut -c1-200)"
+  else
+    pass "case $name: grader rejects a worker that ignored the $role skill ($mode): $(printf '%s' "$gr" | tr '\n' ' ' | cut -c1-110)"
+  fi
+}
+
 command_selftest=0
 SELFTEST_ONLY=()
-if [ "${1:-}" = selftest ]; then command_selftest=1; SELFTEST_ONLY=("${@:2}"); fi
+if [ "${1:-}" = selftest ]; then command_selftest=1; SELFTEST_ONLY=("${@:2}")
+else for a in "$@"; do SELFTEST_ONLY+=("$(basename "${a%.sh}")"); done   # a live run's pre-flight selftest covers just the cases it will run
+fi
 ( selftest; exit "$failed" ) || failed=1
 ( selftest_cases; exit "$failed" ) || failed=1
 if [ "$command_selftest" -eq 1 ]; then
@@ -360,7 +486,7 @@ if ! command -v "$OMP_BIN" >/dev/null 2>&1 || ! "$OMP_BIN" models --json --no-ex
   printf 'SKIP - live role suite: needs omp with %s available from the existing login; never reported as PASS\n' "$MODEL"
   exit 0
 fi
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)-$$
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM
 ART="$ART_ROOT/$STAMP"
 mkdir -p "$ART"
 printf '# Live role results (%s, model %s)\n\n| case | skill read | outcome | control | cumulative USD |\n|---|---|---|---|---|\n' "$STAMP" "$MODEL" > "$ART/results.md"

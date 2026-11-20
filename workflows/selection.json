@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "description": "The closed table of which workflow a kind of task MUST run (primary policy section 8). bin/fm-workflow select <kind> --delivery <mode> reads it (--delivery is required for a kind whose workflow depends on it); bin/fm-workflow check validates it against the workflows. A kind that changes code and is not trivial resolves to a workflow under every delivery mode; the only ways a code-changing task runs no workflow are the exceptions below. A kind that changes no code and is documentation-only is outside the rule.",
+  "deliveryModes": [
+    "direct-pr",
+    "local-only",
+    "no-mistakes"
+  ],
+  "exceptions": {
+    "trivial-chore": "A trivial or mechanical change fully specified in the brief (a rename, a one-file edit, a format pass, a listed fact): the chore role, or the narrowest fitting role, one worker.",
+    "question-or-diagnosis": "A pure question, research or diagnosis that changes no code and records no decision: the researcher, scout, debugger or architecture role alone, reported to the captain.",
+    "captain-none": "The captain explicitly chose no workflow for this task: record the stated choice."
+  },
+  "kinds": {
+    "feature": {
+      "workflow": "build-test-review",
+      "changesCode": true,
+      "meaning": "new or changed behavior whose requirement is clear enough to implement without a written plan"
+    },
+    "feature-unclear": {
+      "workflow": "plan-build-test-review",
+      "changesCode": true,
+      "meaning": "new or changed behavior whose requirement can be read two ways that behave differently, or is too large to start without an ordered task list"
+    },
+    "bugfix": {
+      "workflow": "bug-fix",
+      "changesCode": true,
+      "meaning": "a reported defect with a symptom to reproduce, to be fixed"
+    },
+    "refactor": {
+      "workflow": "refactor",
+      "changesCode": true,
+      "meaning": "restructuring that must not change behavior"
+    },
+    "ui": {
+      "workflow": "ui-build-verify-review",
+      "changesCode": true,
+      "meaning": "a change whose result is browser-visible or user-visible"
+    },
+    "decision": {
+      "workflow": "research-decide",
+      "changesCode": false,
+      "meaning": "research that must end in a recorded decision (adopt, amend, reject); changes no code"
+    },
+    "trivial": {
+      "exception": "trivial-chore",
+      "changesCode": true,
+      "meaning": "trivial or mechanical work fully specified in the brief"
+    },
+    "question": {
+      "exception": "question-or-diagnosis",
+      "changesCode": false,
+      "meaning": "a pure question, research or diagnosis that changes no code and records no decision"
+    },
+    "docs": {
+      "outOfScope": "the forcing rule covers code-changing tasks; a documentation-only change alters no behavior, so it runs no workflow (the technical-writer role, or the narrowest fitting role, one worker). A change to role, skill, workflow or policy Markdown that defines agent behavior is configuration, not documentation: use feature or refactor.",
+      "changesCode": false,
+      "meaning": "documentation-only work: prose, examples and ADRs that alter no behavior and no agent-defining file"
+    }
+  },
+  "deliveryOverrides": {
+    "no-mistakes": {
+      "workflow": "delegated-build",
+      "applies": [
+        "feature",
+        "feature-unclear",
+        "bugfix",
+        "refactor",
+        "ui"
+      ],
+      "why": "no-mistakes owns review, fixes, tests, documentation, push, PR and CI: the independent QA, review and security steps of the other workflows would be a second manual reviewer on top of it (primary policy section 7), so the composed workflow implements and hands delivery to no-mistakes"
+    }
+  }
+}

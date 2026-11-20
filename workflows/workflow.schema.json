@@ -2,15 +2,22 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/inkayat/firstmate-config/workflows/workflow.schema.json",
   "title": "FirstMate workflow definition",
-  "description": "A workflow is a small state machine of named steps. `bin/fm-workflow validate` enforces this schema (its structural half is evaluated by a jq subset validator, so no schema library is needed) plus the rules a schema cannot express: roles exist, every transition target exists, every outcome of a step is routed, every step is reachable, and every cycle passes through a loop that has a limit. `x-outcomes` is a non-standard keyword read by the engine: the outcomes each output contract can produce.",
+  "description": "A workflow is a small state machine of named steps. `bin/fm-workflow validate` enforces this schema (its structural half is evaluated by a jq subset validator, so no schema library is needed) plus the rules a schema cannot express: roles exist and can produce the step's output (roles/manifest.json), every transition target exists, every outcome of a step is routed, every step is reachable, and every cycle passes through a loop that has a limit. `x-outcomes`, `x-attrs` and `x-gates` are non-standard keywords read by the engine: the outcomes each output contract can produce, the run attributes a transition may branch on, and the gates a definition can set to observe or enforce.",
   "type": "object",
   "required": ["name", "version", "description", "when", "start", "roles", "loops", "steps"],
   "additionalProperties": false,
   "x-outcomes": {
-    "report": ["done", "blocked"],
-    "verdict": ["pass", "fail", "blocked"],
+    "report": ["done", "blocked", "change-direction"],
+    "result": ["done", "blocked", "change-direction"],
+    "verdict": ["pass", "fail", "blocked", "change-direction"],
+    "risk": ["low", "medium", "high", "blocked"],
     "deliver": ["done", "blocked"]
   },
+  "x-attrs": {
+    "tier": ["low", "medium", "high"],
+    "security": ["required", "not-required"]
+  },
+  "x-gates": ["evidence", "answers", "commit", "coverage"],
   "properties": {
     "$schema": { "type": "string" },
     "name": { "$ref": "#/$defs/name", "description": "Equals the file name without .json." },
@@ -23,7 +30,13 @@
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
       "additionalProperties": { "$ref": "#/$defs/roleName" },
-      "description": "Alias -> role under roles/. Steps bind to an alias, so swapping the agent for a kind of work is one edit here."
+      "description": "Alias -> role under roles/. Steps bind to an alias, so swapping the agent for a kind of work is one edit here; the role's manifest `outputs` must include the output of every step bound to it."
+    },
+    "gates": {
+      "type": "object",
+      "propertyNames": { "enum": ["evidence", "answers", "commit", "coverage"] },
+      "additionalProperties": { "enum": ["observe", "enforce"] },
+      "description": "Engine gates over the structured final blocks. Absent = observe: the engine records `would-block` and lets the result through. enforce: the step is re-run with the problems as feedback; after two blocks of the same gate in one run the third is let through and recorded `escaped` (a gate must never wedge a run). evidence: a done result shows >=1 command with observed output (and base+commit when the step commits). answers: every open feedback id is answered fixed or rejected. commit: a verdict or risk block names the head commit of the change it judged. coverage: a verifier accounts for every finding it was handed."
     },
     "loops": {
       "type": "object",
@@ -41,19 +54,28 @@
     "name": { "type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$" },
     "roleName": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
     "text": { "type": "string", "minLength": 1 },
-    "target": {
-      "description": "A step name, the reserved @complete (the workflow succeeded) or @escalate (stop and hand the accumulated feedback to the captain), or {to, loop} to take the transition inside a named loop.",
-      "oneOf": [
-        { "type": "string", "pattern": "^(@complete|@escalate|[a-z][a-z0-9]*(-[a-z0-9]+)*)$" },
-        {
+    "alt": {
+      "type": "object",
+      "required": ["to"],
+      "additionalProperties": false,
+      "properties": {
+        "to": { "type": "string", "pattern": "^(@complete|@escalate|@close|[a-z][a-z0-9]*(-[a-z0-9]+)*)$" },
+        "loop": { "$ref": "#/$defs/name" },
+        "when": {
           "type": "object",
-          "required": ["to"],
-          "additionalProperties": false,
-          "properties": {
-            "to": { "type": "string", "pattern": "^(@complete|@escalate|[a-z][a-z0-9]*(-[a-z0-9]+)*)$" },
-            "loop": { "$ref": "#/$defs/name" }
-          }
+          "minProperties": 1,
+          "propertyNames": { "enum": ["tier", "security"] },
+          "additionalProperties": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
+          "description": "Branch on a run attribute set by a risk step (x-attrs). Every key must match one of its values."
         }
+      }
+    },
+    "target": {
+      "description": "A step name; the reserved @complete (the workflow succeeded), @escalate (stop and hand the accumulated feedback to the captain) or @close (the task is deliberately closed: no delivery); {to, loop} to take the transition inside a named loop; or a list of alternatives [{to, when}..., {to}] where the first whose `when` matches the run attributes is taken and the last has no `when`.",
+      "oneOf": [
+        { "type": "string", "pattern": "^(@complete|@escalate|@close|[a-z][a-z0-9]*(-[a-z0-9]+)*)$" },
+        { "$ref": "#/$defs/alt" },
+        { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/alt" } }
       ]
     },
     "loop": {
@@ -62,8 +84,15 @@
       "additionalProperties": false,
       "properties": {
         "description": { "type": "string" },
-        "maxIterations": { "type": "integer", "minimum": 1, "maximum": 20, "description": "How many times a transition tagged with this loop may be taken. The attempt after that is not taken: onExhausted applies." },
-        "onExhausted": { "enum": ["escalate"], "description": "Never a silent stop and never a silent pass: escalate hands the accumulated feedback to the captain." }
+        "maxIterations": { "type": "integer", "minimum": 1, "maximum": 20, "description": "How many times a transition tagged with this loop may be taken. The attempt after that is not taken: onExhausted applies. Review and verification loops use 3: after three rounds the author steps back instead of taking a fourth." },
+        "resets": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/name" }, "description": "Taking a transition tagged with this loop resets the counters of the listed other loops: a reshaped approach starts with fresh rounds (otherwise a reshape after a round cap would be exhausted at once)." },
+        "onExhausted": {
+          "description": "Never a silent stop and never a silent pass. \"escalate\" hands the accumulated feedback to the captain. {\"to\": step} routes to a step-back step instead (the author reconsiders the approach with every accumulated finding); that step must itself end in change-direction or escalate.",
+          "oneOf": [
+            { "enum": ["escalate"] },
+            { "type": "object", "required": ["to"], "additionalProperties": false, "properties": { "to": { "$ref": "#/$defs/name" } } }
+          ]
+        }
       }
     },
     "input": {
@@ -72,15 +101,15 @@
       "additionalProperties": false,
       "properties": {
         "name": { "$ref": "#/$defs/name" },
-        "from": { "enum": ["task", "change", "report", "feedback"], "description": "task: the task text the workflow was started with. change: the change under work, as the last step that recorded one gave it. report: the latest recorded report of `step`. feedback: the latest still-open feedback list produced by any of `steps`, verbatim." },
+        "from": { "enum": ["task", "change", "delta", "report", "feedback", "feedback-all", "direction", "notes", "risk", "decision"], "description": "task: the task text the workflow was started with. change: the commit range under work (base..head, from the last result that gave a commit). delta: the commits since the last commit the consuming step itself judged, up to the current head (diff-only re-review); omitted when that step has not judged a commit yet, so its first run reviews the whole change. report: the latest recorded report of `step`. feedback: the latest still-open feedback list produced by any of `steps`, verbatim. feedback-all: every feedback list ever produced by `steps`, open or closed, verbatim (the step-back step). direction: the latest change-direction raised by any step. notes: the non-blocking notes (OPTIONAL, PRE-EXISTING) recorded so far. risk: the latest risk classification. decision: the choice and the stated reason of the latest decision recorded at the decision step `step` (what an amend asks to change)." },
         "step": { "$ref": "#/$defs/name" },
         "steps": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/name" } },
         "optional": { "type": "boolean", "description": "Omit the input silently when nothing is available yet (feedback on a first run)." }
       },
       "allOf": [
-        { "if": { "properties": { "from": { "const": "report" } }, "required": ["from"] }, "then": { "required": ["step"], "properties": { "steps": false } } },
-        { "if": { "properties": { "from": { "const": "feedback" } }, "required": ["from"] }, "then": { "required": ["steps"], "properties": { "step": false } } },
-        { "if": { "properties": { "from": { "enum": ["task", "change"] } }, "required": ["from"] }, "then": { "properties": { "step": false, "steps": false } } }
+        { "if": { "properties": { "from": { "enum": ["report", "decision"] } }, "required": ["from"] }, "then": { "required": ["step"], "properties": { "steps": false } } },
+        { "if": { "properties": { "from": { "enum": ["feedback", "feedback-all"] } }, "required": ["from"] }, "then": { "required": ["steps"], "properties": { "step": false } } },
+        { "if": { "properties": { "from": { "enum": ["task", "change", "delta", "direction", "notes", "risk"] } }, "required": ["from"] }, "then": { "properties": { "step": false, "steps": false } } }
       ]
     },
     "step": {
@@ -92,7 +121,9 @@
         "role": { "$ref": "#/$defs/name", "description": "A key of the workflow's roles map (work steps only)." },
         "instruction": { "$ref": "#/$defs/text" },
         "input": { "type": "array", "items": { "$ref": "#/$defs/input" } },
-        "output": { "enum": ["report", "verdict"], "description": "report: free-form report, outcome reported by the orchestrator (done or blocked). verdict: the report ends with the machine-readable verdict block and the outcome is parsed from it, never supplied by the caller." },
+        "output": { "enum": ["report", "result", "verdict", "risk"], "description": "report: free-form report; the orchestrator records its status line as the outcome (done, blocked or change-direction). result: the report ends with the fenced `result` block; the outcome is its status, parsed by the engine. verdict: the report ends with the fenced `verdict` block; the outcome is parsed, never supplied by the caller. risk: the report ends with the fenced `risk` block; the outcome is its tier and it sets the run attributes. A malformed result or risk block is re-run (twice, then blocked); a malformed verdict is a FAIL." },
+        "commits": { "type": "boolean", "description": "result steps only: the step commits work to the task branch, so its result carries base and commit (the evidence gate checks it) and the engine tracks the change range." },
+        "verifies": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/name" }, "description": "verdict steps only: the verdict steps whose findings this step must account for (coverage gate). It consumes their open feedback; only the findings it confirms go back to the implementer." },
         "question": { "$ref": "#/$defs/text" },
         "criteria": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } },
         "on": {
@@ -100,13 +131,13 @@
           "minProperties": 1,
           "propertyNames": { "$ref": "#/$defs/name" },
           "additionalProperties": { "$ref": "#/$defs/target" },
-          "description": "Outcome -> target. A work step routes every outcome of its output contract (x-outcomes); a deliver step routes done and blocked; a decision step's keys are its choices."
+          "description": "Outcome -> target. A work step routes every outcome of its output contract (x-outcomes), change-direction included: a wrong approach is raised early as an explicit outcome, never ground through; a deliver step routes done and blocked; a decision step's keys are its choices."
         }
       },
       "allOf": [
         { "if": { "properties": { "kind": { "const": "work" } }, "required": ["kind"] }, "then": { "required": ["role", "instruction", "output"], "properties": { "question": false, "criteria": false } } },
-        { "if": { "properties": { "kind": { "const": "decision" } }, "required": ["kind"] }, "then": { "required": ["question", "criteria"], "properties": { "role": false, "instruction": false, "output": false } } },
-        { "if": { "properties": { "kind": { "const": "deliver" } }, "required": ["kind"] }, "then": { "required": ["instruction"], "properties": { "role": false, "output": false, "question": false, "criteria": false } } }
+        { "if": { "properties": { "kind": { "const": "decision" } }, "required": ["kind"] }, "then": { "required": ["question", "criteria"], "properties": { "role": false, "instruction": false, "output": false, "commits": false, "verifies": false } } },
+        { "if": { "properties": { "kind": { "const": "deliver" } }, "required": ["kind"] }, "then": { "required": ["instruction"], "properties": { "role": false, "output": false, "commits": false, "verifies": false, "question": false, "criteria": false } } }
       ]
     }
   }

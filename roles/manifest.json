@@ -1,0 +1,99 @@
+{
+  "$comment": "The single source of the army's structure. tests/roles.sh validates it against roles/<name>/ROLE.md frontmatter (spawns, tools) and against workflows/*.json (bound roles, step outputs, reachability); bin/fm-workflow validate refuses a step bound to a role whose `outputs` do not include the step's output. spawns: the ONLY roles a role may call through OMP's native bounded task helper (primary policy section 6); every target must itself spawn nothing, so nothing recurses beyond one level. adhoc: why a role is not bound to any workflow step and not a spawn target of a bound role.",
+  "version": 1,
+  "roles": {
+    "senior-fullstack": {
+      "mode": "ship", "mutates": "source", "outputs": ["result"], "spawns": [],
+      "contract": "Ordinary delivery work: the smallest change that fully solves the stated problem, verified by running it."
+    },
+    "test-engineer": {
+      "mode": "ship", "mutates": "tests", "outputs": ["result"], "spawns": [],
+      "contract": "Writes the verifiers (failing regression, property, differential, end-to-end tests) and proves they fail for the intended reason; never edits production source."
+    },
+    "refactorist": {
+      "mode": "ship", "mutates": "source", "outputs": ["result"], "spawns": [],
+      "contract": "One small behavior-preserving improvement, proven by the same checks before and after."
+    },
+    "perf-engineer": {
+      "mode": "ship", "mutates": "source", "outputs": ["result"], "spawns": [],
+      "adhoc": "performance tasks are DEEP-category work chosen per task by the Captain; no workflow in this repository is performance-shaped, and the engineering workflows already cover verification of the change itself",
+      "contract": "Measure-first optimisation: baseline, one change at a time, keep-or-revert, repeatable evidence with the limiter named."
+    },
+    "technical-writer": {
+      "mode": "ship", "mutates": "docs", "outputs": ["result"], "spawns": [],
+      "adhoc": "documentation-only tasks change no behavior, so they are not code-changing tasks: the selection kind docs is outside the forcing rule",
+      "contract": "Scoped documentation of settled behavior or decisions from authoritative source."
+    },
+    "chore": {
+      "mode": "ship", "mutates": "source", "outputs": ["result"], "spawns": [],
+      "adhoc": "the trivial/mechanical-chore exception of the forced-workflow rule: fully specified mechanical work needs no workflow",
+      "contract": "Exactly the mechanical thing the brief spells out, and nothing around it."
+    },
+    "lead": {
+      "mode": "orchestrate", "mutates": "source", "outputs": ["result"],
+      "spawns": ["senior-fullstack", "test-engineer", "refactorist", "technical-writer", "perf-engineer", "debugger", "scout", "researcher", "architecture", "security-engineer", "qa", "tenth-man"],
+      "adhoc": "bound to a workflow's implementer alias by the Captain for one large, already-scoped task with next --role implementer=lead at the start of that task; it never replaces the workflow's independent QA/review steps",
+      "contract": "Owns one large, already-scoped deliverable inside one task worktree: decomposes, fans bounded slices to sub-agents, integrates, verifies, reports."
+    },
+    "planner": {
+      "mode": "plan", "mutates": "files-named", "outputs": ["report"],
+      "spawns": ["scout", "researcher", "architecture", "tenth-man"],
+      "contract": "Turns an unclear or oversized request into a written spec and an ordered, independently verifiable task list; never implements."
+    },
+    "architecture": {
+      "mode": "decide", "mutates": "none", "outputs": ["report"], "spawns": [],
+      "contract": "Structural decisions - boundaries, data models, dependency direction, failure behavior - without owning the implementation."
+    },
+    "researcher": {
+      "mode": "research", "mutates": "files-named", "outputs": ["report"], "spawns": [],
+      "contract": "Answers a question from high-trust primary sources and returns cited findings with confidence."
+    },
+    "scout": {
+      "mode": "scout", "mutates": "none", "outputs": ["report"], "spawns": [],
+      "contract": "Read-only fact gathering over a codebase or a handed PR, reported with evidence and limits; never judges."
+    },
+    "debugger": {
+      "mode": "diagnose", "mutates": "none", "outputs": ["report"], "spawns": [],
+      "contract": "Source-read-only root-cause diagnosis anchored on a red-capable reproduction command; never applies fixes."
+    },
+    "risk-classifier": {
+      "mode": "classify", "mutates": "none", "outputs": ["risk"], "spawns": [],
+      "contract": "Reads the change and sets its risk tier, whether a security review is required and the diff-triggered checklist items that match."
+    },
+    "qa": {
+      "mode": "verify", "mutates": "none", "outputs": ["verdict"], "spawns": [],
+      "contract": "Independent verification of a change against the task's acceptance by running it; never edits."
+    },
+    "ui-qa": {
+      "mode": "verify", "mutates": "none", "outputs": ["verdict"], "spawns": [],
+      "contract": "Independent verification of browser-visible behavior by driving the real running app, with screenshot/snapshot evidence."
+    },
+    "code-reviewer": {
+      "mode": "review", "mutates": "none", "outputs": ["verdict"], "spawns": [],
+      "contract": "Read-only review of a handed diff in fresh context: correctness first, severity-tagged findings, each with a failing scenario."
+    },
+    "finding-verifier": {
+      "mode": "verify", "mutates": "none", "outputs": ["verdict"],
+      "spawns": ["debugger", "tenth-man", "scout"],
+      "contract": "Tries to disprove each review or security finding before it reaches the implementer; only confirmed findings go back."
+    },
+    "security-engineer": {
+      "mode": "review", "mutates": "none", "outputs": ["report", "verdict"], "spawns": [],
+      "contract": "Finds, evidences and ranks security weaknesses in a named scope; report-only, never exploits; a blocking gate when asked."
+    },
+    "release-engineer": {
+      "mode": "verify", "mutates": "none", "outputs": ["verdict"], "spawns": [],
+      "contract": "Decides ship-readiness for the head commit and prepares the delivery package (verification stamp, risk, rollback); never pushes or merges."
+    },
+    "tenth-man": {
+      "mode": "challenge", "mutates": "none", "outputs": ["report", "verdict"], "spawns": [],
+      "contract": "Deliberate adversarial challenge of a plan, design, diagnosis, finding or completion claim."
+    },
+    "improver": {
+      "mode": "improve", "mutates": "none", "outputs": ["report", "result"],
+      "spawns": ["tenth-man", "scout"],
+      "adhoc": "the self-improvement loop runs on the Captain's cadence over the retro log, never inside a running task; its proposals reach the repository only through a normal PR",
+      "contract": "Turns recorded failure patterns into proposed role, rule or skill changes through a PR; never self-applies."
+    }
+  }
+}

@@ -30,7 +30,7 @@ case_setup() {
 
 case_grade() {
   local role=$1 first
-  first=$(sed -n '/[^[:space:]]/{s/^[[:space:]]*//;s/[[:space:]]*$//;p;q}' "$RUN/final.txt")
+  first=$(awk 'NF { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); print; exit }' "$RUN/final.txt")
   case $role in
     fx-stamper)
       [ "$(cat .stamp/QX-4419.txt 2>/dev/null)" = 'stamped:QX-4419:5' ] || { echo "stamper: no correct stamp file"; return 1; }
