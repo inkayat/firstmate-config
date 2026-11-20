@@ -138,6 +138,8 @@ for line in research.splitlines():
     for m in re.finditer(r"(?<![A-Za-z0-9_])((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(?:md|txt|py))(?::(\d+(?:[-,]\d+)*))?", line):
         tok, ln = m.group(1), m.group(2)
         cands = resolve(tok)
+        if not cands and os.path.basename(tok) in ("SKILL.md", "ROLE.md"):
+            continue  # the harness's own skill/role files named in prose ("I could not read SKILL.md"), not a citation of the fixture
         if not cands:
             bad.append("the cited path does not exist in the fixture: %s" % tok)
             continue
@@ -192,6 +194,20 @@ if len(recs) != 1:
     bad.append("the options report has %d Recommendation line(s) (exactly 1 needed)" % len(recs))
 print("\n".join(bad))
 R
+}
+
+# the citation check ignores SKILL.md / ROLE.md named in prose, and still rejects a cited file that does not exist
+case_judge_selftest() {
+  local t out; t=$(mktemp -d "${TMPDIR:-/tmp}/fm-rd-judge.XXXXXX") || return 0
+  mkdir -p "$t/run/steps/01-research" "$t/run/steps/02-options" "$t/repo/vendor-docs"
+  printf 'I could not read the two required skills: neither SKILL.md nor ROLE.md exists under .agents/skills/.\n' > "$t/run/steps/01-research/final.txt"
+  printf 'Options: Option A\n' > "$t/run/steps/02-options/final.txt"
+  out=$(research_judge "$t/run" "$t/repo")
+  ! printf '%s' "$out" | grep -qE 'does not exist in the fixture: (SKILL|ROLE)\.md' || echo "SKILL.md/ROLE.md in prose counted as a missing citation"
+  printf 'See vendor-docs/nonexistent-guide.md:3 for details; also SKILL.md.\n' > "$t/run/steps/01-research/final.txt"
+  out=$(research_judge "$t/run" "$t/repo")
+  printf '%s' "$out" | grep -q 'does not exist in the fixture: vendor-docs/nonexistent-guide.md' || echo "a citation of a file that does not exist is no longer caught"
+  rm -rf "$t"
 }
 
 case_assert() { # <run-dir> <repo>
