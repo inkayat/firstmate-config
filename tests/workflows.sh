@@ -296,6 +296,8 @@ has '3a: the delivery spec carries the verification stamp' "$(o .spec)" 'Verific
 has '3a: ... listing qa at the commit it ran on' "$(o .spec)" '- qa: pass at commit bbbbbbb (run 1)'
 has '3a: a low tier needs no human approval' "$(o .spec)" 'Required human approvals before merge: 0'
 has '3a: the delivery never merges' "$(o .spec)" 'never merges'
+check '3a: no spec carries the section 0 routing trace line (the Captain pastes the whole spec unchanged and prints the trace line separately)' "$(printf '%s\n' "$(o .spec)" | grep -c '^Workflow: ')" 0
+has '3a: the delivery spec opens by naming workflow, version, step and run' "$(o .spec)" 'Workflow step: build-test-review v2, step deliver, run #1, delivery performed by Firstmate'
 adv $BTR "$st" --outcome done
 check '3a: deliver done -> complete' "$(o .status)" complete
 check '3a: loop counters are untouched on a straight run' "$(o '[.loops[].used] | add')" 0

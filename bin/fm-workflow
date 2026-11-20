@@ -667,17 +667,17 @@ def stamp_text($st):
      + (if $st.escalation.loop != null or ($st.stepBack != null and $st.escalation.step == $st.stepBack.to) then "\n\nThe round cap is reached: no further round is taken. The author must step back and reconsider the approach before anything continues; granting more rounds, reshaping or closing the task is the captain decision, never an edit of the state file." else "" end)
      + "\n\nAccumulated feedback, every entry verbatim:\n\(feedback_dump($st))"
    elif $step.kind == "work" then
-     "Workflow step\n\n\($trace)\nStep \($st.current), role \($step.role) -> \($roleName). A fresh worker with this role handoff; everything it needs is in this step.\n\nStep instruction: \($step.instruction)"
+     "Workflow step: \($st.workflow) v\($st.version), step \($st.current), run #\($st.runs[$st.current])\n\nStep \($st.current), role \($step.role) -> \($roleName). A fresh worker with this role handoff; everything it needs is in this step.\n\nStep instruction: \($step.instruction)"
      + $stepbacknote + $redonote + $gatenote + "\n\nInputs:\n"
      + ($inputs | map(render_input) | join("\n"))
      + "\n\nOutput: " + contract_text($step) + "\n\n" + $handoff
    elif $step.kind == "decision" then
-     "Workflow step: decision for the orchestrator\n\n\($trace)\nStep \($st.current). Decide; no worker is launched.\n\nQuestion: \($step.question)\nCriteria:\n"
+     "Workflow step: \($st.workflow) v\($st.version), step \($st.current), run #\($st.runs[$st.current]), a decision for the orchestrator\n\nStep \($st.current). Decide; no worker is launched.\n\nQuestion: \($step.question)\nCriteria:\n"
      + ($step.criteria | map("- " + .) | join("\n"))
      + $gatenote + "\n\nInputs:\n" + ($inputs | map(render_input) | join("\n"))
      + "\n\nChoices: \($outcomes | join(", ")). Record the choice and the reason with --decide <choice> --reason <why>."
    else
-     "Workflow step: delivery, performed by Firstmate\n\n\($trace)\nStep \($st.current). No role and no worker is chosen for this step.\n\nInstruction: \($step.instruction)"
+     "Workflow step: \($st.workflow) v\($st.version), step \($st.current), run #\($st.runs[$st.current]), delivery performed by Firstmate\n\nStep \($st.current). No role and no worker is chosen for this step.\n\nInstruction: \($step.instruction)"
      + $gatenote + "\n\nInputs:\n" + ($inputs | map(render_input) | join("\n"))
      + "\n\n\(stamp_text($st))\n\n\(approvals_text($st))\n\n\(notes_text($st))"
      + "\n\nRecord the result with --outcome \($outcomes | join("|"))."

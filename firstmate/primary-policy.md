@@ -63,6 +63,9 @@ a display or print prospective stages as if already dispatched:
   `bin/fm-workflow trace <state-file> <captured-block>` fails when a captured
   Workflow line differs from the derived one; `tests/routing-trace.sh check`
   ignores the line.
+  The line is chat-only: `next ... --spec` carries no such line, the whole
+  spec is pasted into the brief unchanged (section 8), and this line never goes
+  into it.
 
 End-of-period removal: when the captain ends debugging, remove this section
 0's temporary trace/diagnostic, fixtures and guide references. Retain ordinary
@@ -751,10 +754,16 @@ applies to everything that runs no workflow.
 2. Every `work` step is a fresh worker with its own task and worktree, even
    when a role repeats (the implementer's fix round): section 2's role-change
    rule, and each step's spec carries everything it needs, so no step relies on
-   another worker's memory. Brief it with `next ... --spec` pasted into
-   `## Firstmate spec` unchanged: it contains the step's instruction, its
-   inputs, its output contract, and `bin/fm-role-handoff <role>` verbatim for
-   the role bound to the step's alias. The change travels as a commit range on
+   another worker's memory. Brief it with the COMPLETE output of
+   `next ... --spec`, from its first line (`Workflow step: ...`) to its last,
+   pasted into `## Firstmate spec` unchanged: no line dropped, reworded,
+   reordered or summarised, and no part of it moved elsewhere. It holds the
+   step's instruction, its inputs, its output contract, and
+   `bin/fm-role-handoff <role>` verbatim for the role bound to the step's alias;
+   it holds no section 0 `Workflow:` trace line, which is yours to print in the
+   chat and never goes into a brief. What section 2 asks of the brief (the
+   project, the pre-work requirement) goes in lines before the pasted block,
+   never in place of any of it. The change travels as a commit range on
    the task branch (the engine carries `base..commit`), a plan, diagnosis or
    report as a file named in the step's inputs; each step's worktree starts from
    that branch (section 2's carry-source route). Route the step by section 3 as
