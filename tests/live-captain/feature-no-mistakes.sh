@@ -3,7 +3,7 @@
 # the first worker's brief carries the implementer role only: no reviewer or QA worker is launched.
 SCN_PROJECT=notes-cli
 SCN_CONTROL=1
-SCN_BAD="good-relative-path spec-header-trimmed no-select select-late no-next brief-no-handoff second-step no-trace trace-wrong wrong-delivery"
+SCN_BAD="good-relative-path good-dotdot-config good-doubleslash-config bad-other-config-root spec-header-trimmed spec-title-dropped spec-step-line-dropped spec-reworded trace-in-brief no-select select-late no-next brief-no-handoff second-step no-trace trace-wrong wrong-delivery"
 
 scn_prompt() {
   cat <<'TXT'

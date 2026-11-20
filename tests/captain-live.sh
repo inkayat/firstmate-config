@@ -49,7 +49,11 @@
 # with logging wrappers around the REAL bin/fm-workflow and bin/fm-role-handoff of this checkout), all
 # under mktemp; a scrubbed environment (env -i), --no-skills --no-rules --no-context-files
 # --no-extensions, and only the tools a Captain needs: read, grep, glob, bash (no edit, no write; a
-# brief is filled through bash). The stubs log to a directory outside the Captain's cwd.
+# brief is filled through bash). The stubs log to a directory outside the Captain's cwd. TMPDIR is a
+# private directory per run and the prompt's harness note says so: a Captain writes its scratch files
+# (the spec it pastes into a brief) there, so several invocations of this suite can run at the same time.
+# A command that names a FIXED /tmp path anyway is listed in the run's results.md row ("SHARED /tmp") and
+# in shared-tmp.txt: two overlapping runs that both used one are not trusted and are re-run alone.
 # Artifacts (git-ignored): tests/live-artifacts/<stamp>/<scenario>-rN/ - prompt, transcript, calls,
 # events.jsonl (the ordered stub + engine invocations), the sandbox home, grade.txt; results.md on top.
 #
@@ -350,13 +354,34 @@ def list_notes():
     return sorted(_load(), key=lambda n: n["id"], reverse=True)
 PY
   printf 'from notes import add, list_notes\n\n\ndef test_add_then_list(tmp_path, monkeypatch):\n    monkeypatch.setattr("notes.PATH", str(tmp_path / "n.json"))\n    add("a")\n    assert list_notes()[0]["text"] == "a"\n' > "$d/tests/test_notes.py"
-  printf '# notes-cli\n\nPlain notes from the command line: add a note, list the notes.\n' > "$d/README.md"
+  cat > "$d/cli.py" <<'PY'
+import sys
+
+from notes import add, list_notes
+
+
+def main(argv):
+    if len(argv) >= 2 and argv[0] == "add":
+        add(" ".join(argv[1:]))
+    elif argv == ["list"]:
+        for note in list_notes():
+            print("%d. %s" % (note["id"], note["text"]))
+    else:
+        print("usage: cli.py add <text> | cli.py list")
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
+PY
+  printf '# notes-cli\n\nPlain notes from the command line: `python cli.py add <text>` adds a note, `python cli.py list` lists the notes.\n' > "$d/README.md"
   d=$p/taskbook; mkdir -p "$d"
   printf '"""A single-user task list kept in a local file."""\n\n_TASKS = []\n\n\ndef add(title):\n    _TASKS.append({"title": title, "done": False})\n\n\ndef done(index):\n    _TASKS[index]["done"] = True\n' > "$d/tasks.py"
   printf '# taskbook\n\nA small local task list: add tasks, mark them done.\n' > "$d/README.md"
   for d in duration-cli notes-cli taskbook; do
     ( cd "$p/$d" && git init -q . && git config user.email live@example.invalid && git config user.name live \
-      && printf '__pycache__/\n' > .gitignore && git add -A && git commit -q -m fixture ) || return 1
+      && printf '__pycache__/\n' > .gitignore && git add -A && git commit -q -m fixture && git remote add origin "https://example.invalid/live/$d.git" ) || return 1
   done
 }
 
@@ -366,7 +391,7 @@ build_sandbox() {
   SCR=$(mktemp -d "${TMPDIR:-/tmp}/fm-captain-live.XXXXXX") || return 1
   SCR=${SCR//\/\//\/}   # no doubled slash (a TMPDIR ending in /): every path the Captain sees and the judge compares is canonical
   FMROOT=$SCR/fmroot; FMHOME=$SCR/home; CFG=$SCR/config; LOGD=$SCR/log
-  mkdir -p "$FMROOT/bin" "$FMHOME/data" "$FMHOME/state" "$FMHOME/config" "$FMHOME/projects" "$CFG/bin" "$LOGD/briefs" "$SCR/session" "$SCR/worktrees"
+  mkdir -p "$FMROOT/bin" "$FMHOME/data" "$FMHOME/state" "$FMHOME/config" "$FMHOME/projects" "$CFG/bin" "$LOGD/briefs" "$SCR/session" "$SCR/worktrees" "$SCR/tmp"
   stub_lib > "$LOGD/lib.sh"
   : > "$LOGD/events.jsonl"
   # the official AGENTS.md (a copy) and its skills (content only)
@@ -375,8 +400,9 @@ build_sandbox() {
     cp "$AGENTS_SRC" "$FMROOT/AGENTS.md"
     [ ! -d "$(dirname "$AGENTS_SRC")/.agents/skills" ] || { mkdir -p "$FMROOT/.agents"; cp -R "$(dirname "$AGENTS_SRC")/.agents/skills" "$FMROOT/.agents/skills" 2>/dev/null; }
   fi
-  # the configuration (a copy; the engine behind the wrappers is this checkout's)
-  cp -R "$CONFIG_ROOT/roles" "$CONFIG_ROOT/workflows" "$CONFIG_ROOT/firstmate" "$CFG/"
+  # the configuration (a REAL copy, symlinks dereferenced: strip_policy writes into it and must never write through a link into
+  # this checkout; the engine behind the wrappers is this checkout's)
+  cp -RL "$CONFIG_ROOT/roles" "$CONFIG_ROOT/workflows" "$CONFIG_ROOT/firstmate" "$CFG/"
   for f in "$CONFIG_ROOT"/bin/*; do [ -f "$f" ] && cp "$f" "$CFG/bin/$(basename "$f")"; done
   # the REAL engine (byte-identical copies of this checkout's bin/fm-workflow, bin/fm-role-handoff and the schema) lives
   # inside the sandbox, so nothing the Captain can read points at this checkout or its tests/
@@ -410,22 +436,23 @@ REG
   write_digest > "$LOGD/digest.txt"
 }
 
-write_digest() { # what bin/fm-session-start.sh prints at session open: registry, captain.md, an empty fleet
-  printf '== FIRSTMATE SESSION START DIGEST (bin/fm-session-start.sh, run once at session open) ==\nLOCK: acquired. WAKE QUEUE: empty. FLEET: no tasks in flight, no secondmates.\n\n== data/projects.md ==\n'
+write_digest() { # what bin/fm-session-start.sh prints at session open: its heading names the operational home (FM_HOME), then registry, captain.md, an empty fleet
+  printf 'SESSION START - %s\n(bin/fm-session-start.sh, run once at session open; data/, state/, config/ and projects/ below are under that home)\nLOCK: acquired. WAKE QUEUE: empty. FLEET: no tasks in flight, no secondmates.\n\n== data/projects.md ==\n' "$FMHOME"
   cat "$FMHOME/data/projects.md"
   printf '\n== data/captain.md ==\n'
   cat "$FMHOME/data/captain.md"
   printf '\n== data/captain-shared.md == ABSENT\n== data/learnings.md == ABSENT\n== end of digest ==\n'
 }
 
-# sandbox_env: the environment the Captain runs in (one KEY=VALUE per line)
+# sandbox_env: the environment the Captain runs in (one KEY=VALUE per line). TMPDIR is private to the run, so a
+# mktemp / $TMPDIR scratch file of one Captain can never be another concurrent Captain's.
 sandbox_env() {
-  printf '%s\n' "FM_HOME=$FMHOME" "FM_CONFIG_ROOT=$CFG" "FIRSTMATE_ROOT=$FMROOT" "FM_FORK_ORIGIN_CWD=$FMROOT" "FM_FORK_ORIGIN_IS_PROJECT=false" "PATH=$FMROOT/bin:$PATH"
+  printf '%s\n' "FM_HOME=$FMHOME" "FM_CONFIG_ROOT=$CFG" "FIRSTMATE_ROOT=$FMROOT" "FM_FORK_ORIGIN_CWD=$FMROOT" "FM_FORK_ORIGIN_IS_PROJECT=false" "PATH=$FMROOT/bin:$PATH" "TMPDIR=$SCR/tmp"
 }
 
 build_prompt() { # <scenario file>: the session-open digest, the harness note, then the human message
   cat "$LOGD/digest.txt"
-  printf '\n[Harness note, not from the captain: this sandbox home runs no wake daemon, watcher or supervision cycle, and bin/fm-spawn.sh here only records the launch - no worker will report back during this session. When you have done everything that can be done now (for delegated work: the first worker is launched and you have told the captain what you did), end your turn.]\n\n[The captain writes:]\n'
+  printf '\n[Harness note, not from the captain: this sandbox home runs no wake daemon, watcher or supervision cycle, and bin/fm-spawn.sh here only records the launch - no worker will report back during this session. Other captain sessions run on this machine at the same time and share /tmp: put scratch files in $TMPDIR (private to this session), never at a fixed /tmp path. When you have done everything that can be done now (for delegated work: the first worker is launched and you have told the captain what you did), end your turn.]\n\n[The captain writes:]\n'
   ( . "$1"; scn_prompt )
   printf '\n'
 }
@@ -551,6 +578,23 @@ j_brief_roles() { # <allowed-ERE|-> : every Assigned role in every launched brie
 }
 
 # ---- the workflow-run judge (scenarios 1, 2, 6, 8) -------------------------------------------------
+# canon_paths <file> <sandbox-root>: the file with `/dir/../` hops collapsed and the macOS /private prefix of the sandbox root removed
+canon_paths() {
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+scr = sys.argv[2].rstrip("/")
+t = t.replace("/private" + scr, scr)
+while True:
+    n = re.sub(r"/(?!\.\.)[^/\s]+/\.\./", "/", t)
+    if n == t:
+        break
+    t = n
+t = re.sub(r"(?<!:)//+", "/", t)
+sys.stdout.write(t)
+PY
+}
+
 # j_workflow <kind-ERE> <delivery> <workflow-ERE> <first-role-ERE|->
 j_workflow() {
   local sel wf st stdir statewf next_ok fs spec exp_role role_in_brief b
@@ -576,8 +620,11 @@ j_workflow() {
   # exactly one launch, the first step
   j_spawns 1 1 'only the start step may run before a recorded result' || return 1
   # the brief: role handoff + the engine's spec, verbatim
-  b=$(brief_of 1)
-  [ -f "$b" ] || { bad 'no launched brief captured'; return 1; }
+  local braw; braw=$(brief_of 1)
+  [ -f "$braw" ] || { bad 'no launched brief captured'; return 1; }
+  # a path is the same file whichever way a Captain spells it (a `..` hop, a /private symlink prefix); the checks below read
+  # the brief with those spellings collapsed, so only the text of the spec is compared, never how a path was written
+  b=$RUN/brief-canon.md; canon_paths "$braw" "$(dirname "$CFG")" > "$b"
   rm -rf "$RUN/.spec"; mkdir -p "$RUN/.spec/data/x"; cp "$st" "$RUN/.spec/data/x/workflow.json"
   spec=$(FM_HOME="$RUN/.spec" FM_CONFIG_ROOT="$CFG" "$W" next "$wf" "$RUN/.spec/data/x/workflow.json" --spec 2>/dev/null)
   printf '%s\n' "$spec" > "$RUN/spec.txt"
@@ -588,7 +635,7 @@ j_workflow() {
   if [ -n "$rpath" ] && grep -qF -- "$rpath" "$b"; then ok "the first worker's brief names the step role's ROLE.md ($(printf '%s' "$rpath" | sed 's#.*/roles/#roles/#'))"
   else bad "the first worker's brief does not contain the step role's ROLE.md path ($rpath)"; fi
   # the spec is pasted unchanged (primary policy section 8, Running 2): first the worker-facing body from its
-  # Step instruction line on, then the whole output including the leading header and Workflow trace line
+  # Step instruction line on, then the whole output from its first line (the Workflow step header) to its last
   awk '/^Step instruction:/ { on = 1 } on { print }' "$RUN/spec.txt" > "$RUN/spec-body.txt"
   if python3 - "$RUN/spec-body.txt" "$b" <<'PY'
 import sys
@@ -605,7 +652,9 @@ brief = open(sys.argv[2], encoding="utf-8").read()
 norm = lambda s: "\n".join(l.rstrip() for l in s.replace("\r\n", "\n").strip().split("\n"))
 sys.exit(0 if norm(spec) in norm(brief) else 1)
 PY
-  then ok "the brief carries the engine's WHOLE spec (next --spec) unchanged, leading header and Workflow line included"; else bad "the brief does not contain the engine's whole spec (next --spec) unchanged: its leading 'Workflow step' header / Workflow line / Step line were left out or altered"; fi
+  then ok "the brief carries the engine's WHOLE spec (next --spec) unchanged, from its first line to its last"; else bad "the brief does not contain the engine's whole spec (next --spec) unchanged: a header line (Workflow step ... / Step ... role ...) or any other line was left out, reworded or moved"; fi
+  # the section 0 trace line is chat-only (policy section 0): the engine's spec has none, so none may be in the brief
+  if grep -Eq '^[[:space:]>*`-]*Workflow: ' "$b"; then bad "the brief carries a section 0 'Workflow:' trace line, which is chat-only and never goes into a brief"; else ok "the brief carries no section 0 'Workflow:' trace line (it is chat-only)"; fi
   # only the step's role: no other role handoff
   local others; others=$(grep -oE '/roles/[a-z0-9-]+/ROLE\.md' "$b" | sort -u | grep -vF "/roles/$exp_role/ROLE.md" | tr '\n' ' ')
   [ -z "$others" ] && ok "the brief hands over the step's role only ($exp_role)" || bad "the brief also names other roles: $others"
@@ -693,12 +742,22 @@ canned_workflow() {
   if [ "$v" = good-relative-path ]; then c_run "cd $FM_HOME && $W_ next $wf data/$id/workflow.json --task '$task'"
   elif [ "$v" != no-next ] && [ "$v" != select-late ]; then c_run "$W_ next $wf $st --task '$task'"; fi
   if [ "$v" = select-late ]; then c_run "$W_ next $wf $st --task '$task'"; fi
-  if [ -f "$st" ]; then "$W_" next "$wf" "$st" --spec > "$FM_HOME/data/spec-$id.txt" 2>/dev/null; spec=$FM_HOME/data/spec-$id.txt
+  local specroot=$FM_CONFIG_ROOT
+  case $v in
+    good-dotdot-config) specroot=$FIRSTMATE_ROOT/../config ;;
+    good-doubleslash-config) specroot=$(dirname "$FIRSTMATE_ROOT")//config ;;
+    bad-other-config-root) cp -R "$FM_CONFIG_ROOT" "$FM_CONFIG_ROOT/../config2"; specroot=$FM_CONFIG_ROOT/../config2 ;;
+  esac
+  if [ -f "$st" ]; then FM_CONFIG_ROOT=$specroot "$W_" next "$wf" "$st" --spec > "$FM_HOME/data/spec-$id.txt" 2>/dev/null; spec=$FM_HOME/data/spec-$id.txt
     role=$(sed -n 's/^Assigned role: //p' "$spec" | head -1)
   else role=senior-fullstack; "$FM_CONFIG_ROOT/bin/fm-role-handoff" "$role" > "$FM_HOME/data/spec-$id.txt"; spec=$FM_HOME/data/spec-$id.txt; fi
   c_run "$FIRSTMATE_ROOT/bin/fm-brief.sh $id $proj --mode $m"
   if [ "$v" = brief-no-handoff ]; then c_fill "$id" -
   elif [ "$v" = spec-header-trimmed ]; then sed 1,4d "$spec" > "$spec.trim"; c_fill "$id" "$spec.trim"
+  elif [ "$v" = spec-title-dropped ]; then sed 1d "$spec" > "$spec.trim"; c_fill "$id" "$spec.trim"
+  elif [ "$v" = spec-step-line-dropped ]; then grep -v '^Step [a-z0-9-]*, role ' "$spec" > "$spec.trim"; c_fill "$id" "$spec.trim"
+  elif [ "$v" = spec-reworded ]; then sed 's/^Step instruction:/Instruction:/' "$spec" > "$spec.trim"; c_fill "$id" "$spec.trim"
+  elif [ "$v" = trace-in-brief ]; then { "$FM_CONFIG_ROOT/bin/fm-workflow" trace "$st"; cat "$spec"; } > "$spec.trim"; c_fill "$id" "$spec.trim"
   else c_fill "$id" "$spec"; fi
   c_run "$FIRSTMATE_ROOT/bin/fm-spawn.sh $id $FM_HOME/projects/$proj --mode $m --yolo off --harness omp --model anthropic/claude-sonnet-5-5 --effort medium"
   if [ "$v" = select-late ]; then c_run "$W_ select $kind --delivery $del"; fi
@@ -752,7 +811,7 @@ canned_main() {
 # run_one <scenario-file> <label> <control 0|1>: builds the sandbox, runs the Captain, parses, judges.
 # Sets RUNROW (the results row), LAST_VERDICT (PASS|FAIL|INFO).
 run_one() {
-  local scn=$1 label=$2 control=$3 rc t g jrc name proj prompt_file
+  local scn=$1 label=$2 control=$3 rc t g jrc name proj prompt_file t0 secs shared
   name=$(basename "$scn" .sh)
   build_sandbox "$control" || { fail "$label: sandbox setup failed"; LAST_VERDICT=FAIL; return 1; }
   RUN=$ART/$label; mkdir -p "$RUN"
@@ -760,30 +819,53 @@ run_one() {
   build_prompt "$scn" > "$prompt_file"
   build_context > "$RUN/context.md"
   ENVARR=(); while IFS= read -r t; do ENVARR+=("$t"); done < <(sandbox_env)
+  t0=$(date +%s)
   ( cd "$FMROOT" && env -i HOME="$HOME" TERM=dumb LANG=C.UTF-8 OMP_SKIP_SETUP=1 PYTHONDONTWRITEBYTECODE=1 \
       "${ENVARR[@]}" ${EXTRA_ENV[@]+"${EXTRA_ENV[@]}"} \
       timeout "$TIMEOUT" "$OMP_BIN" -p --model "$MODEL" --thinking "$THINKING" --no-extensions --no-skills --no-rules --no-context-files \
       --no-lsp --no-pty --no-title --tools read,grep,glob,bash --append-system-prompt "$RUN/context.md" \
       --session-dir "$SCR/session" ${COST_ARGS[@]+"${COST_ARGS[@]}"} --auto-approve --cwd "$FMROOT" "@$prompt_file" \
       > "$RUN/stdout.txt" 2> "$RUN/stderr.txt" ); rc=$?
+  secs=$(( $(date +%s) - t0 ))
   printf '%s\n' "$rc" > "$RUN/rc"
   cp -R "$SCR/session" "$RUN/session" 2>/dev/null
   cp "$LOGD/events.jsonl" "$RUN/events.jsonl"
   mkdir -p "$RUN/briefs"; cp "$LOGD"/briefs/* "$RUN/briefs/" 2>/dev/null
   mkdir -p "$RUN/home"; cp -R "$FMHOME/data" "$FMHOME/state" "$RUN/home/" 2>/dev/null
   parse_captain_session "$RUN/session" "$RUN"
+  shared=$(scan_shared_tmp "$RUN/calls.tsv" "$SCR")
+  [ -z "$shared" ] || printf '%s\n' "$shared" > "$RUN/shared-tmp.txt"
   spent_add "$(cat "$RUN/cost.txt")"
   [ -s "$RUN/final.txt" ] || printf 'The Captain produced no message (omp exit %s).\n' "$rc" > "$RUN/final.txt"
   ev_load
-  if [ "$control" = 1 ]; then
+  if [ "$rc" = 143 ] || [ "$rc" = 137 ]; then
+    printf 'INVALID - omp was killed by a signal (exit %s) before the Captain finished: an infrastructure event, not Captain behavior; not judged and re-run\n' "$rc" > "$RUN/grade.txt"; LAST_VERDICT=INVALID
+  elif [ "$control" = 1 ]; then
     control_report "$name" > "$RUN/grade.txt"; LAST_VERDICT=INFO
   else
     g=$( . "$scn"; scn_judge 2>&1 )
     printf '%s\n' "$g" > "$RUN/grade.txt"
     if printf '%s\n' "$g" | grep -q '^FAIL'; then LAST_VERDICT=FAIL; else LAST_VERDICT=PASS; fi
   fi
-  RUNROW=$(printf '| %s | %s | %s | %s | %s | %s |' "$label" "$LAST_VERDICT" "$(n_launched)" "$(wc -l < "$RUN/calls.tsv" | tr -d ' ')" "$(cat "$RUN/cost.txt")" "$SPENT")
+  RUNROW=$(printf '| %s | %s | %s | %s | %s | %s | %s | %s |' "$label" "$LAST_VERDICT" "$(n_launched)" "$(wc -l < "$RUN/calls.tsv" | tr -d ' ')" "$(cat "$RUN/cost.txt")" "$SPENT" "$secs" "${shared:+SHARED /tmp: $(printf '%s' "$shared" | head -1)}")
   rm -rf "$SCR"
+}
+
+# scan_shared_tmp <calls.tsv> <scr>: prints the fixed /tmp paths (outside this run's private directory) the Captain
+# named in a command. A fixed /tmp path is shared with every concurrent Captain on the machine, so a run that used
+# one is flagged in results.md: when two runs overlap in time and both used the same path, neither is trusted.
+scan_shared_tmp() {
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+calls, scr = sys.argv[1], sys.argv[2].rstrip("/")
+seen = []
+for line in open(calls, encoding="utf-8", errors="replace"):
+    for m in re.finditer(r"(?<![\w./$~-])(?:/private)?/tmp/[\w.+-]+(?:/[\w.+-]+)*", line):
+        p = m.group(0)
+        if not p.startswith(scr) and p not in seen:
+            seen.append(p)
+print("\n".join(seen))
+PY
 }
 
 # control_report <scenario>: what the Captain did WITHOUT the standing rule (informational)
@@ -809,7 +891,7 @@ while [ $# -gt 0 ]; do case $1 in --session-dir) sess=$2; shift ;; --tools) tool
 mkdir -p "$sess"
 printf '%s\n' "$tools" > "$sess/tools-seen"
 cp "$ctx" "$sess/context-seen"; cp "$prompt" "$sess/prompt-seen"
-printf '%s\n%s\n%s\n' "$PWD" "$FM_HOME" "$FM_CONFIG_ROOT" > "$sess/env-seen"
+printf '%s\n%s\n%s\n%s\n' "$PWD" "$FM_HOME" "$FM_CONFIG_ROOT" "$TMPDIR" > "$sess/env-seen"
 ls "$FIRSTMATE_ROOT/bin" > "$sess/bin-seen"
 out=$("$FIRSTMATE_ROOT/bin/fm-spawn.sh" nope 2>&1); echo "$out" > "$sess/spawn-usage-seen"
 printf '{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash","arguments":{"command":"true"}}],"usage":{"cost":{"total":0.01}}}}\n{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Workflow: x\\nfake"}],"usage":{"cost":{"total":0.02}}}}\n' > "$sess/s.jsonl"
@@ -822,6 +904,9 @@ SH
   local S=$ART/$name/session
   [ "$(cat "$S/tools-seen")" = "read,grep,glob,bash" ] && pass 'selftest: the Captain gets exactly read, grep, glob, bash (no edit, no write)' || fail "selftest: tools were $(cat "$S/tools-seen" 2>/dev/null)"
   grep -q 'FAIL' "$t/out.txt" && fail "selftest: fake run failed: $(cat "$t/out.txt")" || pass 'selftest: a fake omp runs through the whole pipeline'
+  printf '#!/bin/sh\nkill -TERM $$\n' > "$t/omp-kill"; chmod +x "$t/omp-kill"
+  ( OMP_BIN=$t/omp-kill; run_one "$scn" selftest-kill 0 ) > "$t/out-kill.txt" 2>&1
+  grep -q '^INVALID' "$ART/selftest-kill/grade.txt" && ! grep -q '^\(ok\|FAIL\)' "$ART/selftest-kill/grade.txt" && pass 'selftest: a Captain killed by a signal is INVALID, not judged and never a PASS' || fail "selftest: killed Captain graded: $(cat "$ART/selftest-kill/grade.txt" 2>/dev/null)"
   [ "$(cat "$ART/$name/cost.txt")" = "0.030000" ] && pass 'selftest: cost is summed from the session usage' || fail "selftest: cost $(cat "$ART/$name/cost.txt")"
   if find_agents_md >/dev/null; then
     grep -q 'You are the first mate' "$S/context-seen" && pass 'selftest: the official AGENTS.md is in the Captain context' || fail 'selftest: AGENTS.md missing from the context'
@@ -829,6 +914,15 @@ SH
   grep -q 'code-changing' "$S/prompt-seen" && grep -q 'fm-workflow select' "$S/prompt-seen" && grep -q 'duration-cli \[direct-PR\]' "$S/prompt-seen" && pass 'selftest: the session digest carries captain.md and the project registry' || fail 'selftest: digest incomplete'
   grep -q 'do the thing' "$S/prompt-seen" && grep -q 'bin/fm-spawn.sh here only records' "$S/prompt-seen" && pass 'selftest: the prompt ends with the human message after the harness note' || fail 'selftest: prompt shape'
   [ "$(sed -n 2p "$S/env-seen")" != "" ] && [ "$(sed -n 1p "$S/env-seen")" != "$CONFIG_ROOT" ] && pass 'selftest: the Captain runs in the sandbox with FM_HOME and FM_CONFIG_ROOT set' || fail 'selftest: sandbox env'
+  [ "$(sed -n 4p "$S/env-seen")" = "$(dirname "$(sed -n 2p "$S/env-seen")")/tmp" ] && grep -q 'put scratch files in \$TMPDIR' "$S/prompt-seen" && pass 'selftest: the Captain gets a private TMPDIR and the prompt says to use it' || fail "selftest: private TMPDIR: $(sed -n 4p "$S/env-seen")"
+  grep -qF "SESSION START - $(sed -n 2p "$S/env-seen")" "$S/prompt-seen" && pass 'selftest: the session digest heading names the operational home (FM_HOME), as the real bin/fm-session-start.sh does' || fail 'selftest: the digest does not name FM_HOME'
+  local ct=$t/calls-shared.tsv sh_
+  printf 'bash\t{"command": "cat > /tmp/spec.txt <<EOF"}\nbash\t{"command": "cat > $TMPDIR/spec.txt; cat /var/x/T/fm-captain-live.AbC/tmp/s.txt"}\nbash\t{"command": "f=$(mktemp /tmp/brief.XXXXXX); cat ../tmp-notes"}\n' > "$ct"
+  sh_=$(scan_shared_tmp "$ct" /var/x/T/fm-captain-live.AbC | tr '\n' ' ')
+  [ "$sh_" = '/tmp/spec.txt /tmp/brief.XXXXXX ' ] && pass 'selftest: a fixed /tmp path is flagged, $TMPDIR and the run private directory are not' || fail "selftest: shared /tmp scan printed: $sh_"
+  printf 'Role source:\n  /private/var/x/T/s/fmroot/../config/roles/planner/ROLE.md\nother /var/x/T/s//config/roles/qa/ROLE.md and ../x kept https://e.invalid/a\n' > "$ct"
+  sh_=$(canon_paths "$ct" /var/x/T/s | tr '\n' '|')
+  [ "$sh_" = 'Role source:|  /var/x/T/s/config/roles/planner/ROLE.md|other /var/x/T/s/config/roles/qa/ROLE.md and ../x kept https://e.invalid/a|' ] && pass 'selftest: canon_paths collapses a dotdot hop, a doubled slash and the /private prefix of the sandbox, and nothing else (URLs keep their //)' || fail "selftest: canon_paths printed: $sh_"
   for f in fm-spawn.sh fm-brief.sh fm-send.sh fm-project-mode.sh fm-dispatch-resolve.sh fm-session-start.sh; do grep -qx "$f" "$S/bin-seen" && pass "selftest: stub $f is on the sandbox bin" || fail "selftest: stub $f missing"; done
   grep -q 'REQUIRED' "$S/spawn-usage-seen" && pass 'selftest: the fm-spawn stub refuses an incomplete spawn' || fail 'selftest: spawn stub usage'
   # the stub semantics: placeholders are refused, a filled brief is accepted, the project mode answers
@@ -914,7 +1008,7 @@ AGENTS_USED=$(find_agents_md) || AGENTS_USED='NONE FOUND (this run has no offici
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM
 ART="$ART_ROOT/$STAMP"
 mkdir -p "$ART"
-printf '# Live Captain results (%s, model %s, thinking %s, %s)\n\nofficial AGENTS.md: %s\nconfig checkout: %s\n\n| run | verdict | launches | tool calls | run USD | cumulative USD |\n|---|---|---|---|---|---|\n' "$STAMP" "$MODEL" "$THINKING" "$([ "$CONTROL" = 1 ] && echo 'NEGATIVE CONTROL: standing rule removed' || echo "real context${FM_CAPTAIN_LIVE_POLICY:+, WHAT-IF POLICY OVERRIDE: $FM_CAPTAIN_LIVE_POLICY}")" "$AGENTS_USED" "$CONFIG_ROOT" > "$ART/results.md"
+printf '# Live Captain results (%s, model %s, thinking %s, %s)\n\nofficial AGENTS.md: %s\nconfig checkout: %s\n\n| run | verdict | launches | tool calls | run USD | cumulative USD | secs | note |\n|---|---|---|---|---|---|---|---|\n' "$STAMP" "$MODEL" "$THINKING" "$([ "$CONTROL" = 1 ] && echo 'NEGATIVE CONTROL: standing rule removed' || echo "real context${FM_CAPTAIN_LIVE_POLICY:+, WHAT-IF POLICY OVERRIDE: $FM_CAPTAIN_LIVE_POLICY}")" "$AGENTS_USED" "$CONFIG_ROOT" > "$ART/results.md"
 if [ "$#" -gt 0 ]; then cases=("$@"); else cases=("$CASES_DIR"/*.sh); fi
 for c in "${cases[@]}"; do
   case $c in */*) ;; *) c="$CASES_DIR/${c%.sh}.sh" ;; esac
@@ -925,11 +1019,17 @@ for c in "${cases[@]}"; do
   while [ "$i" -le "$REPEAT" ]; do
     if over_budget; then fail "$name: budget $BUDGET USD reached (spent $SPENT); run not started"; break; fi
     label=$name-r$i; [ "$CONTROL" != 1 ] || label=control-$name-r$i
-    run_one "$c" "$label" "$CONTROL"
-    printf '%s\n' "$RUNROW" >> "$ART/results.md"
-    if [ "$CONTROL" = 1 ]; then printf 'info - %s: %s\n' "$label" "$(head -1 "$ART/$label/grade.txt")"
-    elif [ "$LAST_VERDICT" = PASS ]; then pass "live $label: $(grep -c '^ok' "$ART/$label/grade.txt") checks held ($(n_launched) launch(es), $(cat "$ART/$label/cost.txt") USD)"
-    else fail "live $label: $(grep '^FAIL' "$ART/$label/grade.txt" | cut -c1-160 | tr '\n' ' ')"; fi
+    attempt=0; vlabel=$label
+    while :; do
+      run_one "$c" "$vlabel" "$CONTROL"
+      printf '%s\n' "$RUNROW" >> "$ART/results.md"
+      [ "$LAST_VERDICT" = INVALID ] && [ "$attempt" -lt 2 ] || break
+      attempt=$((attempt + 1)); vlabel=$label-again$attempt
+    done
+    if [ "$LAST_VERDICT" = INVALID ]; then fail "live $label: INVALID three times (omp killed by a signal each time)"
+    elif [ "$CONTROL" = 1 ]; then printf 'info - %s: %s\n' "$label" "$(head -1 "$ART/$vlabel/grade.txt")"
+    elif [ "$LAST_VERDICT" = PASS ]; then pass "live $label: $(grep -c '^ok' "$ART/$vlabel/grade.txt") checks held ($(n_launched) launch(es), $(cat "$ART/$vlabel/cost.txt") USD)"
+    else fail "live $label: $(grep '^FAIL' "$ART/$vlabel/grade.txt" | cut -c1-160 | tr '\n' ' ')"; fi
     rm -rf "$SCR"
     i=$((i + 1))
   done

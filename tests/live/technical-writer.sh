@@ -21,7 +21,7 @@
 CASE_KIND=role
 CASE_ROLE=technical-writer
 CASE_SKILL_ONLY_TOKENS="Superseded .adr-dir"
-CASE_CONTROL_INFORMATIONAL='the no-skill control supersedes ADR 0002 and writes ADR 0004 in the adr-tools layout from the model baseline; ROLE.md does not state the supersede rule'
+CASE_CONTROL_INFORMATIONAL='the no-skill control supersedes ADR 0002 and writes ADR 0004 in the adr-tools layout from the model baseline (passed in 6 of 6 full runs X1-X6; 20 of 21 saved controls pass the current grader); ROLE.md does not state the supersede rule'
 CASE_PROMPT='The team settled the session-cache question; the facts are in notes/cache-decision.txt.
 Write it up for the repo'"'"'s decision log. Documentation only: the code change is tracked separately.'
 

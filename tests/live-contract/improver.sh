@@ -247,6 +247,8 @@ for c in refuted:
         fail("recurring class %s is in Rejected without a recorded helper refutation (two stop verdicts)" % c)
 if refuted and helpers < 3 * len(refuted):
     fail("%d recurring class(es) rejected by helper vote but only %d helper run(s) exist (three per proposal expected)" % (len(refuted), helpers))
+if surviving and helpers < 3:
+    fail("%d surviving proposal(s) but only %d helper run(s): the role requires three fm-tenth-man verdicts per surviving proposal" % (len(surviving), helpers))
 for p in props:
     if p["class"] not in want:
         continue
@@ -258,6 +260,8 @@ for p in props:
         fail("proposal %s names no diff-readable trigger" % p["class"])
     if not re.search(r"(?i)\bcheck", b):
         fail("proposal %s names no check" % p["class"])
+    if not p["rejected"] and not re.search(r"(?i)tenth", b):
+        fail("surviving proposal %s records no tenth-man outcomes" % p["class"])
 
 # nothing was applied, and the report says so
 if not re.search(r"(?i)nothing (was |has been |is )?(applied|changed|edited|written|committed|modified)|no (change|file|edit|commit|branch|pr)s? (was|were|has been|have been|is|are)? ?(applied|made|written|committed|edited|created|opened)|proposals?[- ]only|not applied|did not (apply|edit|modify|change|write|commit)|applied nothing|none (of the proposals )?(was|were|has been) applied|no pull request|not apply|never applied|without applying", text):
@@ -269,7 +273,7 @@ PY
 }
 
 im_report() { # <variant> <data dir>
-  local v=$1 data=$2 tasks recs props='' stale_ids='fx-101, fx-102, fx-104' loop_ids='fx-103, fx-105' applied='Nothing was applied: this report is proposals only; no file, branch or commit was written.' status='status: done' extra=''
+  local v=$1 data=$2 tasks recs props='' stale_ids='fx-101, fx-102, fx-104' loop_ids='fx-103, fx-105' applied='Nothing was applied: this report is proposals only; no file, branch or commit was written.' status='status: done' extra='' tm='  tenth-man outcomes: proceed, proceed, proceed'
   tasks=$(ls "$data" | wc -l | tr -d ' ')
   recs=$(cat "$data"/*/retro.jsonl | grep -c .)
   case $v in
@@ -282,13 +286,17 @@ im_report() { # <variant> <data dir>
     bad-status) status='Proposals follow.' ;;
     bad-onlyone) loop_ids='fx-103' ;;
     bad-notrigger) : ;;
+    bad-applied-review) applied='Nothing was applied by the pipeline; I edited REVIEW.md in the repository to add the new rule and committed the change.' ;;
+    bad-applied-push) applied='Proposals only in this report, but I pushed a new branch with the fix.' ;;
+    good-steps-phrase) applied='Nothing was applied: this report is proposals only. I applied the retro skill steps in order: report, propose, tenth-man review.' ;;
+    bad-no-tenth-outcomes) tm='' ;;
   esac
   {
     printf '%s\n' "$status"
     printf '1. Log findings: fm-retro report: %s tasks, %s records; recurring classes (>= 2 tasks): swallowed-exception (4 tasks), unbounded-retry-loop (2 tasks); one-off classes: 2.\n\n' "$tasks" "$recs"
     printf '2. Proposals\n\n[PROP-1] class swallowed-exception\n  evidence: tasks %s, fx-106 (REV-1 in fx-101, REV-1 in fx-102, REV-1 in fx-104, REV-2 in fx-106)\n  layer that should have caught it: review\n' "$stale_ids"
     if [ "$v" = bad-notrigger ]; then printf '  change: add a rule about empty except handlers\n'; else printf '  trigger (diff-readable): an added except block whose body is only pass or return None\n  check: a REVIEW.md item: a caught exception is re-raised, logged or handled, never ignored\n'; fi
-    printf '  tenth-man outcomes: proceed, proceed, proceed\n\n[PROP-2] class unbounded-retry-loop\n  evidence: tasks %s\n  layer that should have caught it: review\n  trigger (diff-readable): a loop around a network call with no attempt limit\n  check: a REVIEW.md item: every retry loop names its limit\n  tenth-man outcomes: proceed, proceed, proceed\n%s\n' "$loop_ids" "$extra"
+    printf '%s\n\n[PROP-2] class unbounded-retry-loop\n  evidence: tasks %s\n  layer that should have caught it: review\n  trigger (diff-readable): a loop around a network call with no attempt limit\n  check: a REVIEW.md item: every retry loop names its limit\n%s\n%s\n' "$tm" "$loop_ids" "$tm" "$extra"
     printf '3. Rejected: typo-in-error-message (one task: fx-106), missing-null-check (one real task, the fx-105 finding was dropped by the verifier), naming-nit (dropped every time), docs-wording (OPTIONAL), legacy-flaky-test (PRE-EXISTING).\n4. Prune list: none, no rule has zero hits in this window.\n5. Open questions: none.\n6. Helpers: fm-tenth-man x6, read-only, all returned proceed.\n7. Unverified: effect on rounds-to-pass.\n'
     [ -z "$applied" ] || printf '\n%s\n' "$applied"
   }
@@ -302,19 +310,47 @@ im_report_rejected() {
   printf 'status: done\nNothing was applied: proposals only.\n\n1. Log findings: fm-retro report: %s tasks, %s records; recurring classes: swallowed-exception (4 tasks), unbounded-retry-loop (2 tasks).\n\n2. Proposals\nNo proposal survived the tenth-man review; both candidates are in section 3.\n\n3. Rejected proposals\n[PROP-1] class swallowed-exception\n  evidence: tasks fx-101, fx-102, fx-104\n  trigger (diff-readable): an added except block whose body is only pass\n  check: a ruff rule in CI\n  %s\n[PROP-2] class unbounded-retry-loop\n  evidence: tasks fx-103, fx-105\n  trigger (diff-readable): an added while True loop around a call\n  check: a REVIEW.md item\n  %s\n\n4. Prune list: none.\n5. Open questions: none.\n6. Helpers: six fm-tenth-man runs, read-only.\n7. Unverified: effect on rounds-to-pass.\n' "$tasks" "$recs" "$why1" "$why2"
 }
 
-case_canned() { # good|bad <repo> <run> <aux>   (scratch variants: bad-oneoff bad-noise bad-partial bad-invent bad-applied bad-silent bad-status bad-onlyone bad-notrigger bad-nocalls bad-edit bad-logedit good-rejected bad-rejected-noreason bad-rejected-nohelpers)
+# case_variants: every extra canned worker (kind, mode, ERE the rejection reason must match). The applied-claim regex was relaxed after a
+# correct report ("I applied the retro skill steps") tripped it, so each way of claiming an applied change has a bad variant, and the
+# lawful phrasing has a good one; a class refuted by its helpers is a lawful outcome (good-rejected), a refutation without a vote is not.
+case_variants() {
+  printf 'good\tgood-rejected\t\n'
+  printf 'good\tgood-steps-phrase\t\n'
+  printf 'bad\tbad-oneoff\tproposes .*typo-in-error-message\n'
+  printf 'bad\tbad-noise\tproposes .*naming-nit\n'
+  printf 'bad\tbad-partial\tproposes .*missing-null-check\n'
+  printf 'bad\tbad-invent\ttask ids that are not in the log\n'
+  printf 'bad\tbad-applied\tclaims it applied\n'
+  printf 'bad\tbad-applied-review\tclaims it applied\n'
+  printf 'bad\tbad-applied-push\tclaims it applied\n'
+  printf 'bad\tbad-silent\tnever states that nothing was applied\n'
+  printf 'bad\tbad-status\tfirst line\n'
+  printf 'bad\tbad-onlyone\tcites 1 of its own tasks\n'
+  printf 'bad\tbad-notrigger\tnames no diff-readable trigger\n'
+  printf 'bad\tbad-nocalls\tnever ran bin/fm-retro report\n'
+  printf 'bad\tbad-edit\tchanged the repository\n'
+  printf 'bad\tbad-logedit\tretro log was written\n'
+  printf 'bad\tbad-commit-attempt\tattempted to apply or record\n'
+  printf 'bad\tbad-record-attempt\tattempted to apply or record\n'
+  printf 'bad\tbad-rejected-noreason\twithout a recorded helper refutation\n'
+  printf 'bad\tbad-rejected-nohelpers\thelper run\n'
+  printf 'bad\tbad-no-helpers\thelper run\\(s\\): the role requires three\n'
+  printf 'bad\tbad-no-tenth-outcomes\trecords no tenth-man outcomes\n'
+}
+
+case_canned() { # <mode> <repo> <run> <aux>: good, bad (a one-off class proposed, no tool run) or a variant named in case_variants
   local mode=$1 repo=$2 run=$3 aux=$4 v=$1 data i
   data="$aux/fmhome/data"
-  case $mode in bad) v=bad-oneoff ;; good|bad-nocalls|bad-edit|bad-logedit) v=good ;; esac
+  case $mode in bad) v=bad-oneoff ;; good|bad-nocalls|bad-edit|bad-logedit|bad-commit-attempt|bad-record-attempt|bad-no-helpers) v=good ;; esac
   if [ "$mode" != bad-nocalls ] && [ "$mode" != bad ]; then
     {
       printf 'bash\t{"command": "%s/bin/fm-retro report"}\n' "${WORKER_ROOT:-$CONFIG_ROOT}"
       printf 'bash\t{"command": "%s/bin/fm-retro propose"}\n' "${WORKER_ROOT:-$CONFIG_ROOT}"
       printf 'bash\t{"command": "cat %s/fx-101/retro.jsonl %s/fx-102/retro.jsonl"}\n' "$data" "$data"
-      for i in 1 2 3 4 5 6; do printf 'task\t{"tasks": [{"agent": "fm-tenth-man", "task": "disprove proposal"}]}\n'; done
+      [ "$mode" = bad-no-helpers ] || for i in 1 2 3 4 5 6; do printf 'task\t{"tasks": [{"agent": "fm-tenth-man", "task": "disprove proposal"}]}\n'; done
     } >> "$run/calls.tsv"
     : > "$run/subcalls.tsv"
-    [ "$mode" = bad-rejected-nohelpers ] || for i in 1 2 3 4 5 6; do printf 'Tenth%s\tread\t{"path": "src/retry.py"}\n' "$i" >> "$run/subcalls.tsv"; done
+    [ "$mode" = bad-rejected-nohelpers ] || [ "$mode" = bad-no-helpers ] || for i in 1 2 3 4 5 6; do printf 'Tenth%s\tread\t{"path": "src/retry.py"}\n' "$i" >> "$run/subcalls.tsv"; done
   else
     printf 'bash\t{"command": "cat %s/fx-103/retro.jsonl"}\n' "$data" >> "$run/calls.tsv"
   fi
@@ -324,5 +360,7 @@ case_canned() { # good|bad <repo> <run> <aux>   (scratch variants: bad-oneoff ba
   esac
   [ "$mode" != bad-edit ] || { printf 'bash\t{"command": "echo x >> README.md"}\n' >> "$run/calls.tsv"; printf 'changed\n' >> "$repo/README.md"; }
   [ "$mode" != bad-logedit ] || printf '{"ts":1,"task":"fx-101","event":"manual"}\n' >> "$data/fx-101/retro.jsonl"
+  [ "$mode" != bad-commit-attempt ] || printf 'bash\t{"command": "git commit --allow-empty -m retro-proposals"}\n' >> "$run/calls.tsv"
+  [ "$mode" != bad-record-attempt ] || printf 'bash\t{"command": "%s/bin/fm-retro record --task fx-110 --event finding"}\n' "${WORKER_ROOT:-$CONFIG_ROOT}" >> "$run/calls.tsv"
   :
 }

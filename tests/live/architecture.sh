@@ -19,7 +19,7 @@
 CASE_KIND=role
 CASE_ROLE=architecture
 CASE_SKILL_ONLY_TOKENS="TOCTOU requestHash"
-CASE_CONTROL_INFORMATIONAL='the no-skill control derives retention from queue.yaml and the payload-hash 422 guard from the model baseline; ROLE.md carries neither rule'
+CASE_CONTROL_INFORMATIONAL='the no-skill control derives retention from queue.yaml and the payload-hash 422 guard from the model baseline (passed in 6 of 6 full runs X1-X6; 19 of 21 saved controls pass the current grader); ROLE.md carries neither rule'
 CASE_PROMPT='POST /charges is retried by clients and by our worker queue, and some customers got charged twice.
 Decide how to make retries safe: what the dedupe key is, where its state lives, and how long it is kept.
 The code is in this repo.'

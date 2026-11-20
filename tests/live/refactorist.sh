@@ -10,9 +10,9 @@
 # code is as it is before touching it (git log/blame on the lines)", so the history habit is
 # also in the body; it never names Chesterton's Fence or the banned wording, which only the
 # skills hold (those are the skill-only tokens). No CASE_BODY_PHRASE: the body does not name the Fence or the
-# banned wording. Live control evidence (body kept, skills stripped; 10 runs on 2026-11-20): fails the grader 6
-# times (never opened git history, or "Perfect!"/"should"), passes 4 times, so the control is only partly
-# discriminating; CASE_CONTROL_INFORMATIONAL keeps a baseline pass from failing the case.
+# banned wording. Live control evidence (body kept, skills stripped): passes the grader in 4 of 6 full runs on 2026-11-20
+# (X1-X6) and in 17 of 24 saved controls under the current grader; it fails when it never opens git history or ends with
+# "Perfect!"/"should", so the control is only partly discriminating; CASE_CONTROL_INFORMATIONAL keeps a baseline pass from failing the case.
 #
 # Control (no skills) tends to tidy the function, drop or ignore the odd branch, never
 # open git history and never mention INC-4412; it often ends with "Perfect!"/"should".
@@ -23,7 +23,7 @@
 CASE_KIND=role
 CASE_ROLE=refactorist
 CASE_SKILL_ONLY_TOKENS='Chesterton Perfect!'
-CASE_CONTROL_INFORMATIONAL='the no-skill control failed this grader in 6 of 10 live runs but passed in 4 (checked git history and avoided unverified-success wording from the model baseline); ROLE.md names git log/blame but not the Fence or the banned wording'
+CASE_CONTROL_INFORMATIONAL='the no-skill control passed in 4 of 6 full runs X1-X6 and in 17 of 24 saved controls under the current grader (checked git history and avoided unverified-success wording from the model baseline); ROLE.md names git log/blame but not the Fence or the banned wording'
 CASE_PROMPT='Simplify billing.py::to_cents - it is hard to read. One small change, behavior must stay identical. The tests are run with: python3 test_billing.py'
 
 _billing_v1() {

@@ -2,77 +2,45 @@
 # roles-e2e.sh - end-to-end role handoff through the REAL official dispatch
 # path: for EACH role, bin/fm-brief.sh scaffolds a brief, this script plays the
 # Captain (fills the Firstmate spec with bin/fm-role-handoff <role> and nothing
-# else), and the unmodified official bin/fm-spawn.sh launches the task on an
-# isolated tmux server into a real treehouse worktree. Only the `omp`
+# else), and the unmodified official bin/fm-spawn.sh launches the task on a private
+# tmux server into a real treehouse worktree. Only the `omp`
 # executable is fake: it records the argv it was really launched with, which is
 # the worker's FIRST input. Per role, that input must contain the ROLE.md path
 # and exactly the role's autoloadSkills paths, and nothing the Captain selected.
 #
 # What this proves: the brief a real spawn delivers carries exactly the role
-# handoff. What it cannot prove: that a model reads or applies any of it (see
-# tests/roles-live.sh for that), or that the Captain picked the right role.
+# handoff. It uses a FAKE omp, so it cannot prove that a model reads or applies
+# any of it (see tests/roles-live.sh for that), or that the Captain picked the
+# right role.
 #
-# SKIPs (never PASS) without tmux, treehouse, or an official FirstMate checkout
-# at $FIRSTMATE_ROOT (default ~/Developer/tools/firstmate).
+# ISOLATED LAB (tests/e2e-lib/lab.sh has the full list): safe on a machine with a live
+# fleet, also when started from inside a fleet tmux pane or treehouse worktree. A private
+# tmux server, a throwaway HOME / FM_HOME / TMPDIR / project (its treehouse pool lives in
+# the project), `env -i` for every official script (no inherited TMUX or FM_*), recording
+# shims for tmux and treehouse and deny-and-record shims for the fleet tools. The run ends
+# with lab_guard's assertions over that record (every call was on the lab) and proves the
+# lab is gone. Tear-down is idempotent and also called explicitly, so it holds under a
+# harness that does not fire EXIT traps.
+#
+# SKIPs (never PASS) without tmux, treehouse, jq, or an official FirstMate checkout at
+# $FIRSTMATE_ROOT (default ~/Developer/tools/firstmate). FIRSTMATE_ROOT also lets a
+# deliberately broken launch be fed in: tests/e2e-lib/broken-firstmate.sh builds a
+# FirstMate whose launch drops the role handoff, selects an extra skill, or leaves the
+# lab; the suite must FAIL on each.
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HANDOFF="$CONFIG_ROOT/bin/fm-role-handoff"
 FM_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
+# shellcheck source=tests/e2e-lib/lab.sh
+. "$CONFIG_ROOT/tests/e2e-lib/lab.sh"
 
-if ! command -v tmux >/dev/null 2>&1 || ! command -v treehouse >/dev/null 2>&1 \
-   || [ ! -x "$FM_ROOT/bin/fm-spawn.sh" ] || [ ! -x "$FM_ROOT/bin/fm-brief.sh" ]; then
-  printf 'SKIP - roles e2e: needs tmux, treehouse, and %s/bin/fm-{brief,spawn}.sh (never reported as PASS)\n\nROLES E2E SKIPPED\n' "$FM_ROOT"
-  exit 0
-fi
-
-failed=0
-pass() { printf 'ok   - %s\n' "$1"; }
-fail() { printf 'FAIL - %s\n' "$1" >&2; failed=1; }
-check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected '$3', got '$2')"; fi; }
-has() { case $2 in *"$3"*) pass "$1" ;; *) fail "$1 (missing '$3')" ;; esac; }
-lacks() { case $2 in *"$3"*) fail "$1 (unexpected '$3')" ;; *) pass "$1" ;; esac; }
-field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | tail -1; }
-
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-roles-e2e.XXXXXX") || exit 1
-TMP=$(cd "$TMP" && pwd)
-RUN=$$
-SEAM_TMUX=$(mktemp -d /tmp/fm-roles-tmux.XXXXXX) || exit 1
-cleanup() {
-  TMUX_TMPDIR="$SEAM_TMUX" tmux kill-server >/dev/null 2>&1 || true
-  sleep 0.3
-  chmod -R u+w "$TMP" "$SEAM_TMUX" /tmp/fm-roles-e2e-"$RUN"-* /tmp/fm-roles-e2e-"$RUN"-*+* 2>/dev/null
-  rm -rf "$TMP" "$SEAM_TMUX" /tmp/fm-roles-e2e-"$RUN"-* /tmp/fm-roles-e2e-"$RUN"-*+*
-}
-trap cleanup EXIT
-
-export FM_CONFIG_ROOT="$CONFIG_ROOT" FM_SKILLS_ROOT="$TMP/home/.agents/skills"
-home="$TMP/fm-home"
-proj="$home/projects/e2e-proj"
-mkdir -p "$home/state" "$home/config" "$home/data" "$TMP/home" "$TMP/bin" "$proj"
-printf 'manual\n' > "$home/config/backlog-backend"
-printf '# E2E project\n' > "$proj/AGENTS.md"
-printf 'max_trees = 24\nroot = "./"\n' > "$proj/treehouse.toml"
-git -C "$proj" init -q
-git -C "$proj" add -A
-git -C "$proj" -c user.email=t@example.invalid -c user.name=t commit -q -m init
-
-cat > "$TMP/bin/omp" <<'SH'
-#!/usr/bin/env bash
-[ "${1:-}" = --help ] && { printf 'usage: omp [options] [prompt]\n'; exit 0; }
-if [ "${1:-}" = models ]; then
-  printf '{"models":[{"provider":"anthropic","id":"claude-opus-5-5","selector":"anthropic/claude-opus-5-5"},{"provider":"anthropic","id":"claude-sonnet-5-5","selector":"anthropic/claude-sonnet-5-5"}]}\n'
-  exit 0
-fi
-printf '%s\n' "$@" > worker-argv.tmp
-mv worker-argv.tmp worker-argv.txt
-SH
-chmod +x "$TMP/bin/omp"
+lab_prereq roles ROLES
+lab_up roles
 
 OPUS=anthropic/claude-opus-5-5
-SPAWN_ENV=(TMUX_TMPDIR="$SEAM_TMUX" PATH="$TMP/bin:$PATH" HOME="$TMP/home" FM_HOME="$home" FM_BACKEND=tmux)
 roles=$("$HANDOFF" --roles)
-[ -n "$roles" ] || { fail 'no roles found'; exit 1; }
+[ -n "$roles" ] || { fail 'no roles found'; lab_finish ROLES; exit 1; }
 
 n=0
 for role in $roles; do
@@ -80,7 +48,7 @@ for role in $roles; do
   id="fm-roles-e2e-$RUN-$n"
   want=$("$HANDOFF" --skills "$role")
   # 1. the real brief scaffold, then the Captain's fill: intent plus the role handoff only.
-  if ! scaffold=$(env "${SPAWN_ENV[@]}" "$FM_ROOT/bin/fm-brief.sh" "$id" projects/e2e-proj --mode local-only 2>&1); then
+  if ! scaffold=$(lab_run "$FM_ROOT/bin/fm-brief.sh" "$id" projects/e2e-proj --mode local-only 2>&1); then
     fail "$role: real fm-brief.sh scaffold failed: $scaffold"; continue
   fi
   brief="$home/data/$id/brief.md"
@@ -91,7 +59,7 @@ for role in $roles; do
   body=${body/'{FIRSTMATE_SPEC}'/$spec}
   printf '%s\n' "$body" > "$brief"
   # 2. the real spawn.
-  if ! out=$(env "${SPAWN_ENV[@]}" timeout 90 "$FM_ROOT/bin/fm-spawn.sh" "$id" projects/e2e-proj \
+  if ! out=$(lab_run ${LAB_TMO[@]+"${LAB_TMO[@]}"} "$FM_ROOT/bin/fm-spawn.sh" "$id" projects/e2e-proj \
       --mode local-only --yolo off --harness omp --model "$OPUS" --effort high 2>&1); then
     fail "$role: real fm-spawn failed: $out"; continue
   fi
@@ -130,9 +98,10 @@ Requirement:
     tenth-man) cat_n='TENTH-MAN #1' why='captain override - e2e fixture spawns every role on one route' ;;
     *) cat_n='IMPLEMENT #2' why='e2e fixture' ;;
   esac
+  skills_line=$(printf '%s' "$want" | paste -sd, - | sed 's/,/, /g')
+  [ -n "$skills_line" ] || skills_line=none   # BSD paste prints nothing at all for empty input
   printf 'Routing: %s | role %s | omp | %s | high | why: %s\nAgent: %s\nSkills: %s\n' \
-    "$cat_n" "$role" "$OPUS" "$why" "$role" \
-    "$(printf '%s' "$want" | paste -sd, - | sed 's/,/, /g; s/^$/none/')" > "$TMP/trace-$n.txt"
+    "$cat_n" "$role" "$OPUS" "$why" "$role" "$skills_line" > "$TMP/trace-$n.txt"
   if "$CONFIG_ROOT/tests/routing-trace.sh" check "$TMP/trace-$n.txt" omp "$OPUS" high --brief "$TMP/delivered-$n.txt" > "$TMP/check-$n.out" 2>&1; then
     pass "$role: the derived trace agrees with the delivered brief (check --brief)"
   else
@@ -141,5 +110,4 @@ Requirement:
 done
 [ "$n" -eq "$(printf '%s\n' "$roles" | grep -c .)" ] && pass "all $n roles went through the real brief and spawn path" || fail 'not every role was dispatched'
 
-printf '\nROLES E2E %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
-[ "$failed" -eq 0 ]
+lab_finish ROLES

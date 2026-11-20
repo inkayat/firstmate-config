@@ -470,22 +470,26 @@ set the suite's `..._LIVE_SKILL_SRC=/tmp/pinned/skills`.
 | --- | --- | --- |
 | Skills read and applied | `FM_ROLE_LIVE=1 bash tests/roles-live.sh [case...]` | The cases in `tests/live/`. Each case is in one of three states, named in its file: skill-exclusive (the no-skill control fails), body-carries (`CASE_BODY_PHRASE`: the role body states the rule, checked against the ROLE.md offline), or baseline-informational (`CASE_CONTROL_INFORMATIONAL`: the control passes on the model's own baseline, so the case proves the skill was read and the outcome is right, not that the skill is needed) |
 | Role contracts | `FM_CONTRACT_LIVE=1 bash tests/roles-contract-live.sh [case...]` | The roles this army added, one or two scenarios each (`tests/live-contract/`): lead (delegates to roles in its `spawns`, integrates, verifies), perf-engineer (measures first, an independent bench re-measures), test-engineer (red on the bug, green on two different reference implementations), ui-qa (a real browser through `chrome-devtools-axi`, a seeded defect found and a clean app passed), risk-classifier (rules read from the base branch, a weakened rule ignored), release-engineer (a stale gate fails, fresh gates pass), finding-verifier (confirms the real defect, drops the false, style-only and duplicate ones), researcher (citations verifiable in the fixture, the unfound question UNVERIFIED), improver (proposes exactly the recurring classes, applies nothing). The runner gives the worker exactly the tools its ROLE.md lists |
-| Workflows | `FM_WORKFLOW_LIVE=1 bash tests/workflows-live.sh [case...]` | `plan`, `qa-loop`, `review-loop`, `bug-fix` (a symptom fix cannot satisfy the hidden two-order scenario; the regression test is red at its own commit and untouched by the fix), `refactor`, `delegated-build`, `change-direction`. A non-QA worker that goes looking for the hidden kit fails the case |
-| Captain | `FM_CAPTAIN_LIVE=1 bash tests/captain-live.sh [scenario...]` | A real model plays the Captain with this `captain.md`, the policy and the official `AGENTS.md`; worker launching is stubbed. Judged from the ordered invocation log: `fm-workflow select` before the first launch, the exceptions taken, `delegated-build` under no-mistakes. Run it serially |
+| Workflows | `FM_WORKFLOW_LIVE=1 bash tests/workflows-live.sh [case...]` | `plan`, `qa-loop`, `review-loop`, `bug-fix` (a symptom fix cannot satisfy the hidden two-order scenario; the regression test is red at its own commit and untouched by the fix), `refactor`, `delegated-build`, `change-direction`, `research-decide` (passages quoted verbatim from the vendor docs, the unanswerable question UNVERIFIED, at most three options), `security-route` (the security step finds a sensitive-file exposure that only the deployment fact reveals; verify-security confirms it and the implementer fixes it), `ui-build-verify-review` (the service the stale docs describe wrongly answers 415: only the real-browser step sees it; the judge drives a real browser, so the case SKIPs without `chrome-devtools-axi`) and `round-cap` (the fourth QA FAIL becomes the step-back and an escalation, never a fourth round). The QA kit exists on disk only while QA runs it, and QA is told never to write its path in a report; a non-QA worker that goes looking for it fails the case |
+| Captain | `FM_CAPTAIN_LIVE=1 bash tests/captain-live.sh [scenario...]` | A real model plays the Captain with this `captain.md`, the policy and the official `AGENTS.md`; worker launching is stubbed. Judged from the ordered invocation log: `fm-workflow select` before the first launch, the exceptions taken, `delegated-build` under no-mistakes, the engine's `next --spec` pasted unchanged into the brief. Each run has its own `TMPDIR`, so several invocations may run at once; a run whose Captain used a fixed `/tmp` path is flagged in `results.md`. `FM_CAPTAIN_LIVE_CONTROL=1` is the negative control (the rule and every paragraph naming `fm-workflow` removed from the Captain's context), informational only |
 | Retro | `bash tests/retro-live.sh` | `fm-retro record`, `report` and `propose` over the retro logs real workflow runs left in `tests/live-artifacts/`, compared with an independent oracle (SKIPs when there is none) |
 
 What the live layer does not prove, and what is known to be unfinished:
 
 - One model (Sonnet 5.5) and a few runs per scenario: evidence, not a guarantee.
   Several judges were loosened after a live run showed a correct worker failing
-  them; each such change is in the PR description.
-- `tests/live-workflows/unstable/` holds scenarios that do not yet pass or
-  force their loop reliably (`round-cap`, `security-route`,
-  `ui-build-verify-review`, `research-decide`). They run live only, by path, and
-  have no offline self-test wired.
+  them; each such change is in the PR description, and each has a registered
+  bad-worker variant (`case_variants` in the case file) that the relaxed judge
+  still rejects, run by the offline self-test with the reason it must give.
+  `finding-verifier-helper` runs the verifier again with the skeptic helpers
+  asked for in the brief.
+- `security-route` (a sensitive-file exposure only the security step, told the
+  deployment fact, finds) needed its case fixed before it was stable: a live run
+  ended `change-direction` because the verified finding contradicted the ticket's
+  "any file under data/", so the security step and the verifier now state the
+  Captain's policy in every finding.
 - The Captain suite proves the standing rule is followed with stubbed launches,
   not the production fleet; four of its eight scenarios were not stable, mostly
   on the Captain pasting the engine's spec incompletely.
-- `refactor`, `delegated-build` and `change-direction` passed one live run each
-  (no repeats); the security route, `research-decide`, `ui-build-verify-review`
-  and the round cap with its step-back were not proven live.
+- Every workflow case passed three consecutive live runs on the final driver
+  (one model, Sonnet 5.5): evidence, not a guarantee.

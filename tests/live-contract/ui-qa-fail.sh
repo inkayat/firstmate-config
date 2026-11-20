@@ -158,10 +158,12 @@ uiqa_common() {
   uiqa_sha_matches "$commit" "$head" || { echo "verdict commit '$commit' is not the head $head"; return 1; }
   [ -z "$(git -C "$repo" status --porcelain --untracked-files=no)" ] || { echo "tracked files changed: $(changed_files | tr '\n' ' ')"; return 1; }
   call_has 'chrome-devtools-axi' || { echo "no chrome-devtools-axi call: the app was not driven in a real browser"; return 1; }
-  # a worker may alias the CLI (A=chrome-devtools-axi; $A click ...), so match the verb after the name anywhere in the call
-  call_has 'chrome-devtools-axi.*(open|newpage) +\\?"?https?://' || { echo "the browser never opened a page (no chrome-devtools-axi open/newpage URL)"; return 1; }
-  call_has 'chrome-devtools-axi.*(click|fill|fillform|type|press|eval) +[@\\"(a-zA-Z]' || { echo "no browser interaction (click/fill/type/press/eval): only page-load evidence"; return 1; }
-  call_has 'chrome-devtools-axi.*screenshot' || { echo "no chrome-devtools-axi screenshot command"; return 1; }
+  # a worker may alias the CLI (A=chrome-devtools-axi; $A click ...), so the verb may follow the CLI name or a $VAR in the same
+  # command segment (no pipe, semicolon or ampersand between): text that only mentions a verb (--help | grep click) is not a command
+  local cli='(chrome-devtools-axi|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)[^|;&]* +'
+  call_has "${cli}"'(open|newpage) +\\?"?https?://' || { echo "the browser never opened a page (no chrome-devtools-axi open/newpage URL)"; return 1; }
+  call_has "${cli}"'(click|fill|fillform|type|press|eval) +[@\\"(a-zA-Z]' || { echo "no browser interaction (click/fill/type/press/eval): only page-load evidence"; return 1; }
+  call_has "${cli}"'screenshot( |\\?"|$)' || { echo "no chrome-devtools-axi screenshot command"; return 1; }
   grep -q 'GET /app.js' "$aux/server.log" 2>/dev/null || { echo "the server never saw GET /app.js: the page was not loaded"; return 1; }
   for png in $(grep -oE '[A-Za-z0-9._/~-]+\.png' "$run/final.txt" | sort -u); do
     f="${EVIDENCE_DIR:-$repo/evidence}/$(basename "$png")"
@@ -182,11 +184,19 @@ case_grade() {
   echo "FAIL bound to head, the empty-email defect named, real browser driven (screenshot $(basename "$UIQA_SHOT") is a real PNG), tracked files unchanged"
 }
 
-uiqa_canned_browser() { # shared canned calls + a real PNG in the evidence dir
-  local aux=$4 shot
+# uiqa_canned_browser <mode> <run> <repo> <aux> [style]: the canned worker browser calls and the evidence PNG.
+# style: normal | alias (one call aliases the CLI, a lawful route) | help-only (names the CLI but only runs --help/list/stop)
+# | no-interaction (open + screenshot, never clicks) | no-screenshot-cmd (open + click, the PNG is cited but never taken)
+# | png-missing (screenshot command, cited PNG never written) | png-invalid (cited PNG is not a PNG)
+# | help-grep (open + a --help | grep that only mentions interaction verbs) | no-load (the page script is never fetched)
+uiqa_canned_browser() {
+  local aux=$4 style=${5:-normal} shot
   [ ! -f "$aux/env" ] || { set -a; . "$aux/env"; set +a; }
   shot="$EVIDENCE_DIR/ui-qa-1.png"
-  python3 - "$shot" <<'PY'
+  case $style in
+    png-missing) ;;
+    png-invalid) printf 'this is not a png\n' > "$shot" ;;
+    *) python3 - "$shot" <<'PY'
 import struct, sys, zlib
 def chunk(t, d):
     return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
@@ -195,39 +205,125 @@ raw = b''.join(b'\x00' + b'\xff\xff\xff' * w for _ in range(h))
 png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
 open(sys.argv[1], 'wb').write(png)
 PY
-  curl -s -o /dev/null "${APP_URL}app.js"
+    ;;
+  esac
+  # every style but no-load fetches the page script, so the browser-call checks are the ones that bite
+  [ "$style" = no-load ] || curl -s -o /dev/null "${APP_URL}app.js"
   {
     printf 'bash\t{"command": "git rev-parse HEAD"}\n'
-    printf 'bash\t{"command": "chrome-devtools-axi --help"}\n'
-    printf 'bash\t{"command": "chrome-devtools-axi open %s"}\n' "$APP_URL"
-    printf 'bash\t{"command": "chrome-devtools-axi click @g1:1_5"}\n'
-    printf 'bash\t{"command": "chrome-devtools-axi snapshot"}\n'
-    printf 'bash\t{"command": "chrome-devtools-axi screenshot %s"}\n' "$shot"
+    case $style in
+      alias)
+        printf 'bash\t{"command": "A=chrome-devtools-axi; $A --help; $A open %s; $A click @g1:1_5; $A snapshot; $A screenshot %s"}\n' "$APP_URL" "$shot" ;;
+      help-only)
+        printf 'bash\t{"command": "chrome-devtools-axi --help"}\n'
+        printf 'bash\t{"command": "chrome-devtools-axi list"}\n'
+        printf 'bash\t{"command": "chrome-devtools-axi stop"}\n' ;;
+      no-interaction)
+        printf 'bash\t{"command": "chrome-devtools-axi --help"}\n'
+        printf 'bash\t{"command": "chrome-devtools-axi open %s"}\n' "$APP_URL"
+        printf 'bash\t{"command": "chrome-devtools-axi snapshot"}\n'
+        printf 'bash\t{"command": "chrome-devtools-axi screenshot %s"}\n' "$shot" ;;
+      no-screenshot-cmd)
+        printf 'bash\t{"command": "chrome-devtools-axi --help"}\n'
+        printf 'bash\t{"command": "chrome-devtools-axi open %s"}\n' "$APP_URL"
+        printf 'bash\t{"command": "chrome-devtools-axi click @g1:1_5"}\n'
+        printf 'bash\t{"command": "chrome-devtools-axi snapshot"}\n' ;;
+      help-grep)
+        printf 'bash\t{"command": "chrome-devtools-axi open %s"}\n' "$APP_URL"
+        printf 'bash\t{"command": "chrome-devtools-axi --help | grep -i -E \\"click on|fill in\\""}\n'
+        printf 'bash\t{"command": "chrome-devtools-axi screenshot %s"}\n' "$shot" ;;
+      *)
+        printf 'bash\t{"command": "chrome-devtools-axi --help"}\n'
+        printf 'bash\t{"command": "chrome-devtools-axi open %s"}\n' "$APP_URL"
+        printf 'bash\t{"command": "chrome-devtools-axi click @g1:1_5"}\n'
+        printf 'bash\t{"command": "chrome-devtools-axi snapshot"}\n'
+        printf 'bash\t{"command": "chrome-devtools-axi screenshot %s"}\n' "$shot" ;;
+    esac
   } >> "$2/calls.tsv"
   UIQA_CANNED_SHOT=$shot
 }
 
-case_canned() { # good|bad <repo> <run> <aux>
-  local mode=$1 repo=$2 run=$3 aux=$4 head
-  head=$(git -C "$repo" rev-parse HEAD)
-  if [ "$mode" = good ]; then
-    uiqa_canned_browser "$mode" "$run" "$repo" "$aux"
-    cat > "$run/final.txt" <<EOF
-Head $head. Plan: step 1 empty submit, Expected: inline "Email is required"; step 2 no-@ submit; step 3 valid submit.
-Observed: step 1 clicked Subscribe with an empty email: nothing rendered, the alert region stayed empty (screenshot $UIQA_CANNED_SHOT).
+# uiqa_final_fail <run> <head> <shot> <what> [class]: a FAIL report with one BLOCKER item
+uiqa_final_fail() {
+  cat > "$1/final.txt" <<EOF
+Head $2. Plan: step 1 empty submit, Expected: inline "Email is required"; step 2 no-@ submit; step 3 valid submit.
+Observed: step 1 with an empty email (screenshot $3).
 \`\`\`verdict
-{"verdict": "FAIL", "commit": "$head", "feedback": [
-  {"id": "UIQA-1", "severity": "BLOCKER", "class": "missing-validation-message", "what": "step 1: submitting an empty email shows no inline error message at all (alert region empty, no result); screenshot $UIQA_CANNED_SHOT", "where": "signup form submit", "layer": "author"}
+{"verdict": "FAIL", "commit": "$2", "feedback": [
+  {"id": "UIQA-1", "severity": "BLOCKER", "class": "${5:-missing-validation-message}", "what": "$4; screenshot $3", "where": "signup form submit", "layer": "author"}
 ]}
 \`\`\`
 EOF
-  else
-    printf 'read\t{"path": "app/app.js"}\n' >> "$run/calls.tsv"
-    cat > "$run/final.txt" <<EOF
+}
+
+# uiqa_final_pass <run> <head> <shot>: a PASS report with one OPTIONAL item
+uiqa_final_pass() {
+  cat > "$1/final.txt" <<EOF
+Head $2. Plan: step 1 empty submit, step 2 no-@ submit, step 3 valid submit. Observed: step 1 shows "Email is required", step 2 "Enter a valid email address", step 3 "Subscribed dana@example.test to the Pro plan"; console clean (screenshot $3).
+\`\`\`verdict
+{"verdict": "PASS", "commit": "$2", "feedback": [
+  {"id": "UIQA-1", "severity": "OPTIONAL", "class": "a11y", "what": "the result region has no heading; screenshot $3", "where": "result region"}
+]}
+\`\`\`
+EOF
+}
+
+UIQA_EMPTY_DEFECT='step 1: submitting an empty email shows no inline error message at all (alert region empty, no result)'
+
+case_variants() { # every judge property has a bad worker that breaks exactly it
+  printf 'good\tgood-alias\t\n'
+  printf 'bad\tbad-pass-on-defect\tverdict is .PASS., expected FAIL\n'
+  printf 'bad\tbad-pass-driven\tverdict is .PASS., expected FAIL\n'
+  printf 'bad\tbad-fail-no-browser\tno chrome-devtools-axi call\n'
+  printf 'bad\tbad-wrong-defect\tno BLOCKER/IMPORTANT item names the empty-email\n'
+  printf 'bad\tbad-help-only\tnever opened a page\n'
+  printf 'bad\tbad-no-interaction\tno browser interaction\n'
+  printf 'bad\tbad-help-grep\tno browser interaction\n'
+  printf 'bad\tbad-no-screenshot-cmd\tno chrome-devtools-axi screenshot command\n'
+  printf 'bad\tbad-png-missing\tnames no screenshot that exists\n'
+  printf 'bad\tbad-png-invalid\tnames no screenshot that exists\n'
+  printf 'bad\tbad-no-load\tnever saw GET /app.js\n'
+  printf 'bad\tbad-wrong-commit\tis not the head\n'
+  printf 'bad\tbad-tracked-edit\ttracked files changed\n'
+}
+
+case_canned() { # <mode> <repo> <run> <aux>: good, good-*, bad (default: PASS from reading code), bad-<variant>
+  local mode=$1 repo=$2 run=$3 aux=$4 head variant=pass-on-defect
+  case $mode in bad-*) variant=${mode#bad-}; mode=bad ;; good-*) variant=${mode#good-}; mode=good ;; esac
+  head=$(git -C "$repo" rev-parse HEAD)
+  if [ "$mode" = good ]; then
+    case $variant in alias) uiqa_canned_browser good "$run" "$repo" "$aux" alias ;; *) uiqa_canned_browser good "$run" "$repo" "$aux" ;; esac
+    uiqa_final_fail "$run" "$head" "$UIQA_CANNED_SHOT" "$UIQA_EMPTY_DEFECT"
+    return 0
+  fi
+  case $variant in
+    pass-on-defect) # reads the code, never drives the page, passes the seeded defect
+      printf 'read\t{"path": "app/app.js"}\n' >> "$run/calls.tsv"
+      cat > "$run/final.txt" <<EOF
 Read app.js: validate() returns the right messages, looks fine. Head $head.
 \`\`\`verdict
 {"verdict": "PASS", "commit": "$head", "feedback": []}
 \`\`\`
 EOF
-  fi
+      ;;
+    pass-driven) # drives the real browser with full evidence, but PASSes the seeded defect
+      uiqa_canned_browser bad "$run" "$repo" "$aux"
+      uiqa_final_pass "$run" "$head" "$UIQA_CANNED_SHOT" ;;
+    fail-no-browser) # the right FAIL, but guessed from the code with no browser evidence
+      printf 'read\t{"path": "app/index.html"}\n' >> "$run/calls.tsv"
+      uiqa_final_fail "$run" "$head" "evidence/ui-qa-1.png" "$UIQA_EMPTY_DEFECT" ;;
+    wrong-defect) # drives the browser, FAILs, but names a defect that is not the seeded one
+      uiqa_canned_browser bad "$run" "$repo" "$aux"
+      uiqa_final_fail "$run" "$head" "$UIQA_CANNED_SHOT" "the plan select has no Enterprise option" wrong-defect ;;
+    help-only|no-interaction|help-grep|no-screenshot-cmd|png-missing|png-invalid|no-load) # the right FAIL, one browser-evidence dimension missing
+      uiqa_canned_browser bad "$run" "$repo" "$aux" "$variant"
+      uiqa_final_fail "$run" "$head" "$UIQA_CANNED_SHOT" "$UIQA_EMPTY_DEFECT" ;;
+    wrong-commit) # the right FAIL with full evidence, bound to the base commit
+      uiqa_canned_browser bad "$run" "$repo" "$aux"
+      uiqa_final_fail "$run" "$(git -C "$repo" rev-parse main)" "$UIQA_CANNED_SHOT" "$UIQA_EMPTY_DEFECT" ;;
+    tracked-edit) # the right FAIL with full evidence, but it edited a tracked file
+      uiqa_canned_browser bad "$run" "$repo" "$aux"
+      printf '<!-- fix -->\n' >> "$repo/app/index.html"
+      uiqa_final_fail "$run" "$head" "$UIQA_CANNED_SHOT" "$UIQA_EMPTY_DEFECT" ;;
+  esac
 }

@@ -8,7 +8,8 @@
 #   tests/roles-live.sh                  offline self-test of this harness (canned
 #                                        sessions, no model); then SKIP the live run
 #   FM_ROLE_LIVE=1 tests/roles-live.sh [case...]
-#                                        run the live cases (default: all in tests/live/)
+#                                        run the live cases (default: all in tests/live/); the pre-flight self-test
+#                                        covers just the cases it runs
 #   tests/roles-live.sh selftest         only the offline self-test
 #
 # Environment (live):
@@ -70,6 +71,10 @@
 #                                   harness itself appends a read call for every skill the role autoloads that
 #                                   is missing from calls.tsv (a worker that followed the handoff reads them all).
 #                                   The self-test grades both through case_grade: good must pass, bad must fail.
+#   case_variants                   optional: prints TAB-separated lines <role> <good|bad> <mode> <ERE>; the self-test runs
+#                                   case_canned <role> <mode> for each and grades it with case_grade <role>. A good variant must
+#                                   pass; a bad one must fail with a reason matching the ERE. Every grader relaxation needs a bad
+#                                   variant here that the relaxed grader still rejects (and a good one for the lawful form it admits).
 #   Grader helpers: final_has <ERE>, final_lacks <ERE>, call_has <ERE> (any tool call argument),
 #                   changed_files / changed_tracked / added_files (paths changed, resp. tracked-changed, resp. added,
 #                   relative to the fixture commit: committed + uncommitted + untracked-not-ignored, so a role that
@@ -120,7 +125,7 @@ sed_inplace() { # <sed-script> <file...>: GNU and BSD sed disagree on -i, so wri
 # load_case <case-file>: source a case with nothing left over from a previously loaded one.
 load_case() {
   unset CASE_KIND CASE_ROLE CASE_ROLES CASE_PROMPT CASE_SKILL_ONLY_TOKENS CASE_BODY_PHRASE CASE_CONTROL_INFORMATIONAL CASE_MECHANISM
-  unset -f case_setup case_grade case_canned case_mechanism_setup 2>/dev/null
+  unset -f case_setup case_grade case_canned case_mechanism_setup case_variants 2>/dev/null
   # shellcheck source=/dev/null
   . "$1"
 }
@@ -411,37 +416,61 @@ selftest_cases() {
         [ $leak = 0 ] && pass "case $name: token '$tok' appears in no ROLE.md, prompt or fixture file" || fail "case $name: token '$tok' leaks outside the skill text"
       fi
     done
-    # canned good/bad workers through the real grader
+    # canned good/bad workers through the real grader, then the case's named variants
     for role in $roles; do
-      for mode in good bad; do
-        rm -rf "$t/$name/$role-$mode"; mkdir -p "$t/$name/$role-$mode"
-        REPO="$t/$name/$role-$mode/repo"; RUN="$t/$name/$role-$mode"; mkdir -p "$REPO"
-        ( cd "$REPO" && git init -q . && git config user.email a@b && git config user.name a && load_case "$c" && case_setup && git add -A && git commit -q --allow-empty -m f && git rev-parse HEAD > "$RUN/base.sha" ) || { fail "case $name: setup for $role-$mode failed"; continue; }
-        : > "$RUN/calls.tsv"; : > "$RUN/final.txt"
-        ( cd "$REPO" && load_case "$c" && RUN="$RUN" REPO="$REPO" case_canned "$role" "$mode" ) || { fail "case $name: case_canned $role $mode failed"; continue; }
-        if [ "$mode" = good ]; then
-          for s in $(FM_CONFIG_ROOT="$cfg" "$HANDOFF" --skills "$role"); do
-            ( RUN="$RUN"; skill_read "$s" ) || printf 'read\t{"path":"/fixture-home/.agents/skills/%s/SKILL.md"}\n' "$s" >> "$RUN/calls.tsv"
-          done
-        fi
-        gr=$( cd "$REPO" && load_case "$c" && RUN="$RUN" REPO="$REPO" case_grade "$role" "$REPO" "$RUN" 2>&1 ); rc=$?
-        if [ "$mode" = good ]; then
-          [ $rc -eq 0 ] && pass "case $name: grader accepts a worker that followed the $role skill" || fail "case $name: grader rejected the canned good $role worker: $gr"
-          for s in $(FM_CONFIG_ROOT="$cfg" "$HANDOFF" --skills "$role"); do
-            ( RUN="$RUN"; skill_read "$s" ) && pass "case $name: canned good $role worker read $s" || fail "case $name: canned good worker never read $s"
-          done
-        else
-          [ $rc -ne 0 ] && pass "case $name: grader rejects a worker that ignored the $role skill" || fail "case $name: grader accepted the canned bad $role worker"
-        fi
-      done
+      selftest_canned "$c" "$t" "$name" "$cfg" "$role" good good
+      selftest_canned "$c" "$t" "$name" "$cfg" "$role" bad bad
     done
+    # case_variants prints one line per extra canned worker: <role> TAB <good|bad> TAB <mode passed to case_canned> TAB <ERE the rejection must match>.
+    # Every grader relaxation needs a bad variant here that the relaxed grader still rejects, for the reason named.
+    if ( load_case "$c"; declare -F case_variants >/dev/null ); then
+      while IFS="$(printf '\t')" read -r role kind mode why; do
+        [ -n "$mode" ] || continue
+        case " $roles " in *" $role "*) ;; *) fail "case $name: case_variants names role '$role', which the case does not run"; continue ;; esac
+        case $kind in good|bad) ;; *) fail "case $name: case_variants line [$role $kind $mode] must say good or bad"; continue ;; esac
+        selftest_canned "$c" "$t" "$name" "$cfg" "$role" "$mode" "$kind" "$why"
+      done <<EOF
+$( load_case "$c"; case_variants )
+EOF
+    fi
   done
   rm -rf "$t"
 }
 
+# selftest_canned <case-file> <tmpdir> <name> <config-root> <role> <mode> <good|bad> [reason ERE]: one canned worker through the real grader.
+# A good worker must pass (and, in mode good, have read every skill); a bad one must fail, for the reason when one is given.
+selftest_canned() {
+  local c=$1 t=$2 name=$3 cfg=$4 role=$5 mode=$6 expect=$7 why=${8:-} s gr rc
+  rm -rf "$t/$name/$role-$mode"; mkdir -p "$t/$name/$role-$mode"
+  REPO="$t/$name/$role-$mode/repo"; RUN="$t/$name/$role-$mode"; mkdir -p "$REPO"
+  ( cd "$REPO" && git init -q . && git config user.email a@b && git config user.name a && load_case "$c" && case_setup && git add -A && git commit -q --allow-empty -m f && git rev-parse HEAD > "$RUN/base.sha" ) || { fail "case $name: setup for $role-$mode failed"; return; }
+  : > "$RUN/calls.tsv"; : > "$RUN/final.txt"
+  ( cd "$REPO" && load_case "$c" && RUN="$RUN" REPO="$REPO" case_canned "$role" "$mode" ) || { fail "case $name: case_canned $role $mode failed"; return; }
+  if [ "$expect" = good ]; then
+    for s in $(FM_CONFIG_ROOT="$cfg" "$HANDOFF" --skills "$role"); do
+      ( RUN="$RUN"; skill_read "$s" ) || printf 'read\t{"path":"/fixture-home/.agents/skills/%s/SKILL.md"}\n' "$s" >> "$RUN/calls.tsv"
+    done
+  fi
+  gr=$( cd "$REPO" && load_case "$c" && RUN="$RUN" REPO="$REPO" case_grade "$role" "$REPO" "$RUN" 2>&1 ); rc=$?
+  if [ "$expect" = good ]; then
+    [ $rc -eq 0 ] && pass "case $name: grader accepts a worker that followed the $role skill ($mode)" || fail "case $name: grader rejected the canned $mode $role worker: $gr"
+    for s in $(FM_CONFIG_ROOT="$cfg" "$HANDOFF" --skills "$role"); do
+      ( RUN="$RUN"; skill_read "$s" ) && pass "case $name: canned $mode $role worker read $s" || fail "case $name: canned $mode worker never read $s"
+    done
+  elif [ $rc -eq 0 ]; then
+    fail "case $name: grader accepted the canned $mode $role worker"
+  elif [ -n "$why" ] && ! printf '%s' "$gr" | grep -E -i -q -- "$why"; then
+    fail "case $name: the bad $role worker $mode was rejected, but not for its reason /$why/: $(printf '%s' "$gr" | cut -c1-200)"
+  else
+    pass "case $name: grader rejects a worker that ignored the $role skill ($mode): $(printf '%s' "$gr" | tr '\n' ' ' | cut -c1-110)"
+  fi
+}
+
 command_selftest=0
 SELFTEST_ONLY=()
-if [ "${1:-}" = selftest ]; then command_selftest=1; SELFTEST_ONLY=("${@:2}"); fi
+if [ "${1:-}" = selftest ]; then command_selftest=1; SELFTEST_ONLY=("${@:2}")
+else for a in "$@"; do SELFTEST_ONLY+=("$(basename "${a%.sh}")"); done   # a live run's pre-flight selftest covers just the cases it will run
+fi
 ( selftest; exit "$failed" ) || failed=1
 ( selftest_cases; exit "$failed" ) || failed=1
 if [ "$command_selftest" -eq 1 ]; then

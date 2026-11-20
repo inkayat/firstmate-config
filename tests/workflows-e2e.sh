@@ -3,7 +3,7 @@
 # path. For each step that launches a worker, this script plays the Captain: it
 # asks bin/fm-workflow for the step's spec, scaffolds the brief with the real
 # bin/fm-brief.sh, fills `## Firstmate spec` with that spec and nothing else, and
-# launches the task with the unmodified official bin/fm-spawn.sh on an isolated
+# launches the task with the unmodified official bin/fm-spawn.sh on a private
 # tmux server into a real treehouse worktree. Only the `omp` executable is fake: it
 # records the argv it was launched with, which is the worker's FIRST input. Scripted
 # worker reports (result blocks for the implementer, risk blocks for the classifier,
@@ -15,77 +15,48 @@
 #
 # Per launched worker this asserts: the role handoff is bin/fm-role-handoff's, verbatim,
 # for the role the step binds; the role's autoloadSkills paths and no other skill path;
-# the derived Workflow trace line; and the feedback block is EXACTLY the list the
-# definition hands that step (QA's failure straight to the implementer; the reviewer's
-# blocking list to the verifier; the verifier's confirmed list, never the raw review, to the
-# implementer), or absent when the step has none; and the change/risk/plan inputs.
+# the COMPLETE `next ... --spec` output arrives unchanged, its first line being the
+# `Workflow step: <workflow> v<version>, step <step>, run #<n>` header built from the
+# state file, and no `Workflow:` trace line (chat-only, never in a brief); and the
+# feedback block is EXACTLY the list the definition hands that step (QA's failure
+# straight to the implementer; the reviewer's blocking list to the verifier; the
+# verifier's confirmed list, never the raw review, to the implementer), or absent when
+# the step has none; and the change/risk/plan inputs.
 #
 # What this proves: the briefs a real spawn delivers carry the right role handoff and
-# exactly the feedback of the engine's routing, in the order the definition says. What it
-# cannot prove: that a model reads or applies any of it (tests/workflows-live.sh), or
-# that the Captain chose the right workflow.
+# exactly the feedback of the engine's routing, in the order the definition says, and
+# the engine's whole spec survives the official brief and spawn path. It uses a FAKE
+# omp, so it cannot prove that a model reads or applies any of it
+# (tests/workflows-live.sh), that a real Captain pastes the spec whole
+# (tests/captain-live.sh), or that the Captain chose the right workflow.
 #
-# SKIPs (never PASS) without tmux, treehouse, or an official FirstMate checkout at
-# $FIRSTMATE_ROOT (default ~/Developer/tools/firstmate).
+# ISOLATED LAB (tests/e2e-lib/lab.sh has the full list): safe on a machine with a live
+# fleet, also when started from inside a fleet tmux pane or treehouse worktree. A private
+# tmux server, a throwaway HOME / FM_HOME / TMPDIR / project (its treehouse pool lives in
+# the project), `env -i` for every official script (no inherited TMUX or FM_*), recording
+# shims for tmux and treehouse and deny-and-record shims for the fleet tools. The run ends
+# with lab_guard's assertions over that record (every call was on the lab) and proves the
+# lab is gone. Tear-down is idempotent and also called explicitly, so it holds under a
+# harness that does not fire EXIT traps.
+#
+# SKIPs (never PASS) without tmux, treehouse, jq, or an official FirstMate checkout at
+# $FIRSTMATE_ROOT (default ~/Developer/tools/firstmate). FIRSTMATE_ROOT also lets a
+# deliberately broken launch be fed in: tests/e2e-lib/broken-firstmate.sh builds a
+# FirstMate whose launch drops the role handoff, alters the feedback, trims the spec,
+# pastes a trace line, or leaves the lab; the suite must FAIL on each.
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HANDOFF="$CONFIG_ROOT/bin/fm-role-handoff"
 W="$CONFIG_ROOT/bin/fm-workflow"
 FM_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
+# shellcheck source=tests/e2e-lib/lab.sh
+. "$CONFIG_ROOT/tests/e2e-lib/lab.sh"
 
-if ! command -v tmux >/dev/null 2>&1 || ! command -v treehouse >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 \
-   || [ ! -x "$FM_ROOT/bin/fm-spawn.sh" ] || [ ! -x "$FM_ROOT/bin/fm-brief.sh" ]; then
-  printf 'SKIP - workflows e2e: needs tmux, treehouse, jq, and %s/bin/fm-{brief,spawn}.sh (never reported as PASS)\n\nWORKFLOWS E2E SKIPPED\n' "$FM_ROOT"
-  exit 0
-fi
-shopt -u patsub_replacement 2>/dev/null || true
-
-failed=0
-pass() { printf 'ok   - %s\n' "$1"; }
-fail() { printf 'FAIL - %s\n' "$1" >&2; failed=1; }
-check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected '$3', got '$2')"; fi; }
-has() { case $2 in *"$3"*) pass "$1" ;; *) fail "$1 (missing '$3')" ;; esac; }
-lacks() { case $2 in *"$3"*) fail "$1 (unexpected '$3')" ;; *) pass "$1" ;; esac; }
-field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | tail -1; }
-
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-wf-e2e.XXXXXX") || exit 1
-TMP=$(cd "$TMP" && pwd)
-RUN=$$
-SEAM_TMUX=$(mktemp -d /tmp/fm-wf-tmux.XXXXXX) || exit 1
-cleanup() {
-  TMUX_TMPDIR="$SEAM_TMUX" tmux kill-server >/dev/null 2>&1 || true
-  sleep 0.3
-  chmod -R u+w "$TMP" "$SEAM_TMUX" /tmp/fm-wf-e2e-"$RUN"-* /tmp/fm-wf-e2e-"$RUN"-*+* 2>/dev/null
-  rm -rf "$TMP" "$SEAM_TMUX" /tmp/fm-wf-e2e-"$RUN"-* /tmp/fm-wf-e2e-"$RUN"-*+*
-}
-trap cleanup EXIT
-
-export FM_CONFIG_ROOT="$CONFIG_ROOT" FM_SKILLS_ROOT="$TMP/home/.agents/skills"
-home="$TMP/fm-home"
-proj="$home/projects/e2e-proj"
-mkdir -p "$home/state" "$home/config" "$home/data" "$TMP/home" "$TMP/bin" "$proj"
-printf 'manual\n' > "$home/config/backlog-backend"
-printf '# E2E project\n' > "$proj/AGENTS.md"
-printf 'max_trees = 24\nroot = "./"\n' > "$proj/treehouse.toml"
-git -C "$proj" init -q
-git -C "$proj" add -A
-git -C "$proj" -c user.email=t@example.invalid -c user.name=t commit -q -m init
-
-cat > "$TMP/bin/omp" <<'SH'
-#!/usr/bin/env bash
-[ "${1:-}" = --help ] && { printf 'usage: omp [options] [prompt]\n'; exit 0; }
-if [ "${1:-}" = models ]; then
-  printf '{"models":[{"provider":"anthropic","id":"claude-opus-5-5","selector":"anthropic/claude-opus-5-5"},{"provider":"anthropic","id":"claude-sonnet-5-5","selector":"anthropic/claude-sonnet-5-5"}]}\n'
-  exit 0
-fi
-printf '%s\n' "$@" > worker-argv.tmp
-mv worker-argv.tmp worker-argv.txt
-SH
-chmod +x "$TMP/bin/omp"
+lab_prereq workflows WORKFLOWS
+lab_up wf
 
 OPUS=anthropic/claude-opus-5-5
-SPAWN_ENV=(TMUX_TMPDIR="$SEAM_TMUX" PATH="$TMP/bin:$PATH" HOME="$TMP/home" FM_HOME="$home" FM_BACKEND=tmux)
 N=0
 
 # report <file> <PASS|FAIL> <commit> [id:SEVERITY:what]... - a worker report ending in the verdict block
@@ -119,20 +90,22 @@ feedback_block() { awk '/^- feedback:/ {f = 1; next} f && /^```json$/ {b = 1; ne
 # launch <label> <workflow> <state> <expected-role> <expected-feedback-json|none> <expected-input-name:value>...
 # Plays the Captain for one worker step and asserts what its first input carries.
 launch() {
-  local label=$1 wf=$2 state=$3 role=$4 want_fb=$5 first spec id brief body meta wt waited got trace
+  local label=$1 wf=$2 state=$3 role=$4 want_fb=$5 first spec id brief body meta wt waited got head scaffold out
   shift 5
   N=$((N + 1))
   id="fm-wf-e2e-$RUN-$N"
   spec=$("$W" next "$wf" "$state" --spec) || { fail "$label: no spec: $spec"; return 1; }
-  if ! scaffold=$(env "${SPAWN_ENV[@]}" "$FM_ROOT/bin/fm-brief.sh" "$id" projects/e2e-proj --mode local-only 2>&1); then
+  # the header the spec must start with, built from the state file and not from the spec
+  head=$(jq -r '"Workflow step: \(.workflow) v\(.version), step \(.current), run #\(.runs[.current])"' "$state")
+  if ! scaffold=$(lab_run "$FM_ROOT/bin/fm-brief.sh" "$id" projects/e2e-proj --mode local-only 2>&1); then
     fail "$label: real fm-brief.sh scaffold failed: $scaffold"; return 1
   fi
   brief="$home/data/$id/brief.md"
   body=$(cat "$brief")
-  body=${body/'{TASK}'/"Workflow step $label (fixture)."}
+  body=${body/'{TASK}'/"E2E fixture: $label."}
   body=${body/'{FIRSTMATE_SPEC}'/$spec}
   printf '%s\n' "$body" > "$brief"
-  if ! out=$(env "${SPAWN_ENV[@]}" timeout 90 "$FM_ROOT/bin/fm-spawn.sh" "$id" projects/e2e-proj \
+  if ! out=$(lab_run ${LAB_TMO[@]+"${LAB_TMO[@]}"} "$FM_ROOT/bin/fm-spawn.sh" "$id" projects/e2e-proj \
       --mode local-only --yolo off --harness omp --model "$OPUS" --effort high 2>&1); then
     fail "$label: real fm-spawn failed: $out"; return 1
   fi
@@ -148,8 +121,10 @@ launch() {
   check "$label: its skill paths are exactly $role's autoloadSkills" "$got" "$("$HANDOFF" --skills "$role")"
   check "$label: exactly one Assigned role field, the step's" "$(printf '%s\n' "$first" | grep -c '^Assigned role:')" 1
   has "$label: the Assigned role is $role" "$first" "Assigned role: $role"
-  trace=$("$W" trace "$state")
-  has "$label: the derived Workflow line is in the first input" "$first" "$trace"
+  check "$label: the engine's spec starts with the header built from the state file" "$(printf '%s\n' "$spec" | sed -n 1p)" "$head"
+  has "$label: the COMPLETE next --spec output travels unchanged, first line to last" "$first" "$spec"
+  check "$label: the delivered spec starts with the header" "$(printf '%s\n' "$first" | awk '/^## Firstmate spec$/ {getline; print; exit}')" "$head"
+  check "$label: the chat-only Workflow: trace line is not in the brief" "$(printf '%s\n' "$first" | grep -c 'Workflow:')" 0
   has "$label: the task text travels" "$first" "$TASK_TEXT"
   if [ "$want_fb" = none ]; then
     lacks "$label: no feedback input (none is open)" "$first" '- feedback:'
@@ -253,5 +228,4 @@ launch 'B6 ship (receives the plan)' "$WFB" "$SB" release-engineer none "$PLAN_I
 check 'B: the plan workflow completes' "$("$W" next "$WFB" "$SB" | jq -r .status)" complete
 check 'B: six workers were launched' "$((N - N0))" 6
 
-printf '\nWORKFLOWS E2E %s\n' "$([ "$failed" -eq 0 ] && echo PASS || echo FAIL)"
-[ "$failed" -eq 0 ]
+lab_finish WORKFLOWS

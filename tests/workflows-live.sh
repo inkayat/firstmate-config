@@ -13,7 +13,10 @@
 # CASE_DECIDE for research-decide's decide step; both with CASE_DECIDE_REASON); deliver is recorded, never performed. A report step
 # (researcher, architect) ends its report with `status: done|blocked|change-direction` on a line of its own; the driver records that.
 # Workers see only a sanitized copy of the checkout (roles, bin, workflows, skills; no tests/, no .git), so they cannot read the
-# judge. Then it grades from the engine's state, the transcripts and the final fixture repository.
+# judge. The QA kit (the hidden oracle) exists on disk only while a QA worker runs it, and QA is told to call it "the acceptance kit" and
+# never to write its path or file name (later steps cannot run it); a detector fails any non-QA worker whose calls name the kit, the case
+# files or the artifact tree, or scan the filesystem root, /tmp or the scratch parent. Then the driver grades from the engine's state,
+# the transcripts and the final fixture repository.
 #
 # What this proves: roles, block contracts, handoff and loop mechanics hold with real
 # workers: QA failing a change and the implementer fixing it from QA's feedback, a review
@@ -57,8 +60,10 @@
 #   CASE_NO_CONTROL=1 (the hidden check is the judge), CASE_NEGATIVE (lines "<fake-mode> => <ERE>": the offline self-test plays a canned
 #   worker that skips the property the case is built to catch (FAKE_MODE) and the case must FAIL with a grade.md line matching the ERE),
 #   case_serve <repo> <aux> (optional: start services, background pids appended to <aux>/pids, print KEY=VALUE lines that go into every
-#   worker environment and are readable by case_extra via svc_get KEY), case_stop <aux> (optional), case_canned_pre <role> <prompt> <cwd>
-#   (consulted before canned.sh; return 1 for the roles it does not answer).
+#   worker environment unless case_worker_env <role> (optional) narrows them per role, and are readable by case_extra via svc_get KEY),
+#   case_stop <aux> (optional), case_canned_pre <role> <prompt> <cwd> (consulted before canned.sh; return 1 for the roles it does not answer),
+#   CASE_SELFTEST_NEEDS (tools the OFFLINE self-test of the case needs, for example a real browser for a judge that drives one; the case is
+#   skipped in the self-test, loudly, when one is missing).
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -95,9 +100,15 @@ build_prompt() {
   printf 'Pre-work: run pwd -P and git rev-parse --show-toplevel (they must match), then read every path named above with your file read tool before the first edit and before any shell work.\nApply each skill'"'"'s procedure step by step. Work only inside this repository, with no network and no package installs. Deliver results in your final message; create files only where the task names them. Be economical: aim for at most 30 tool calls. End with a short final report.\n'
 }
 
-# run_omp <cwd> <prompt-file> <session-dir> <stdout> <stderr>
+# set_worker_env <role>: the KEY=VALUE service lines this worker's environment gets (all of them, unless the case narrows them per role)
+set_worker_env() {
+  WORKER_ENV=${SVC_ENV_LINES:-}
+  if declare -F case_worker_env >/dev/null; then WORKER_ENV=$(case_worker_env "$1"); fi
+}
+
+# run_omp <cwd> <prompt-file> <session-dir> <stdout> <stderr>   (the service lines are in WORKER_ENV)
 run_omp() {
-  ( cd "$1" && env -i HOME="$HOME" PATH="$PATH" TERM=dumb LANG=C.UTF-8 OMP_SKIP_SETUP=1 PYTHONDONTWRITEBYTECODE=1 ${SVC_ENV_LINES:-} \
+  ( cd "$1" && env -i HOME="$HOME" PATH="$PATH" TERM=dumb LANG=C.UTF-8 OMP_SKIP_SETUP=1 PYTHONDONTWRITEBYTECODE=1 ${WORKER_ENV:-} \
       timeout "$WORKER_TIMEOUT" "$OMP_BIN" -p --model "$MODEL" --thinking "$THINKING" --no-extensions --no-skills --no-rules --no-context-files \
       --no-lsp --no-pty --no-title --tools read,grep,glob,bash,edit,write --system-prompt "$SYSTEM_PROMPT" \
       --session-dir "$3" ${COST_ARGS[@]+"${COST_ARGS[@]}"} --auto-approve --cwd "$1" "@$2" > "$4" 2> "$5" )
@@ -124,11 +135,17 @@ kit_open() { kit_close; ! declare -F case_kit_setup >/dev/null || case_kit_setup
 hidden_check() { local rc; kit_open; case_hidden "$@"; rc=$?; kit_close; return $rc; }
 kit_only_check() { local rc; kit_open; case_kit_only "$@"; rc=$?; kit_close; return $rc; }
 # What counts as going looking for the oracle (any worker but QA, whose job is to run its kit): the kit directory or its file names, the
-# case files and judges of this repository, the artifact tree, or a scan of the scratch parent / the filesystem root.
-HUNT_RE='fm-wf-live-(kit|prompts|sessions|ctl)|(^|[^A-Za-z0-9_])kit\.(py|js)|tests/live[-/]|live-artifacts|(^|[^A-Za-z0-9_])(find|ls|fd|du|tree)[^;&|]*[ "]((/|/var|/var/folders[^ "]*|/private[^ "]*|/tmp|/tmp/|\$TMPDIR|\$\{TMPDIR[^ "]*)[ "]|/var/folders|/private/var)'
+# case files and judges of this repository, the artifact tree, or a scan of the scratch parent / the filesystem root (a listing or search
+# whose target IS the root, /tmp, $TMPDIR or the scratch parent itself - not a directory the worker was handed, such as its data folder,
+# and not a glob that cannot match the oracle's names). A worker's OWN prompt file (the path omp shows it for the @file attachment) is not a
+# hunt either; every other prompt file is (the QA worker's prompt carries the kit path).
+HUNT_RE='fm-wf-live-(kit|prompts|sessions)|(^|[^A-Za-z0-9_])kit\.(py|js)|tests/live[-/]|live-artifacts|(^|[^A-Za-z0-9_]|\\n)(find|ls|fd|du|tree)([^;&|\\]|\\")*([ "]|\\")(/|/tmp|/var|/private|(/private)?/var/folders(/[A-Za-z0-9_*]+){0,2}(/T)?|\$TMPDIR|\$\{TMPDIR[^}]*\})(/+\*?)?([ "'"'"'\\;&|)]|$)'
 hunt_scan() { # <step-dir>: the calls of that worker that look like a hunt for the oracle
-  local f
-  for f in "$1/calls.tsv" "$1/subcalls.tsv"; do [ -f "$f" ] && grep -aiE "$HUNT_RE" "$f" | cut -c1-220; done
+  local f own
+  own=$(basename "$1" | cut -c1-2 | sed 's/^0//'); [ "$(basename "$1")" != control ] || own=control
+  for f in "$1/calls.tsv" "$1/subcalls.tsv"; do
+    [ -f "$f" ] && sed "s#fm-wf-live-prompts\\.[A-Za-z0-9]*/$own\\.md##g" "$f" | grep -aiE "$HUNT_RE" | cut -c1-220
+  done
   return 0
 }
 grade_hunt() { # ok/FAIL lines: no non-QA worker went looking for the oracle
@@ -157,6 +174,11 @@ worker_step() { # <role> <step> <iteration> <output-contract: result|verdict|ris
   if [ "$committer" = true ]; then cwd=$REPO; else cwd="$SCR_REPO/ws/$N"; sealed_clone "$cwd"; fi
   prev=$(git -C "$REPO" rev-parse HEAD)
   extra=$(case_extra "$step" "$role" "$iter" "$KIT" "$cwd" "$DATA" 2>/dev/null || true)
+  # the kit is QA's private instrument and is removed when QA finishes: QA must not hand later steps a path or a file name to chase
+  if [ "$role" = qa ] && declare -F case_kit_setup >/dev/null; then
+    extra="$extra
+The acceptance kit is private to QA and is removed when you finish: in your report call it \"the acceptance kit\" and never write its path or its file name (later steps cannot run it); say what each of its checks showed instead."
+  fi
   intent=$CASE_TASK
   [ -z "$extra" ] || intent="$intent
 
@@ -168,6 +190,7 @@ $extra"
   printf '%s\n' "$intent" > "$RUN/runs/$step:$iter/intent.txt"
   if over_budget; then DRIVE_ERR="budget $BUDGET USD reached (spent $SPENT)"; return 1; fi
   [ "$role" != qa ] || kit_open   # the oracle exists on disk only while a QA worker runs it
+  set_worker_env "$role"
   run_omp "$cwd" "$SCR_PROMPTS/$N.md" "$SCR_SESSIONS/$N" "$sd/stdout.txt" "$sd/stderr.txt"; rc=$?
   kit_close
   printf '%s\n' "$rc" > "$sd/rc"
@@ -343,11 +366,12 @@ strip_input() { # <strip: feedback|plan> <spec-file> -> the spec without that in
 
 # The control: one worker run of the forced step with the forcing input removed. It must NOT satisfy the hidden check.
 run_control() { # sets CONTROL_RC (hidden check rc), CONTROL_NOTE
-  local src="$RUN/runs/$CASE_CONTROL_STEP:$CASE_CONTROL_RUN" sd="$RUN/steps/control" cwd spec intent
+  local src="$RUN/runs/$CASE_CONTROL_STEP:$CASE_CONTROL_RUN" sd="$RUN/steps/control" cwd spec intent crole
   CONTROL_RC=''; CONTROL_NOTE=''
   [ -d "$src" ] || { CONTROL_NOTE="the run $CASE_CONTROL_STEP:$CASE_CONTROL_RUN never happened"; return 1; }
-  # The control worker, like every worker, sees only its own sealed clone: no origin, no artifacts, no sibling data.
-  SCR_CTL=$(mktemp -d "${TMPDIR:-/tmp}/fm-wf-live-ctl.XXXXXX"); cwd="$SCR_CTL/repo"
+  # The control worker, like every worker, sees only its own sealed clone (next to the other workers' clones): no origin, no artifacts,
+  # no sibling data.
+  cwd="$SCR_REPO/ws/control"
   mkdir -p "$sd" "$SCR_SESSIONS/control"
   sealed_clone "$cwd" "$(cat "$src/base_head")" || { CONTROL_NOTE='cannot clone the control repository'; return 1; }
   spec=$(strip_input "$CASE_CONTROL_STRIP" "$src/spec.txt")
@@ -355,6 +379,8 @@ run_control() { # sets CONTROL_RC (hidden check rc), CONTROL_NOTE
   build_prompt "$intent" "$spec" > "$SCR_PROMPTS/control.md"
   cp "$SCR_PROMPTS/control.md" "$sd/prompt.md"
   over_budget && { CONTROL_NOTE='budget reached'; return 1; }
+  crole=$(jq -r --arg s "$CASE_CONTROL_STEP" '.definition.roles[.definition.steps[$s].role]' "$STATE")
+  set_worker_env "$crole"
   run_omp "$cwd" "$SCR_PROMPTS/control.md" "$SCR_SESSIONS/control" "$sd/stdout.txt" "$sd/stderr.txt"
   cp -r "$SCR_SESSIONS/control" "$sd/session"
   parse_session "$sd/session" "$sd"
@@ -372,7 +398,7 @@ run_case() { # <case-file>: drives, grades, controls; appends a results row; ret
   # shellcheck source=/dev/null
   . "$case_file"
   CASE_FILE=$case_file; DRIVE_ERR=''
-  trap 'svc_stop; rm -rf "${SCR_REPO:-}" "${SCR_KIT:-}" "${SCR_DATA:-}" "${SCR_HOME:-}" "${SCR_PROMPTS:-}" "${SCR_SESSIONS:-}" "${SCR_CTL:-}" "${SCR_AUX:-}" "${SCR_CFG:-}"' EXIT
+  trap 'svc_stop; rm -rf "${SCR_REPO:-}" "${SCR_KIT:-}" "${SCR_DATA:-}" "${SCR_HOME:-}" "${SCR_PROMPTS:-}" "${SCR_SESSIONS:-}" "${SCR_AUX:-}" "${SCR_CFG:-}"' EXIT
   [ ! -f "$ART/.spent" ] || SPENT=$(cat "$ART/.spent")
   cost0=$SPENT
   # a case that needs a tool this machine lacks is SKIPPED (never reported as a pass); the offline self-test plays its workers
@@ -448,9 +474,19 @@ for p in sys.argv[1:]:
   find "$1" -type f -not -path '*/.git/*' -print0 | xargs -0 -r grep -IlE 'sk-[A-Za-z0-9_-]{16,}|(Bearer|Basic) [A-Za-z0-9._~+/=-]{16,}' 2>/dev/null | wc -l | tr -d ' '
 }
 
+# selftest_needs_missing <case-file>: prints the first tool of the case's CASE_SELFTEST_NEEDS that is not on PATH and returns 0; returns 1
+# when the case can be played offline here
+selftest_needs_missing() {
+  local n
+  for n in $( . "$1"; printf '%s' "${CASE_SELFTEST_NEEDS:-}" ); do
+    command -v "$n" >/dev/null 2>&1 || { printf '%s' "$n"; return 0; }
+  done
+  return 1
+}
+
 # --- offline self-test: the whole driver with canned fake workers --------------------------------
 selftest() {
-  local t fake c name rc out leftover
+  local t fake c name rc out leftover m qp
   t=$(mktemp -d "${TMPDIR:-/tmp}/fm-wf-live-self.XXXXXX") || return 1
   fake="$t/omp"
   cat > "$fake" <<'SH'
@@ -483,6 +519,7 @@ SH
   for c in "$CASES_DIR"/*.sh; do
     name=$(basename "$c" .sh)
     [ "${#SELFTEST_ONLY[@]}" -eq 0 ] || case " ${SELFTEST_ONLY[*]} " in *" $name "*) ;; *) continue ;; esac
+    if m=$(selftest_needs_missing "$c"); then printf 'SKIP - selftest %s: needs %s on PATH for its judge; this case is NOT covered by the offline self-test here\n' "$name" "$m"; continue; fi
     ART="$t/art-$name"; mkdir -p "$ART"; SPENT=0
     printf '| case | workflow | path | forced / hidden | control | workers | USD |\n|---|---|---|---|---|---|---|\n' > "$ART/results.md"
     out=$(run_case "$c" 2>&1); rc=$?
@@ -490,6 +527,14 @@ SH
       || { fail "selftest $name: the canned good run did not pass: $out"; cat "$ART/$name/grade.md" 2>/dev/null | grep FAIL; }
     [ "$(jq -r .status "$ART/$name/data/workflow.json" 2>/dev/null)" = "$( . "$c"; printf '%s' "${CASE_EXPECT_STATUS:-complete}" )" ] && pass "selftest $name: the engine state ends as the case expects" || fail "selftest $name: state not as expected"
     grep -q 'forced\|plan-driven' "$ART/results.md" && pass "selftest $name: results row written" || fail "selftest $name: no results row"
+    # a case with a hidden kit and a QA step: every QA worker is told the kit is private (no path or file name in its report, nothing for a
+    # later step to chase); a case whose workflow has no QA step (delegated-build) has nobody to tell
+    qp=$(ls "$ART/$name"/steps/[0-9][0-9]-qa/prompt.md 2>/dev/null)
+    if ( . "$c"; declare -F case_kit_setup >/dev/null ) && [ -n "$qp" ]; then
+      [ -z "$(grep -L 'acceptance kit is private to QA' $qp)" ] \
+        && pass "selftest $name: every QA worker is told the acceptance kit is private (never its path or file name in the report)" \
+        || fail "selftest $name: a QA worker was not told the acceptance kit is private"
+    fi
   done
   # per-case negative controls: a case lists CASE_NEGATIVE lines "<fake-mode> => <ERE>"; the canned worker then skips the property
   # the case is built to catch (FAKE_MODE), and the case must FAIL with a grade.md line matching the ERE
@@ -497,6 +542,7 @@ SH
   for c in "$CASES_DIR"/*.sh; do
     name=$(basename "$c" .sh)
     [ "${#SELFTEST_ONLY[@]}" -eq 0 ] || case " ${SELFTEST_ONLY[*]} " in *" $name "*) ;; *) continue ;; esac
+    selftest_needs_missing "$c" >/dev/null && continue
     neg=$( . "$c"; printf '%s' "${CASE_NEGATIVE:-}" )
     while IFS= read -r line; do
       [ -n "$line" ] || continue
@@ -511,6 +557,16 @@ SH
     done <<NEG
 $neg
 NEG
+  done
+  # per-case judge variants: a case that reads a transcript or any other evidence with its own judge may define case_judge_selftest, which
+  # feeds that judge canned good and bad evidence and prints one line per wrong verdict (nothing when the judge is right)
+  for c in "$CASES_DIR"/*.sh; do
+    name=$(basename "$c" .sh)
+    [ "${#SELFTEST_ONLY[@]}" -eq 0 ] || case " ${SELFTEST_ONLY[*]} " in *" $name "*) ;; *) continue ;; esac
+    ( . "$c"; declare -F case_judge_selftest >/dev/null ) || continue
+    selftest_needs_missing "$c" >/dev/null && continue
+    out=$( . "$c"; case_judge_selftest 2>&1 )
+    [ -z "$out" ] && pass "selftest $name: the case's own judge accepts its good evidence and rejects its bad variants" || fail "selftest $name: the case judge is off: $out"
   done
   # negative controls of the harness itself, on the QA-loop case
   if [ -f "$CASES_DIR/qa-loop.sh" ] && { [ "${#SELFTEST_ONLY[@]}" -eq 0 ] || case " ${SELFTEST_ONLY[*]} " in *" qa-loop "*) true ;; *) false ;; esac; }; then
@@ -560,13 +616,57 @@ NEG
   [ "$(git -C "$t/sealed" log --all --format=%s | tr '\n' ' ')" = 'first ' ] && ! git -C "$t/sealed" cat-file -e "$later" 2>/dev/null \
     && [ -z "$(git -C "$t/sealed" remote)" ] && [ -z "$(git -C "$t/sealed" tag -l)" ] \
     && pass 'selftest: a sealed clone at an earlier commit has no origin, no tag, and no later commit' || fail 'selftest: the sealed clone still reaches later history'
-  # the oracle-hunting detector: it flags every way of looking for the kit, and leaves ordinary work alone
+  # the oracle-hunting detector: it flags every way of looking for the kit (the kit names, the case files, a scan of the root or of the
+  # scratch parent), and leaves ordinary work alone, a listing of a directory the worker was handed (its data folder) included
   mkdir -p "$t/hunt/bad" "$t/hunt/good"
-  printf 'bash\t{"command": "find / -name kit.py 2>/dev/null"}\nbash\t{"command": "ls -dt /var/folders/x6/T/fm-wf-live-kit.abc"}\nread\t{"path": "/tmp/fm-wf-live-kit.Ab12/kit.py"}\nbash\t{"command": "cat /Users/x/firstmate-config/tests/live-workflows/qa-loop.sh"}\nbash\t{"command": "ls /tmp"}\nbash\t{"command": "ls -la /"}\n' > "$t/hunt/bad/calls.tsv"
-  printf 'read\t{"path": "/tmp/fm-wf-live-cfg.X/roles/senior-fullstack/ROLE.md"}\nbash\t{"command": "python3 -m unittest discover -s tests"}\nwrite\t{"path": "tests/test_kit.py"}\nbash\t{"command": "ls /tmp/fm-wf-live-repo.X/ws/3/app"}\nbash\t{"command": "git log --oneline"}\nbash\t{"command": "find . -name *.py"}\n' > "$t/hunt/good/calls.tsv"
-  [ "$(hunt_scan "$t/hunt/bad" | wc -l | tr -d ' ')" = 6 ] && [ -z "$(hunt_scan "$t/hunt/good")" ] \
-    && pass 'selftest: the oracle-hunting detector flags find /, a scratch ls, kit paths and case files, and leaves ordinary calls alone' \
-    || fail "selftest: the hunting detector is off (bad: $(hunt_scan "$t/hunt/bad" | wc -l | tr -d ' ') of 6; good: $(hunt_scan "$t/hunt/good" | wc -l | tr -d ' ') of 0)"
+  L() { printf '%s\t%s\n' "$1" "$2"; }
+  {
+    L bash '{"command": "find / -name kit.py 2>/dev/null"}'
+    L bash '{"command": "ls -dt /var/folders/x6/T/fm-wf-live-kit.abc"}'
+    L read '{"path": "/tmp/fm-wf-live-kit.Ab12/kit.py"}'
+    L bash '{"command": "cat /Users/x/firstmate-config/tests/live-workflows/qa-loop.sh"}'
+    L bash '{"command": "ls /tmp"}'
+    L bash '{"command": "ls -la /"}'
+    L bash '{"command": "ls -la /var/folders/x6/bsp0vly53_d039y4d9ydmw0w0000gn/T/"}'
+    L bash '{"command": "find /private/var/folders -maxdepth 4 -type d"}'
+    L bash '{"command": "pwd\nls $TMPDIR\nls .."}'
+    L bash '{"command": "ls /var/folders/x6/*/T/*"}'
+    L bash '{"command": "find /var/folders/x6/bsp0vly53_d039y4d9ydmw0w0000gn/T -maxdepth 1"}'
+    L bash '{"command": "echo hi\nfind / -maxdepth 2 -name kitx"}'
+    L bash '{"command": "ls -la \"/var/folders/x6/y/T\""}'
+  } > "$t/hunt/bad/calls.tsv"
+  {
+    L read '{"path": "/tmp/fm-wf-live-cfg.X/roles/senior-fullstack/ROLE.md"}'
+    L bash '{"command": "python3 -m unittest discover -s tests"}'
+    L write '{"path": "tests/test_kit.py"}'
+    L bash '{"command": "ls /tmp/fm-wf-live-repo.X/ws/3/app"}'
+    L bash '{"command": "git log --oneline"}'
+    L bash '{"command": "find . -name *.py"}'
+    L bash '{"command": "pwd -P; ls /var/folders/x6/bsp0vly53_d039y4d9ydmw0w0000gn/T//fm-wf-live-data.vOdDBu/"}'
+    L bash '{"command": "ls -la /var/folders/x6/bsp0vly53_d039y4d9ydmw0w0000gn/T/fm-wf-live-data.AbCd/reports"}'
+    L bash '{"command": "T=$(ls -d /var/folders/x6/*/T/tmp.* 2>/dev/null | tail -1); echo $T"}'
+    L bash '{"command": "mkdir -p /tmp/drv && ls /tmp/drv"}'
+    L bash '{"command": "cd /tmp/work && ls"}'
+    L bash '{"command": "cd /tmp\nls foo"}'
+    L bash '{"command": "ls foo\ncd /tmp\nbar"}'
+    L bash '{"command": "cd /var/folders/x6/bsp/T/fm-wf-live-repo.X/ws/control && ls"}'
+  } > "$t/hunt/good/calls.tsv"
+  [ "$(hunt_scan "$t/hunt/bad" | wc -l | tr -d ' ')" = 13 ] && [ -z "$(hunt_scan "$t/hunt/good")" ] \
+    && pass 'selftest: the oracle-hunting detector flags find /, scans of /tmp or the scratch parent, kit paths and case files, and leaves ordinary calls (a handed data folder included) alone' \
+    || fail "selftest: the hunting detector is off (bad: $(hunt_scan "$t/hunt/bad" | wc -l | tr -d ' ') of 13; good: $(hunt_scan "$t/hunt/good" | wc -l | tr -d ' ') of 0)"
+  # a worker's OWN prompt file (the @file attachment path omp shows it) is not a hunt; any other prompt file, and a listing of the prompts
+  # folder, is (the QA worker's prompt carries the kit path)
+  mkdir -p "$t/hunt/06-own" "$t/hunt/06-other" "$t/hunt/control"
+  L read '{"path": "/var/folders/x6/bsp/T/fm-wf-live-prompts.4rHPO4/6.md"}' > "$t/hunt/06-own/calls.tsv"
+  L read '{"path": "/var/folders/x6/bsp/T/fm-wf-live-prompts.4rHPO4/control.md"}' > "$t/hunt/control/calls.tsv"
+  {
+    L read '{"path": "/var/folders/x6/bsp/T/fm-wf-live-prompts.4rHPO4/3.md"}'
+    L read '{"path": "/var/folders/x6/bsp/T/fm-wf-live-prompts.4rHPO4/16.md"}'
+    L bash '{"command": "ls /var/folders/x6/bsp/T/fm-wf-live-prompts.4rHPO4/"}'
+  } > "$t/hunt/06-other/calls.tsv"
+  [ -z "$(hunt_scan "$t/hunt/06-own")" ] && [ -z "$(hunt_scan "$t/hunt/control")" ] && [ "$(hunt_scan "$t/hunt/06-other" | wc -l | tr -d ' ')" = 3 ] \
+    && pass 'selftest: the oracle-hunting detector lets a worker read its own prompt file, and flags another worker'"'"'s prompt and a listing of the prompts folder' \
+    || fail "selftest: the own-prompt exemption is off (own: $(hunt_scan "$t/hunt/06-own" | wc -l | tr -d ' ') of 0; control: $(hunt_scan "$t/hunt/control" | wc -l | tr -d ' ') of 0; other: $(hunt_scan "$t/hunt/06-other" | wc -l | tr -d ' ') of 3)"
   # the scrubber
   mkdir -p "$t/scrub"
   printf 'token sk-abcdefghijklmnopqrstuvwxyz0123456789 and Authorization: Bearer abcdefghijklmnopqrstuvwx and "api_key": "abcdefghijklmnopqrstuvwxyz"\n' > "$t/scrub/a.txt"

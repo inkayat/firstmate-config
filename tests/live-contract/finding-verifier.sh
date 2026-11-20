@@ -245,7 +245,7 @@ bash_ran() {
   { awk -F'\t' '$1 == "bash" { print $2 }' "$RUN/calls.tsv"; awk -F'\t' '$2 == "bash" { print $3 }' "$RUN/subcalls.tsv" 2>/dev/null; } | grep -Eq -- "$1"
 }
 
-case_grade() { # <repo> <run> <aux>
+fv_grade() { # <repo> <run> <aux>: the truth judge (dispositions, evidence, commit, read-only); finding-verifier-helper.sh adds the helper checks on top
   local repo=$1 run=$2 aux=$3 b="$2/block.json" head ids c got want id RUN=$2
   head=$(cat "$aux/head.sha")
   [ "$(git -C "$repo" rev-parse HEAD)" = "$head" ] || { echo "HEAD moved: the verifier committed or switched commits"; return 1; }
@@ -274,7 +274,7 @@ case_grade() { # <repo> <run> <aux>
     [ "$(jq -r --arg id "$id" '.dropped[] | select(.id == $id) | .evidence | length' "$b")" -ge 20 ] || { echo "$id drop carries no real evidence"; return 1; }
   done
   jq -r '.dropped[] | select(.id == "F-2") | .evidence' "$b" | grep -Eq 'None|TypeError|\(0, 0|repro|Entry|amount' || { echo "F-2 drop evidence does not name the claimed input or failure (amount None / TypeError) or its observed result"; return 1; }
-  jq -r '.dropped[] | select(.id == "F-2") | .evidence' "$b" | grep -Eiq 'ran|run|executed|output|print|return|result|python|__post_init__|models\.py' || { echo "F-2 drop evidence says nothing about what was run or traced"; return 1; }
+  jq -r '.dropped[] | select(.id == "F-2") | .evidence' "$b" | grep -Eiq '\b(ran|re?run|executed|output|print|return|result|python)|__post_init__|models\.py' || { echo "F-2 drop evidence says nothing about what was run or traced"; return 1; }
   jq -r '.dropped[] | select(.id == "F-4") | .evidence' "$b" | grep -Eiq 'F-1|summarize|report\.py|ZeroDivision|division' || { echo "F-4 duplicate evidence does not name the shared root cause with F-1"; return 1; }
   # the verdict follows from the confirmed BLOCKER
   [ "$(jq -r .verdict "$b")" = FAIL ] || { echo "verdict is $(jq -r .verdict "$b"), but F-1 is a confirmed BLOCKER: want FAIL"; return 1; }
@@ -285,25 +285,74 @@ case_grade() { # <repo> <run> <aux>
   return 0
 }
 
-# fv_final <head> <f5sev> <f4reason> <extra feedback item or empty>: a well-formed report whose dispositions can be bent per bad worker
+case_grade() { fv_grade "$@"; }
+
+# fv_final <head> <f5sev> <f4reason> <extra feedback item or empty>: a well-formed report whose dispositions can be bent per bad worker.
+# The FV_* variables (set by case_canned for one variant) bend one more field: F-1 severity, class and what; the verdict; F-3 reason or
+# presence in the dropped list; F-4 presence in the dropped list; F-2 evidence.
 fv_final() {
-  local head=$1 f5sev=$2 f4reason=$3 extra=$4
+  local head=$1 f5sev=$2 f4reason=$3 extra=$4 f1sev f1class verdict f3reason f1what f2ev cls=''
+  f1sev=${FV_F1SEV:-BLOCKER}; verdict=${FV_VERDICT:-FAIL}; f3reason=${FV_F3REASON:-style-only}
+  f1class=empty-input-division; [ -z "${FV_F1CLASS+x}" ] || f1class=$FV_F1CLASS
+  f1what='confirmed: running summarize([]) raises ZeroDivisionError: division by zero at ledger/report.py:8'; [ -z "${FV_F1WHAT:-}" ] || f1what=$FV_F1WHAT
+  f2ev='ran python3 -c with Entry(..., None) and summarize: prints (0, 0, {...}); Entry.__post_init__ in ledger/models.py coerces None to 0, so sum() never sees None'; [ -z "${FV_F2EV:-}" ] || f2ev=$FV_F2EV
+  [ -z "$f1class" ] || cls="\"class\": \"$f1class\", "
   printf 'Head commit judged: %s\n\nF-1 reproduced (ZeroDivisionError). F-2 not reproducible: ran it, Entry.__post_init__ coerces None to 0. F-3 style only. F-4 duplicate of F-1. F-5 real but pre-existing.\n\n' "$head"
-  printf '```verdict\n{\n  "verdict": "FAIL",\n  "commit": "%s",\n  "feedback": [\n' "$head"
-  printf '    {"id": "F-1", "severity": "BLOCKER", "class": "empty-input-division", "what": "confirmed: running summarize([]) raises ZeroDivisionError: division by zero at ledger/report.py:8", "where": "ledger/report.py:8"},\n'
+  printf '```verdict\n{\n  "verdict": "%s",\n  "commit": "%s",\n  "feedback": [\n' "$verdict" "$head"
+  printf '    {"id": "F-1", "severity": "%s", %s"what": "%s", "where": "ledger/report.py:8"},\n' "$f1sev" "$cls" "$f1what"
   printf '    {"id": "F-5", "severity": "%s", "class": "case-sensitive-categories", "what": "confirmed: python3 cli.py totals data/sample.psv prints Food and food as two keys; predates the change (git log: ledger/stats.py is only in the base commit)", "where": "ledger/stats.py:5"}%s\n  ],\n  "dropped": [\n' "$f5sev" "$extra"
-  printf '    {"id": "F-2", "reason": "not-reproducible", "evidence": "ran python3 -c with Entry(..., None) and summarize: prints (0, 0, {...}); Entry.__post_init__ in ledger/models.py coerces None to 0, so sum() never sees None"},\n'
-  printf '    {"id": "F-3", "reason": "style-only", "evidence": "splitting summarize into helpers and renaming by_category changes no behaviour (ledger/report.py:5)"},\n'
+  printf '    {"id": "F-2", "reason": "not-reproducible", "evidence": "%s"},\n' "$f2ev"
+  [ "${FV_DROP_F3:-1}" = 0 ] || printf '    {"id": "F-3", "reason": "%s", "evidence": "splitting summarize into helpers and renaming by_category changes no behaviour (ledger/report.py:5)"},\n' "$f3reason"
   printf '    {"id": "F-4", "reason": "%s", "evidence": "python3 cli.py report data/empty.psv fails with the same ZeroDivisionError at ledger/report.py:8, the root cause of F-1"}\n  ]\n}\n```\n' "$f4reason"
 }
 
-case_canned() { # good|bad <repo> <run> <aux>   (scratch variants: bad-drop-real bad-invent bad-f5-dropped bad-f5-important bad-f4-reason bad-no-run bad-edit bad-wrong-commit)
+# case_variants: every extra canned worker (kind, mode, ERE the rejection reason must match). F-2's evidence check was relaxed after a
+# correct live report failed it (the evidence did not spell out None), so the vague/read-only F-2 evidence variants prove it still bites.
+case_variants() {
+  printf 'good\tgood-f2-short-evidence\t\n'
+  printf 'good\tgood-helper-ran-it\t\n'
+  printf 'bad\tbad-drop-real\tkept ids\n'
+  printf 'bad\tbad-invent\tids across feedback and dropped\n'
+  printf 'bad\tbad-f5-dropped\tkept ids\n'
+  printf 'bad\tbad-f5-important\tF-5 predates the change\n'
+  printf 'bad\tbad-f4-reason\tF-4 dropped as\n'
+  printf 'bad\tbad-no-run\tno python command was run\n'
+  printf 'bad\tbad-run-unrelated\tnothing that exercises the report code\n'
+  printf 'bad\tbad-helper-only-reads\tno python command was run\n'
+  printf 'bad\tbad-edit\tchanged files\n'
+  printf 'bad\tbad-wrong-commit\tdoes not resolve to HEAD\n'
+  printf 'bad\tbad-head-moved\tHEAD moved\n'
+  printf 'bad\tbad-ref-created\trefs changed\n'
+  printf 'bad\tbad-f2-vague\tF-2 drop evidence does not name\n'
+  printf 'bad\tbad-f2-readonly\tsays nothing about what was run\n'
+  printf 'bad\tbad-f1-downgraded\tF-1 severity is not preserved\n'
+  printf 'bad\tbad-f1-noclass\tcarries no class\n'
+  printf 'bad\tbad-f1-no-output\tcarries no failing output\n'
+  printf 'bad\tbad-verdict-pass\tno valid verdict block|want FAIL\n'
+  printf 'bad\tbad-f3-reason\tF-3 dropped as\n'
+  printf 'bad\tbad-f3-kept\tkept ids\n'
+  printf 'bad\tbad-f2-substring\tsays nothing about what was run\n'
+}
+
+case_canned() { fv_canned "$@"; }
+
+fv_canned() { # <mode> <repo> <run> <aux>: good, bad (the rubber stamp) or a variant named in case_variants; finding-verifier-helper.sh builds on it
   local mode=$1 repo=$2 run=$3 aux=$4 head
   head=$(cat "$aux/head.sha")
   case $mode in
     bad) printf 'bash\t{"command": "python3 -m unittest discover -s tests -t ."}\n' >> "$run/calls.tsv" ;;
     bad-drop-real) printf 'bash\t{"command": "python3 -m unittest discover -s tests -t ."}\n' >> "$run/calls.tsv" ;;
     bad-no-run) printf 'read\t{"path": "ledger/report.py"}\n' >> "$run/calls.tsv" ;;
+    bad-run-unrelated) printf 'bash\t{"command": "python3 --version; git log --oneline review-base..HEAD"}\n' >> "$run/calls.tsv" ;;
+    bad-helper-only-reads)   # a helper was started but only read files: nothing was run by anyone
+      printf 'task\t{"agent": "fm-debugger", "task": "check whether summarize crashes on an empty list"}\n' >> "$run/calls.tsv"
+      printf 'fm-debugger\tread\t{"path": "ledger/report.py"}\n' >> "$run/subcalls.tsv" ;;
+    good-helper-ran-it)      # the verifier ran nothing itself; its helper ran the repros and it read the output back
+      printf 'bash\t{"command": "git log --oneline review-base..HEAD; git log --oneline -- ledger/stats.py"}\n' >> "$run/calls.tsv"
+      printf 'task\t{"agent": "fm-debugger", "task": "run the F-1, F-2 and F-4 repros and report the output"}\n' >> "$run/calls.tsv"
+      printf 'fm-debugger\tbash\t{"command": "python3 -c \\"from ledger.report import summarize; print(summarize([]))\\""}\n' >> "$run/subcalls.tsv"
+      printf 'fm-debugger\tbash\t{"command": "python3 -c \\"from ledger.models import Entry; from ledger.report import summarize; print(summarize([Entry(1, 2, None)]))\\""}\n' >> "$run/subcalls.tsv"
+      printf 'fm-debugger\tbash\t{"command": "python3 cli.py report data/empty.psv"}\n' >> "$run/subcalls.tsv" ;;
     *)
       {
         printf 'bash\t{"command": "git log --oneline review-base..HEAD; git diff review-base..HEAD --stat"}\n'
@@ -313,13 +362,26 @@ case_canned() { # good|bad <repo> <run> <aux>   (scratch variants: bad-drop-real
       } >> "$run/calls.tsv" ;;
   esac
   case $mode in
-    good|bad-no-run) fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt" ;;
+    good|bad-no-run|bad-run-unrelated|bad-helper-only-reads|good-helper-ran-it) fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt" ;;
+    good-f2-short-evidence) FV_F2EV='ran summarize on an entry with a blank amount: it prints (0, 0, {...}); the amount is coerced to 0 in ledger/models.py' fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt" ;;
     bad-f5-important) fv_final "$head" IMPORTANT duplicate '' > "$run/final.txt" ;;
     bad-f4-reason) fv_final "$head" PRE-EXISTING not-reproducible '' > "$run/final.txt" ;;
     bad-invent) fv_final "$head" PRE-EXISTING duplicate ',
     {"id": "F-6", "severity": "IMPORTANT", "what": "money() rounds negative cents wrongly", "where": "ledger/report.py:14"}' > "$run/final.txt" ;;
     bad-wrong-commit) fv_final "$(git -C "$repo" rev-parse review-base)" PRE-EXISTING duplicate '' > "$run/final.txt" ;;
     bad-edit) fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt"; printf '# touched\n' >> "$repo/README.md" ;;
+    bad-head-moved) fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt"; git -C "$repo" commit -q --allow-empty -m 'verifier commit' ;;
+    bad-ref-created) fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt"; git -C "$repo" tag verifier-note ;;
+    bad-f2-vague) FV_F2EV='looked at it and it seems fine, no problem here, nothing to worry about' fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt" ;;
+    bad-f2-readonly) FV_F2EV='reading report.py, an amount of None would raise TypeError inside sum(), so this stands on paper' fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt" ;;
+    bad-f2-substring) FV_F2EV='reading report.py, an amount of None would truncate the sum and prune the step' fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt" ;;
+    bad-f1-downgraded) FV_F1SEV=IMPORTANT fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt" ;;
+    bad-f1-noclass) FV_F1CLASS= fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt" ;;
+    bad-f1-no-output) FV_F1WHAT='the empty list is a problem in report.py' fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt" ;;
+    bad-verdict-pass) FV_VERDICT=PASS fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt" ;;
+    bad-f3-reason) FV_F3REASON=duplicate fv_final "$head" PRE-EXISTING duplicate '' > "$run/final.txt" ;;
+    bad-f3-kept) FV_DROP_F3=0 fv_final "$head" PRE-EXISTING duplicate ',
+    {"id": "F-3", "severity": "IMPORTANT", "what": "confirmed: summarize does too much, split it into helpers", "where": "ledger/report.py:5"}' > "$run/final.txt" ;;
     bad)
       # the rubber stamp: everything confirmed, nothing dropped, nothing run beyond the existing tests
       {

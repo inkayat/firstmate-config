@@ -45,10 +45,16 @@ for f in top + nested:
             top_texts.append("\n".join(texts))
 # A worker that waits for async helpers can be woken AFTER it wrote its report and answers the notice with a short
 # acknowledgement; the report is then the message before it. A trailing text under 40% of the previous one (and under
-# 1500 characters) is that acknowledgement, not the report.
+# 1500 characters) is that acknowledgement, not the report - unless it carries a final block (result, verdict, risk)
+# the previous text does not have, in which case it is the report. An acknowledgement that merely repeats a block the
+# previous text already carries is still an acknowledgement.
+import re
+def block_tags(s):
+    return set(re.findall(r"```(result|verdict|risk)\b", s))
 final = top_texts[-1] if top_texts else ""
-if len(top_texts) >= 2 and len(final) < 1500 and len(final) < 0.4 * len(top_texts[-2]) and "```" not in final:
-    final = top_texts[-2]
+if len(top_texts) >= 2 and len(final) < 1500 and len(final) < 0.4 * len(top_texts[-2]):
+    if "```" not in final or (block_tags(final) and block_tags(final) <= block_tags(top_texts[-2])):
+        final = top_texts[-2]
 open(os.path.join(out, "calls.tsv"), "w", encoding="utf-8").write("".join("%s\t%s\n" % c for c in calls))
 open(os.path.join(out, "subcalls.tsv"), "w", encoding="utf-8").write("".join("%s\t%s\t%s\n" % c for c in subcalls))
 open(os.path.join(out, "final.txt"), "w", encoding="utf-8").write(final)

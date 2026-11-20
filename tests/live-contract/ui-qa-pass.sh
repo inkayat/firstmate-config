@@ -18,21 +18,33 @@ case_grade() {
   echo "PASS bound to head with no blocking item, real browser driven (screenshot $(basename "$UIQA_SHOT") is a real PNG), tracked files unchanged"
 }
 
-case_canned() { # good|bad <repo> <run> <aux>
-  local mode=$1 repo=$2 run=$3 aux=$4 head
+case_variants() { # every judge property has a bad worker that breaks exactly it
+  printf 'good\tgood-alias\t\n'
+  printf 'bad\tbad-pass-no-browser\tno chrome-devtools-axi call\n'
+  printf 'bad\tbad-help-only\tnever opened a page\n'
+  printf 'bad\tbad-no-interaction\tno browser interaction\n'
+  printf 'bad\tbad-help-grep\tno browser interaction\n'
+  printf 'bad\tbad-no-screenshot-cmd\tno chrome-devtools-axi screenshot command\n'
+  printf 'bad\tbad-png-missing\tnames no screenshot that exists\n'
+  printf 'bad\tbad-png-invalid\tnames no screenshot that exists\n'
+  printf 'bad\tbad-no-load\tnever saw GET /app.js\n'
+  printf 'bad\tbad-wrong-commit\tis not the head\n'
+  printf 'bad\tbad-tracked-edit\ttracked files changed\n'
+}
+
+case_canned() { # <mode> <repo> <run> <aux>: good, good-*, bad (default: invents a defect), bad-<variant>
+  local mode=$1 repo=$2 run=$3 aux=$4 head variant=invented-fail
+  case $mode in bad-*) variant=${mode#bad-}; mode=bad ;; good-*) variant=${mode#good-}; mode=good ;; esac
   head=$(git -C "$repo" rev-parse HEAD)
-  uiqa_canned_browser "$mode" "$run" "$repo" "$aux"
   if [ "$mode" = good ]; then
-    cat > "$run/final.txt" <<EOF
-Head $head. Plan: step 1 empty submit, step 2 no-@ submit, step 3 valid submit. Observed: step 1 shows "Email is required", step 2 "Enter a valid email address", step 3 "Subscribed dana@example.test to the Pro plan"; console clean (screenshot $UIQA_CANNED_SHOT).
-\`\`\`verdict
-{"verdict": "PASS", "commit": "$head", "feedback": [
-  {"id": "UIQA-1", "severity": "OPTIONAL", "class": "a11y", "what": "the result region has no heading; screenshot $UIQA_CANNED_SHOT", "where": "result region"}
-]}
-\`\`\`
-EOF
-  else
-    cat > "$run/final.txt" <<EOF
+    case $variant in alias) uiqa_canned_browser good "$run" "$repo" "$aux" alias ;; *) uiqa_canned_browser good "$run" "$repo" "$aux" ;; esac
+    uiqa_final_pass "$run" "$head" "$UIQA_CANNED_SHOT"
+    return 0
+  fi
+  case $variant in
+    invented-fail) # drives the page, then reports a defect that does not exist
+      uiqa_canned_browser bad "$run" "$repo" "$aux"
+      cat > "$run/final.txt" <<EOF
 Head $head. Step 1 empty submit: the page invented a problem I will report (screenshot $UIQA_CANNED_SHOT).
 \`\`\`verdict
 {"verdict": "FAIL", "commit": "$head", "feedback": [
@@ -40,5 +52,19 @@ Head $head. Step 1 empty submit: the page invented a problem I will report (scre
 ]}
 \`\`\`
 EOF
-  fi
+      ;;
+    pass-no-browser) # PASSes from reading the code, never drives a browser
+      printf 'read\t{"path": "app/app.js"}\n' >> "$run/calls.tsv"
+      uiqa_final_pass "$run" "$head" "evidence/ui-qa-1.png" ;;
+    help-only|no-interaction|help-grep|no-screenshot-cmd|png-missing|png-invalid|no-load) # the right PASS, one browser-evidence dimension missing
+      uiqa_canned_browser bad "$run" "$repo" "$aux" "$variant"
+      uiqa_final_pass "$run" "$head" "$UIQA_CANNED_SHOT" ;;
+    wrong-commit) # full evidence, PASS bound to the base commit
+      uiqa_canned_browser bad "$run" "$repo" "$aux"
+      uiqa_final_pass "$run" "$(git -C "$repo" rev-parse main)" "$UIQA_CANNED_SHOT" ;;
+    tracked-edit) # full evidence, but it edited a tracked file
+      uiqa_canned_browser bad "$run" "$repo" "$aux"
+      printf '<!-- fix -->\n' >> "$repo/app/index.html"
+      uiqa_final_pass "$run" "$head" "$UIQA_CANNED_SHOT" ;;
+  esac
 }

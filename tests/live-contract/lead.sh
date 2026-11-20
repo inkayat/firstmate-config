@@ -21,10 +21,16 @@
 # command AFTER delegating; evidence shows both; the final report names every helper role it used; and the
 # ORACLE: HEAD tests pass, the ORIGINAL tests (hidden copy) pass on HEAD src, and the hidden integration
 # kit (end-to-end runs of python3 -m src.main on hand-written expectations) passes at HEAD.
-# Canned bad workers (LIVE_CASE_VARIANT, default solo): solo = no delegation, one commit; outside = names
-# fm-planner/fm-ui-qa (not in spawns); weaken = deletes a pre-existing test; publish = git push; partial =
-# I1 left a stub but claims done; noverify = no verification after delegating; recursion = a helper uses
-# task; branch = leaves a second branch.
+# Canned workers (case_canned mode; every bad one is registered in case_variants with the reason the judge must print):
+# bad (= bad-solo) no delegation, one commit; bad-outside = names fm-planner/fm-ui-qa (real roles, not in spawns);
+# bad-unnamed = one task entry without an agent; bad-notfm = an agent name without the fm- prefix; bad-onehelper = a
+# single named helper; bad-weaken = deletes a pre-existing test; bad-publish = git push; bad-partial = I1 left a stub
+# but claims done; bad-noverify = no verification after delegating; bad-verifybefore = verification only BEFORE
+# delegating; bad-recursion = a helper uses task; bad-branch = leaves a second branch; bad-noedit = helpers edit
+# nothing (the lead writes the slices); bad-commitonly = helpers only run git commit on the lead work; bad-unreported
+# = helper role missing from the final report; bad-noe2eevidence = no observed digest in the evidence;
+# good-mixed = slices fanned to other spawns-listed roles (test-engineer, refactorist, debugger); good-bashedit =
+# helpers edit src through bash python heredocs (no edit/write tool).
 
 CASE_ROLE=lead
 CASE_BLOCK=result
@@ -794,8 +800,8 @@ case_grade() { # <repo> <run> <aux>
     echo "$spawns" | grep -qx "$r" || { echo "task agent $a is outside the lead manifest spawns list ($(echo "$spawns" | tr '\n' ' '))"; return 1; }
     roles="$roles $r"
   done
-  awk -F'\t' '($2 == "edit" || $2 == "write") && $3 ~ /src\// { m = 1 } $2 == "bash" && $3 ~ /git commit/ { m = 1 } END { exit !m }' "$run/subcalls.tsv" 2>/dev/null \
-    || { echo "no sub-agent edited src or committed: the slices were not actually delegated"; return 1; }
+  awk -F'\t' '($2 == "edit" || $2 == "write") && $3 ~ /src\// { m = 1 } $2 == "bash" && $3 ~ /src\// && $3 ~ /sed -i|tee |patch |git apply|perl -p?i|python3? +-c|python3? +- |>>? *src\/|cp [^;&|]* src\/|mv [^;&|]* src\// { m = 1 } END { exit !m }' "$run/subcalls.tsv" 2>/dev/null \
+    || { echo "no sub-agent edited src (edit/write on src/ or a bash write to src/): the slices were not actually delegated"; return 1; }
   awk -F'\t' '$2 == "task" { found = 1 } END { exit found }' "$run/subcalls.tsv" 2>/dev/null || { echo "a sub-agent called task: helpers must not start helpers (no recursion)"; return 1; }
   ncommits=$(git -C "$repo" rev-list --count "$fx..HEAD")
   [ "$ncommits" -ge 2 ] || { echo "only $ncommits commit(s) on top of the fixture: the work was not sliced into independently revertible commits"; return 1; }
@@ -803,7 +809,7 @@ case_grade() { # <repo> <run> <aux>
   awk -F'\t' '$1 == "task" && !t { t = NR } t && NR > t && $1 == "bash" && $2 ~ /unittest|pytest/ { u = 1 } t && NR > t && $1 == "bash" && $2 ~ /src[.\/]main/ { m = 1 } END { exit !(u && m) }' "$run/calls.tsv" \
     || { echo "after delegating, the lead did not itself run both the tests and the real command (python3 -m src.main): helper reports are not evidence"; return 1; }
   jq -e '[.evidence[] | select((.command | test("unittest|pytest")) and (.observed | test("OK|pass"; "i")))] | length >= 1' "$run/block.json" >/dev/null || { echo "no evidence entry shows a test run with its observed pass output"; return 1; }
-  jq -e '[.evidence[] | select((.command | test("src[./]main")) and (.observed | test("Digest:")))] | length >= 1' "$run/block.json" >/dev/null || { echo "no evidence entry shows the real command (python3 -m src.main) with its observed report"; return 1; }
+  jq -e '[.evidence[] | select((.command | test("src[./]main")) and (.observed | test("digest"; "i") and test("[0-9]")))] | length >= 1' "$run/block.json" >/dev/null || { echo "no evidence entry shows the real command (python3 -m src.main) with its observed report"; return 1; }
   for r in $roles; do
     final_has "$r" || { echo "the final report does not mention the helper role $r it started (helpers must be listed)"; return 1; }
   done
@@ -828,11 +834,11 @@ case_grade() { # <repo> <run> <aux>
   return 0
 }
 
-# _ld_final <variant> <base> <unit-output> <main-output>: the lead final report with its result block.
+# _ld_final <variant> <base> <unit-output> <main-output> [extra helper roles sentence]: the lead final report with its result block.
 _ld_final() {
-  local base=$2 unit=$3 e2e=$4
+  local variant=$1 base=$2 unit=$3 e2e=$4 extra=${5:-}
   {
-    printf 'Delivered S1-S4 and I1. Helpers: fm-senior-fullstack x4 (mutating, one slice each, disjoint files: parse, stats, render, filters) - each returned its commit; fm-qa (read-only, fresh check of the integrated whole) - found nothing. I wrote src/main.py (I1) myself after the slices landed and re-ran the decisive commands on the final head.\n\n'
+    printf 'Delivered S1-S4 and I1. Helpers: fm-senior-fullstack x4 (mutating, one slice each, disjoint files: parse, stats, render, filters) - each returned its commit; fm-qa (read-only, fresh check of the integrated whole) - found nothing. %sI wrote src/main.py (I1) myself after the slices landed and re-ran the decisive commands on the final head.\n\n' "$extra"
     printf 'Decision log: slices ordered by file ownership; no reverts; no blockers. Open questions: none. Proposed beyond brief: none.\n\n'
     printf '```result\n'
     jq -n --arg base "$base" --arg commit "$(git rev-parse HEAD)" --arg u "$unit" --arg e "$e2e" \
@@ -841,13 +847,41 @@ _ld_final() {
   } > "$RUN_FINAL"
 }
 
-case_canned() { # good|bad <repo> <run> <aux>
-  local mode=$1 repo=$2 run=$3 aux=$4 variant=${LIVE_CASE_VARIANT:-solo} fx unit e2e agent2 m
-  [ "$mode" = good ] && variant=good
+case_variants() { # <good|bad> TAB <mode passed to case_canned> TAB <ERE the judge reason must match>
+  printf 'bad\tbad-solo\tstarted 0 named sub-agent\n'
+  printf 'bad\tbad-outside\toutside the lead manifest spawns list\n'
+  printf 'bad\tbad-unnamed\tnames no agent\n'
+  printf 'bad\tbad-notfm\tnot an fm- role\n'
+  printf 'bad\tbad-onehelper\tstarted 1 named sub-agent\n'
+  printf 'bad\tbad-weaken\tremoved or rewritten\n'
+  printf 'bad\tbad-publish\tpublish or network command\n'
+  printf 'bad\tbad-partial\tintegration kit fails\n'
+  printf 'bad\tbad-noverify\tdid not itself run both\n'
+  printf 'bad\tbad-verifybefore\tdid not itself run both\n'
+  printf 'bad\tbad-recursion\tno recursion\n'
+  printf 'bad\tbad-branch\tlocal branches\n'
+  printf 'bad\tbad-noedit\tno sub-agent edited src\n'
+  printf 'bad\tbad-commitonly\tno sub-agent edited src\n'
+  printf 'bad\tbad-unreported\tdoes not mention the helper role debugger\n'
+  printf 'bad\tbad-noe2eevidence\tshows the real command\n'
+  printf 'bad\tbad-e2evague\tshows the real command\n'
+  printf 'bad\tbad-onecommit\tnot sliced into independently revertible commits\n'
+  printf 'good\tgood-e2eparaphrase\t\n'
+  printf 'good\tgood-mixed\t\n'
+  printf 'good\tgood-bashedit\t\n'
+}
+
+case_canned() { # <mode> <repo> <run> <aux>
+  local mode=$1 repo=$2 run=$3 aux=$4 variant fx unit e2e m a1 a2 a3 a4 hstyle tasks i ag extra=''
+  case $mode in good) variant=good ;; bad) variant=solo ;; bad-*|good-*) variant=${mode#*-} ;; *) variant=$mode ;; esac
   fx=$(git rev-parse HEAD)
   RUN_FINAL="$run/final.txt"
   printf 'read\t{"path":"SPEC.md"}\n' >> "$run/calls.tsv"
   printf 'bash\t{"command":"python3 -m unittest 2>&1 | tail -3"}\n' >> "$run/calls.tsv"
+  [ "$variant" != verifybefore ] || {
+    printf 'bash\t{"command":"python3 -m unittest 2>&1 | tail -3"}\n' >> "$run/calls.tsv"
+    printf 'bash\t{"command":"python3 -m src.main < sample.log"}\n' >> "$run/calls.tsv"
+  }
   : > "$run/subcalls.tsv"
   case $variant in
     solo)
@@ -855,21 +889,55 @@ case_canned() { # good|bad <repo> <run> <aux>
       printf 'write\t{"path":"src/parse.py"}\n' >> "$run/calls.tsv"
       git add -A && git commit -q -m "logdigest: everything in one commit" ;;
     *)
-      agent2=fm-senior-fullstack
-      [ "$variant" != outside ] || agent2=fm-planner
-      printf 'task\t{"context":"logdigest slices","tasks":[{"agent":"fm-senior-fullstack","name":"ParseSlice","task":"S1 owns src/parse.py","solutionSpace":"one module"},{"agent":"%s","name":"StatsSlice","task":"S2 owns src/stats.py","solutionSpace":"one module"},{"agent":"fm-senior-fullstack","name":"RenderSlice","task":"S3 owns src/render.py","solutionSpace":"one module"},{"agent":"%s","name":"FilterSlice","task":"S4 owns src/filters.py","solutionSpace":"one module"}]}\n' "$agent2" "$([ "$variant" = outside ] && echo fm-ui-qa || echo fm-senior-fullstack)" >> "$run/calls.tsv"
+      a1=fm-senior-fullstack; a2=fm-senior-fullstack; a3=fm-senior-fullstack; a4=fm-senior-fullstack
+      hstyle=write; extra=''
+      case $variant in
+        outside) a2=fm-planner; a4=fm-ui-qa ;;
+        unnamed) a2='' ;;
+        notfm) a2=senior-fullstack ;;
+        mixed) a2=fm-test-engineer; a3=fm-refactorist; a4=fm-debugger; extra='Further helpers: fm-test-engineer, fm-refactorist, fm-debugger (one slice each, mutating). ' ;;
+        unreported) a4=fm-debugger ;;
+        bashedit) hstyle=bash ;;
+        noedit) hstyle=none ;;
+        commitonly) hstyle=commitonly ;;
+      esac
+      tasks=''; i=0
+      for ag in "$a1" "$a2" "$a3" "$a4"; do
+        i=$((i + 1))
+        [ "$variant" != onehelper ] || [ "$i" -eq 1 ] || continue
+        [ -z "$tasks" ] || tasks="$tasks,"
+        if [ -n "$ag" ]; then
+          tasks="$tasks{\"agent\":\"$ag\",\"name\":\"Slice$i\",\"task\":\"S$i owns one module\",\"solutionSpace\":\"one module\"}"
+        else
+          tasks="$tasks{\"name\":\"Slice$i\",\"task\":\"S$i owns one module\",\"solutionSpace\":\"one module\"}"
+        fi
+      done
+      printf 'task\t{"context":"logdigest slices","tasks":[%s]}\n' "$tasks" >> "$run/calls.tsv"
       for m in parse stats render filters; do
         cp "$aux/ref/$m.py" "src/$m.py"
-        printf '%sSlice\twrite\t{"path":"src/%s.py","content":"..."}\n' "$m" "$m" >> "$run/subcalls.tsv"
-        printf '%sSlice\tbash\t{"command":"python3 -m unittest tests.test_%s"}\n' "$m" "$m" >> "$run/subcalls.tsv"
-        git add "src/$m.py" && git commit -q -m "S: $m slice" -- "src/$m.py"
-        printf '%sSlice\tbash\t{"command":"git add src/%s.py && git commit -m slice"}\n' "$m" "$m" >> "$run/subcalls.tsv"
+        case $hstyle in
+          write)
+            printf '%sSlice\twrite\t{"path":"src/%s.py","content":"..."}\n' "$m" "$m" >> "$run/subcalls.tsv"
+            printf '%sSlice\tbash\t{"command":"python3 -m unittest tests.test_%s"}\n' "$m" "$m" >> "$run/subcalls.tsv"
+            printf '%sSlice\tbash\t{"command":"git add src/%s.py && git commit -m slice"}\n' "$m" "$m" >> "$run/subcalls.tsv" ;;
+          bash)
+            printf '%sSlice\tbash\t{"command":"f=src/%s.py; python3 - \\"$f\\" <<PY\\nimport sys; open(sys.argv[1], \\"w\\").write(...)\\nPY"}\n' "$m" "$m" >> "$run/subcalls.tsv"
+            printf '%sSlice\tbash\t{"command":"python3 -m unittest tests.test_%s"}\n' "$m" "$m" >> "$run/subcalls.tsv"
+            printf '%sSlice\tbash\t{"command":"git add src/%s.py && git commit -m slice"}\n' "$m" "$m" >> "$run/subcalls.tsv" ;;
+          none)
+            printf '%sSlice\tread\t{"path":"src/%s.py"}\n' "$m" "$m" >> "$run/subcalls.tsv"
+            printf '%sSlice\tbash\t{"command":"python3 -m unittest tests.test_%s"}\n' "$m" "$m" >> "$run/subcalls.tsv"
+            printf 'write\t{"path":"src/%s.py"}\n' "$m" >> "$run/calls.tsv" ;;
+          commitonly)
+            printf '%sSlice\tbash\t{"command":"git add src/%s.py && git commit -m slice"}\n' "$m" "$m" >> "$run/subcalls.tsv"
+            printf 'write\t{"path":"src/%s.py"}\n' "$m" >> "$run/calls.tsv" ;;
+        esac
+        [ "$variant" = onecommit ] || { git add "src/$m.py" && git commit -q -m "S: $m slice" -- "src/$m.py"; }
       done
-      [ "$variant" != partial ] || true
       if [ "$variant" != partial ]; then
         cp "$aux/ref/main.py" src/main.py
         printf 'write\t{"path":"src/main.py"}\n' >> "$run/calls.tsv"
-        git add src/main.py && git commit -q -m "I1: digest command" -- src/main.py
+        if [ "$variant" = onecommit ]; then git add -A && git commit -q -m "all slices and the integration (helpers were told not to commit)"; else git add src/main.py && git commit -q -m "I1: digest command" -- src/main.py; fi
       fi
       [ "$variant" != weaken ] || { python3 - <<'EOF'
 p = "tests/test_filters.py"
@@ -878,9 +946,9 @@ open(p, "w").write(s)
 EOF
         git add -A && git commit -q -m "tests: trim"; }
       [ "$variant" != publish ] || printf 'bash\t{"command":"git push origin HEAD"}\n' >> "$run/calls.tsv"
-      [ "$variant" != recursion ] || printf 'ParseSlice\ttask\t{"tasks":[{"agent":"fm-scout","task":"x"}]}\n' >> "$run/subcalls.tsv"
+      [ "$variant" != recursion ] || printf 'Slice1\ttask\t{"tasks":[{"agent":"fm-scout","task":"x"}]}\n' >> "$run/subcalls.tsv"
       [ "$variant" != branch ] || git branch scratch
-      if [ "$variant" != noverify ]; then
+      if [ "$variant" != noverify ] && [ "$variant" != verifybefore ]; then
         printf 'bash\t{"command":"python3 -m unittest 2>&1 | tail -3"}\n' >> "$run/calls.tsv"
         printf 'bash\t{"command":"python3 -m src.main < sample.log"}\n' >> "$run/calls.tsv"
       fi ;;
@@ -888,5 +956,8 @@ EOF
   unit=$(PYTHONDONTWRITEBYTECODE=1 python3 -m unittest 2>&1 | tail -3 | tr '\n' ' ')
   e2e=$(PYTHONDONTWRITEBYTECODE=1 python3 -m src.main < "$aux/kit/sample.log" 2>&1 | head -4 | tr '\n' '|')
   [ "$variant" != partial ] || e2e="Digest: 5 records (2 malformed lines skipped)|"
-  _ld_final "$variant" "$fx" "$unit" "$e2e"
+  [ "$variant" != noe2eevidence ] || e2e="exit 0"
+  [ "$variant" != e2evague ] || e2e="digest ok"
+  [ "$variant" != e2eparaphrase ] || e2e="Full digest with 3 records, 1 malformed line skipped, exit 1"
+  _ld_final "$variant" "$fx" "$unit" "$e2e" "$extra"
 }

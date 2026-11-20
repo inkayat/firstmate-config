@@ -8,9 +8,11 @@
 #   default, escalate: nothing here may change direction).
 # Outside judge (deterministic, code only): the engine state ends complete after decide:adopt with the reason recorded; every
 #   vendor-docs path the research report cites exists in the fixture (and every cited :line is inside the file); every double-quoted
-#   passage on a cited row is a verbatim substring of the cited file (grep -F, whitespace-normalised); the project version 2.3.1 and the
-#   planted facts (256 KiB for 2.3.1, at_least_once, idempotent consumers) are in the report; the latency question is UNVERIFIED; the options
-#   report names at most 3 options and exactly one recommendation; the challenge ended in a valid verdict block (the generic grader).
+#   passage on a cited row (quote marks paired left to right: the text BETWEEN two quoted passages is not a quote) is a verbatim substring
+#   of the cited file (grep -F, whitespace-normalised); the project version 2.3.1 and the planted facts (256 KiB for 2.3.1, at_least_once,
+#   idempotent consumers) are in the report; the latency question is UNVERIFIED; the options report offers at most 3 options (a labelled
+#   line that itself says the option was dropped is a mention, not an offer) and exactly one recommendation; the challenge ended in a
+#   valid verdict block (the generic grader).
 CASE_WORKFLOW=research-decide
 CASE_TASK='Decide whether we should adopt the vendor library quillmq'"'"'s at-least-once delivery mode in place of the hand-rolled retry loop in worker.py. Research questions: (1) which quillmq version do we run and does it have an at-least-once delivery mode; (2) the maximum message size in that version; (3) what happens to a message whose consumer does not acknowledge it; (4) does quillmq offer exactly-once delivery; (5) the p99 delivery latency at 10k messages per second. The vendor documentation for the pinned version is in the local vendor-docs/ directory: it is the primary source, there is no network. Then propose options for the decision, challenge the recommendation, and hand the decision to the Captain. Do not change any file.'
 CASE_NO_CONTROL=1
@@ -19,7 +21,9 @@ CASE_DECIDE_REASON='adopt quillmq at_least_once: the 2.3.1 docs confirm the mode
 CASE_EXPECT_PATH='^research:done options:done( challenge:fail options:done)* challenge:pass decide:adopt$'
 CASE_FORCE_AFTER=''
 CASE_NEGATIVE='nocite => does not exist in the fixture
+paraphrase => a quoted passage is not verbatim in the cited file
 four => options report names
+fourlist => options report names 4 option
 guess => p99 latency question is not marked UNVERIFIED'
 
 case_setup() {
@@ -142,8 +146,12 @@ for line in research.splitlines():
         if ln and not any(all(1 <= int(x) <= len(open(c, encoding="utf-8").read().splitlines()) for x in re.split(r"[-,]", ln)) for c in cands):
             bad.append("the cited line %s is outside %s" % (ln, tok))
     blob = norm(" ".join(open(f, encoding="utf-8").read() for f in files))
-    for q in re.findall(r"[\"\u201c]([^\"\u201d]{20,})[\"\u201d]", line) if files else []:
-        if "..." in q or "\u2026" in q:
+    # the quote marks of a line are paired left to right (the 1st with the 2nd, the 3rd with the 4th ...): the text BETWEEN two quoted
+    # passages ("a" then prose then "b") is prose, never a quote
+    marks = [m.start() for m in re.finditer(r"[\"\u201c\u201d]", line)]
+    quoted = [line[a + 1:b] for a, b in zip(marks[0::2], marks[1::2])] if files else []
+    for q in quoted:
+        if len(q) < 20 or "..." in q or "\u2026" in q:
             continue
         if norm(q) not in blob:
             bad.append("a quoted passage is not verbatim in the cited file: %r" % q[:80])
@@ -165,9 +173,16 @@ tail = research[research.find("UNVERIFIED"):] if "UNVERIFIED" in research else "
 if not re.search(r"latency|p99", tail, re.I):
     bad.append("the p99 latency question is not marked UNVERIFIED (the docs are silent on it)")
 # an option is DEFINED by a line that starts with its label (a list item or heading "A. ...", "Option B: ...", a table row "| C |"); a mention of
-# a label in prose (for example a dropped option of the research report) is not an option on offer. A report that defines its options in one
-# "Options:" line falls back to the labels named on that line.
-labels = {a or b for a, b in re.findall(r"(?m)^[ \t#*|>-]*\**(?:Option ([A-Z0-9])|([A-D]))\**[:.)|]\**[ \t]", options)}
+# a label in prose (for example a dropped option of the research report) is not an option on offer, and neither is a labelled line that itself
+# says the option was dropped, ruled out or rejected ("D. Wait for 2.4. ... I have dropped it from the comparison"). A report that defines
+# its options in one "Options:" line falls back to the labels named on that line.
+label_re = re.compile(r"^[ \t#*|>-]*\**(?:Option ([A-Z0-9])|([A-D]))\**[:.)|]\**[ \t]")
+gone_re = re.compile(r"\b(dropped|ruled out|rejected|discarded|eliminated|set aside|not (?:a )?(?:real|viable|live) option|not offered|not on offer)\b", re.I)
+labels = set()
+for l in options.splitlines():
+    m = label_re.match(l)
+    if m and not gone_re.search(l):
+        labels.add(m.group(1) or m.group(2))
 if not labels:
     labels = set(re.findall(r"\bOption ([A-Z0-9])\b", "\n".join(l for l in options.splitlines() if re.match(r"[ \t#*|>-]*\**Options?\b", l))))
 if not 1 <= len(labels) <= 3:
@@ -190,7 +205,7 @@ case_assert() { # <run-dir> <repo>
   jq -e '[.history[] | select(.step == "challenge")] | length >= 1 and all(.[]; .valid == true)' "$st" >/dev/null || { echo "the challenge did not end in a valid verdict block"; return 1; }
 }
 
-case_canned() { # <role> <prompt-file> <cwd> (FAKE_MODE: nocite | four | guess)
+case_canned() { # <role> <prompt-file> <cwd> (FAKE_MODE: nocite | paraphrase | four | fourlist | guess)
   local role=$1 prompt=$2 cwd=$3 a b c d
   case $role in
     researcher)
@@ -205,16 +220,23 @@ case_canned() { # <role> <prompt-file> <cwd> (FAKE_MODE: nocite | four | guess)
         printf '| pinned version 2.3.1 | vendor-docs/quillmq/README.md:%s "Current stable release: 2.3.1." | 2.3.1 | high |\n' "$a"
         printf '| at_least_once exists since 2.2.0 | vendor-docs/quillmq/delivery.md:%s "a message stays on the queue until the consumer acknowledges it." | 2.3.1 | high |\n' "$b"
         printf '| limit is 256 KiB | vendor-docs/quillmq/limits.md:%s "Maximum message size: 256 KiB." | 2.3.1 | high |\n' "$c"
-        printf '| redelivery after 30 s; consumers must be idempotent | vendor-docs/quillmq/delivery.md:%s | 2.3.1 | high |\n' "$d"
+        if [ "${FAKE_MODE:-}" = paraphrase ]; then
+          printf '| redelivery after the visibility timeout; consumers must be idempotent | vendor-docs/quillmq/delivery.md:%s "delivered again" after the visibility timeout (30 s default, set with visibility_timeout). "Redelivery may produce some duplicates, so consumers need to be idempotent." | 2.3.1 | high |\n' "$d"
+        else
+          printf '| redelivery after the visibility timeout; consumers must be idempotent | vendor-docs/quillmq/delivery.md:%s "delivered again" after the visibility timeout (30 s default, set with visibility_timeout). "Redelivery can therefore produce duplicates, so consumers must be idempotent." | 2.3.1 | high |\n' "$d"
+        fi
       fi
       if [ "${FAKE_MODE:-}" = guess ]; then printf 'p99 latency at 10k msgs/s is about 4 ms (high confidence).\nUNVERIFIED: none\n'
       else printf 'UNVERIFIED: the p99 delivery latency at 10k msgs/s (the docs say nothing about latency)\n'; fi
       printf 'Would change my mind: a benchmark | Cheapest experiment: load test\nOpen questions: none\nProposed beyond brief: none\nWritten to: returned inline\n' ;;
     architecture)
       printf 'status: done\nDecision: adopt at_least_once.\nConstraints: quillmq 2.3.1 (requirements.txt:1)\nCriteria: C1 delivery guarantee C2 deletability C3 duplicates handled\n'
-      printf 'Options: Option A (adopt at_least_once; cost low; buys redelivery; forecloses nothing), Option B (keep the retry loop in worker.py)'
-      if [ "${FAKE_MODE:-}" = four ]; then printf ', Option C (own queue), Option D (a hosted broker)'; fi
-      printf '\nRecommendation: Option A - B keeps hand-rolled retry code.\nFirst step: switch the queue to at_least_once.\nBets: latency unverified -> load test\nOpen questions: none\nProposed beyond brief: none\n' ;;
+      case ${FAKE_MODE:-} in
+        four) printf 'Options: Option A (adopt at_least_once; cost low; buys redelivery; forecloses nothing), Option B (keep the retry loop in worker.py), Option C (own queue), Option D (a hosted broker)\n' ;;
+        fourlist) printf 'Options:\n- A. Adopt at_least_once (cost low; buys redelivery; forecloses nothing)\n- B. Keep the retry loop in worker.py (cost none; buys nothing new)\n- C. Own queue (cost high; buys control)\n- D. A hosted broker (cost high; buys managed delivery; forecloses ownership)\n' ;;
+        *) printf 'Options:\n- A. Adopt at_least_once (cost low; buys redelivery; forecloses nothing)\n- B. Keep the retry loop in worker.py (cost none; buys nothing new)\n- C. Adopt at_least_once and keep a bounded in-handler retry (cost medium)\n- D. Wait for 2.4. It is a preview, not a real option today, so I have dropped it from the comparison.\n' ;;
+      esac
+      printf 'Recommendation: Option A - B keeps hand-rolled retry code.\nFirst step: switch the queue to at_least_once.\nBets: latency unverified -> load test\nOpen questions: none\nProposed beyond brief: none\n' ;;
     tenth-man)
       printf 'Claim: adopt at_least_once. No material objection; watch duplicate handling.\n\n```verdict\n'
       jq -nc '{verdict: "PASS", feedback: [{id: "TM-1", severity: "OPTIONAL", what: "make consumers idempotent before switching (docs: redelivery duplicates)", where: "options report, recommendation"}]}'

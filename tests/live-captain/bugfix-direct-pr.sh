@@ -5,7 +5,7 @@
 # Workflow line derived by fm-workflow trace, and launch no second step before a result is recorded.
 SCN_PROJECT=duration-cli
 SCN_CONTROL=1
-SCN_BAD="good-relative-path spec-header-trimmed no-select select-late no-next brief-no-handoff second-step no-trace trace-wrong wrong-delivery"
+SCN_BAD="good-relative-path good-dotdot-config good-doubleslash-config bad-other-config-root spec-header-trimmed spec-title-dropped spec-step-line-dropped spec-reworded trace-in-brief no-select select-late no-next brief-no-handoff second-step no-trace trace-wrong wrong-delivery"
 
 scn_prompt() {
   cat <<'TXT'

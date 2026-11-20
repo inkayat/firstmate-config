@@ -198,17 +198,54 @@ case_grade() {
   echo "FAIL bound to head, the stale qa gate identified, review/security not wrongly flagged, gates read, repo untouched"
 }
 
-case_canned() { # good|bad <repo> <run> <aux>; FM_CANNED_VARIANT picks a different bad worker (default 1)
-  local mode=$1 repo=$2 run=$3 head qa
+case_variants() { # every judge property has a bad worker that breaks exactly it
+  printf 'good\tgood-extra-optional-note\t\n'
+  printf 'good\tgood-other-wording-short-sha\t\n'
+  printf 'bad\tbad-pass-all-gates\tverdict is .PASS., expected FAIL\n'
+  printf 'bad\tbad-wrong-gate\tno BLOCKER/IMPORTANT item identifies the stale qa gate\n'
+  printf 'bad\tbad-invented-review-stale\ta stale-gate item does not name qa\n'
+  printf 'bad\tbad-qa-not-stale\tno BLOCKER/IMPORTANT item identifies the stale qa gate\n'
+  printf 'bad\tbad-qa-optional-only\tno BLOCKER/IMPORTANT item identifies the stale qa gate\n'
+  printf 'bad\tbad-no-gate-read\tnever looked at the recorded gate verdicts\n'
+  printf 'bad\tbad-wrong-commit\tis not the head\n'
+  printf 'bad\tbad-repo-dirty\tleft changes\n'
+}
+
+case_canned() { # <mode> <repo> <run> <aux>: good, good-*, bad (default: PASS over the stale gate), bad-<variant>
+  local mode=$1 repo=$2 run=$3 head qa variant=pass-all-gates short
+  case $mode in bad-*) variant=${mode#bad-}; mode=bad ;; good-*) variant=${mode#good-}; mode=good ;; esac
   head=$(git -C "$repo" rev-parse HEAD)
   qa=$(rel_qa_commit "$repo")
   {
     printf 'bash\t{"command": "git rev-parse HEAD && git log --oneline main..HEAD"}\n'
-    printf 'bash\t{"command": "cat gates/qa.json gates/review.json gates/security.json"}\n'
+    [ "$variant" = no-gate-read ] || printf 'bash\t{"command": "cat gates/qa.json gates/review.json gates/security.json"}\n'
     printf 'bash\t{"command": "python3 check.py"}\n'
   } >> "$run/calls.tsv"
   if [ "$mode" = good ]; then
-    cat > "$run/final.txt" <<EOF
+    short=$(printf '%s' "$head" | cut -c1-9)
+    case $variant in
+      extra-optional-note) # the stale qa item plus an OPTIONAL review note
+        cat > "$run/final.txt" <<EOF
+Gate comparison: qa.json names $qa, head is $head: STALE. review.json and security.json name the head.
+\`\`\`verdict
+{"verdict": "FAIL", "commit": "$head", "feedback": [
+  {"id": "REL-1", "severity": "IMPORTANT", "class": "stale-gate", "what": "QA verdict was recorded for commit $qa but head is $head; no QA run on head", "where": "gate: qa", "layer": "ci"},
+  {"id": "REL-2", "severity": "OPTIONAL", "class": "notes", "what": "review note: test names could say what they assert (verbatim from review.json)", "where": "test_slug.py"}
+]}
+\`\`\`
+EOF
+        ;;
+      other-wording-short-sha) # BLOCKER, another lawful class and wording, abbreviated head sha
+        cat > "$run/final.txt" <<EOF
+\`\`\`verdict
+{"verdict": "FAIL", "commit": "$short", "feedback": [
+  {"id": "REL-1", "severity": "BLOCKER", "class": "gate-mismatch", "what": "recorded QA verdict names an earlier commit ($qa), not the head: it predates the fix commit", "where": "gates/qa.json"}
+]}
+\`\`\`
+EOF
+        ;;
+      *) # the plain good worker
+        cat > "$run/final.txt" <<EOF
 Delivery package: title, what/why, How it was verified (python3 check.py: ok), Risk low, How to revert: git revert, flag none.
 Gate comparison: qa.json names $qa, head is $head: STALE (the fix commit trim leading and trailing dashes landed after QA). review.json and security.json name the head.
 \`\`\`verdict
@@ -217,17 +254,20 @@ Gate comparison: qa.json names $qa, head is $head: STALE (the fix commit trim le
 ]}
 \`\`\`
 EOF
+        ;;
+    esac
     return 0
   fi
-  case "${FM_CANNED_VARIANT:-1}" in
-    1) cat > "$run/final.txt" <<EOF
+  case $variant in
+    pass-all-gates)
+      cat > "$run/final.txt" <<EOF
 All three gates passed, the check passes, changelog present. Ready.
 \`\`\`verdict
 {"verdict": "PASS", "commit": "$head", "feedback": []}
 \`\`\`
 EOF
       ;;
-    2) # FAIL, but blames the wrong gate
+    wrong-gate) # FAIL, but blames the wrong gate
       cat > "$run/final.txt" <<EOF
 \`\`\`verdict
 {"verdict": "FAIL", "commit": "$head", "feedback": [
@@ -236,12 +276,59 @@ EOF
 \`\`\`
 EOF
       ;;
-    3) # FAIL, qa identified, but flags review as stale too (invented)
+    invented-review-stale) # FAIL, qa identified, but flags review as stale too (invented)
       cat > "$run/final.txt" <<EOF
 \`\`\`verdict
 {"verdict": "FAIL", "commit": "$head", "feedback": [
   {"id": "REL-1", "severity": "IMPORTANT", "class": "stale-gate", "what": "QA verdict names $qa, head is $head", "where": "gate: qa"},
   {"id": "REL-2", "severity": "IMPORTANT", "class": "stale-gate", "what": "review verdict is stale", "where": "gate: review"}
+]}
+\`\`\`
+EOF
+      ;;
+    qa-not-stale) # FAIL naming qa, but for a different reason than staleness
+      cat > "$run/final.txt" <<EOF
+\`\`\`verdict
+{"verdict": "FAIL", "commit": "$head", "feedback": [
+  {"id": "REL-1", "severity": "IMPORTANT", "class": "process", "what": "the qa gate carries no open items and no screenshots", "where": "gate: qa"}
+]}
+\`\`\`
+EOF
+      ;;
+    qa-optional-only) # the stale qa gate is noted but not blocking
+      cat > "$run/final.txt" <<EOF
+\`\`\`verdict
+{"verdict": "FAIL", "commit": "$head", "feedback": [
+  {"id": "REL-1", "severity": "OPTIONAL", "class": "stale-gate", "what": "QA verdict names $qa, head is $head", "where": "gate: qa"},
+  {"id": "REL-2", "severity": "IMPORTANT", "class": "process", "what": "delivery package missing the revert note", "where": "package"}
+]}
+\`\`\`
+EOF
+      ;;
+    no-gate-read) # the right FAIL, but the worker never opened ./gates
+      cat > "$run/final.txt" <<EOF
+\`\`\`verdict
+{"verdict": "FAIL", "commit": "$head", "feedback": [
+  {"id": "REL-1", "severity": "IMPORTANT", "class": "stale-gate", "what": "QA verdict was recorded for commit $qa but head is $head", "where": "gate: qa"}
+]}
+\`\`\`
+EOF
+      ;;
+    wrong-commit) # the right FAIL bound to the base commit
+      cat > "$run/final.txt" <<EOF
+\`\`\`verdict
+{"verdict": "FAIL", "commit": "$(git -C "$repo" rev-parse main)", "feedback": [
+  {"id": "REL-1", "severity": "IMPORTANT", "class": "stale-gate", "what": "QA verdict was recorded for commit $qa but head is $head", "where": "gate: qa"}
+]}
+\`\`\`
+EOF
+      ;;
+    repo-dirty) # the right FAIL, but it left a file in the repo
+      printf 'scratch\n' > "$repo/notes.txt"
+      cat > "$run/final.txt" <<EOF
+\`\`\`verdict
+{"verdict": "FAIL", "commit": "$head", "feedback": [
+  {"id": "REL-1", "severity": "IMPORTANT", "class": "stale-gate", "what": "QA verdict was recorded for commit $qa but head is $head", "where": "gate: qa"}
 ]}
 \`\`\`
 EOF

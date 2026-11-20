@@ -11,7 +11,8 @@
 #   tests/roles-contract-live.sh                   offline self-test (a fake omp, canned good/bad workers
 #                                                  graded by each case's real judge); live SKIPs
 #   tests/roles-contract-live.sh selftest [case]   only the offline self-test
-#   FM_CONTRACT_LIVE=1 tests/roles-contract-live.sh [case...]   run the live cases (default: all)
+#   FM_CONTRACT_LIVE=1 tests/roles-contract-live.sh [case...]   run the live cases (default: all); the pre-flight self-test
+#                                                  covers just the cases it runs
 #
 # Environment (live): the worker uses the operator's existing omp login in place; no credential is
 # exported, copied or logged. Without a logged-in omp the live run SKIPs, never PASSes.
@@ -50,6 +51,11 @@
 #   case_canned good|bad <repo> <run> <aux>  offline stand-in worker: write $run/final.txt (+ $run/calls.tsv extras)
 #                                    and edit the repo as such a worker would leave it. good must pass the whole
 #                                    judge, bad must fail case_grade (self-test).
+#   case_variants                    optional: prints TAB-separated lines <good|bad> <mode> <ERE>; the self-test runs
+#                                    case_canned <mode> for each through the real judge. A good variant must pass, a bad
+#                                    one must fail the OUTSIDE judge with a reason matching the ERE. Every judge relaxation
+#                                    needs a bad variant here that the relaxed judge still rejects (and a good one for the
+#                                    lawful form it admits).
 # Grader helpers (current run in $RUN/$REPO): final_has <ERE>, final_lacks <ERE>, call_has <ERE>,
 #   called_agent <role>, tool_calls <tool>, block_json (the parsed final block), changed_files, skill_read <name>.
 set -u
@@ -276,8 +282,34 @@ CASE
   ART=''
 }
 
-selftest_cases() { # every case's real judge, on a canned good and a canned bad worker
-  local c name role block mode t rc g s
+selftest_one() { # <case-file> <tmpdir> <name> <role> <block> <mode> <good|bad> [reason ERE]: one canned worker through the real judge
+  local c=$1 t=$2 name=$3 role=$4 block=$5 mode=$6 expect=$7 why=${8:-} g rc
+  rm -rf "$t/$name-$mode"; mkdir -p "$t/$name-$mode"
+  ART="$t/$name-$mode/art"; mkdir -p "$ART"
+  SKILL_SRC_SAVE=$SKILL_SRC; SKILL_SRC="$t/no-skills"; mkdir -p "$SKILL_SRC"
+  prepare "$c" "$name-$mode" || { fail "case $name: fixture setup failed ($mode)"; SKILL_SRC=$SKILL_SRC_SAVE; return; }
+  SKILL_SRC=$SKILL_SRC_SAVE
+  canned_base "$role"
+  ( . "$c"; cd "$REPO" && case_canned "$mode" "$REPO" "$RUN" "$AUX" ) || { fail "case $name: case_canned $mode failed"; stop_services "$AUX"; return; }
+  [ -f "$RUN/final.txt" ] || : > "$RUN/final.txt"
+  g=$(judge_run "$role" "$block" 2>&1); rc=$?
+  stop_services "$AUX"
+  if [ "$expect" = good ]; then
+    [ $rc -eq 0 ] && pass "case $name: a worker that follows the $role contract ($mode) passes the whole judge" || fail "case $name: the canned $mode $role worker failed: $(printf '%s' "$g" | grep '^FAIL' | tr '\n' ' ')"
+  else
+    if ! printf '%s' "$g" | grep -q 'FAIL - outside judge'; then
+      fail "case $name: the outside judge accepted the bad $role worker $mode: $g"
+    elif [ -n "$why" ] && ! printf '%s' "$g" | grep -E -i -q -- "$why"; then
+      fail "case $name: the bad worker $mode was rejected, but not for its reason /$why/: $(printf '%s' "$g" | grep 'FAIL - outside judge' | cut -c1-200)"
+    else
+      pass "case $name: the outside judge rejects the bad $role worker $mode: $(printf '%s' "$g" | grep 'FAIL - outside judge' | sed 's/^FAIL - outside judge: //' | cut -c1-110)"
+    fi
+  fi
+  rm -rf "$SCR"
+}
+
+selftest_cases() { # every case's real judge, on a canned good and a canned bad worker, then on its named variants
+  local c name role block t kind v why
   t=$(mktemp -d "${TMPDIR:-/tmp}/fm-contract-live-cases.XXXXXX") || return 1
   for c in "$CASES_DIR"/*.sh; do
     [ -f "$c" ] || continue
@@ -289,31 +321,28 @@ selftest_cases() { # every case's real judge, on a canned good and a canned bad 
     case $block in result|verdict|risk|report|none) pass "case $name: block kind $block" ;; *) fail "case $name: CASE_BLOCK must be result|verdict|risk|report|none"; continue ;; esac
     [ -n "$(case_var CASE_PROMPT)" ] && pass "case $name: has a prompt" || fail "case $name: no CASE_PROMPT"
     for fn in case_setup case_grade case_canned; do have_fn "$fn" && pass "case $name: defines $fn" || fail "case $name: missing $fn"; done
-    for mode in good bad; do
-      rm -rf "$t/$name-$mode"; mkdir -p "$t/$name-$mode"
-      ART="$t/$name-$mode/art"; mkdir -p "$ART"
-      SKILL_SRC_SAVE=$SKILL_SRC; SKILL_SRC="$t/no-skills"; mkdir -p "$SKILL_SRC"
-      prepare "$c" "$name-$mode" || { fail "case $name: fixture setup failed ($mode)"; SKILL_SRC=$SKILL_SRC_SAVE; continue; }
-      SKILL_SRC=$SKILL_SRC_SAVE
-      canned_base "$role"
-      ( . "$c"; cd "$REPO" && case_canned "$mode" "$REPO" "$RUN" "$AUX" ) || { fail "case $name: case_canned $mode failed"; stop_services "$AUX"; continue; }
-      [ -f "$RUN/final.txt" ] || : > "$RUN/final.txt"
-      g=$(judge_run "$role" "$block" 2>&1); rc=$?
-      stop_services "$AUX"
-      if [ "$mode" = good ]; then
-        [ $rc -eq 0 ] && pass "case $name: a worker that follows the $role contract passes the whole judge" || fail "case $name: the canned good $role worker failed: $(printf '%s' "$g" | grep '^FAIL' | tr '\n' ' ')"
-      else
-        printf '%s' "$g" | grep -q 'FAIL - outside judge' && pass "case $name: the outside judge rejects a worker that broke the $role contract" || fail "case $name: the outside judge accepted a bad $role worker: $g"
-      fi
-      rm -rf "$SCR"
-    done
+    selftest_one "$c" "$t" "$name" "$role" "$block" good good
+    selftest_one "$c" "$t" "$name" "$role" "$block" bad bad
+    # case_variants prints one line per extra canned worker: <good|bad> TAB <mode passed to case_canned> TAB <ERE the rejection must match>.
+    # Every judge relaxation needs a bad variant here that the relaxed judge still rejects, for the reason named.
+    if have_fn case_variants; then
+      while IFS="$(printf '\t')" read -r kind v why; do
+        [ -n "$v" ] || continue
+        case $kind in good|bad) ;; *) fail "case $name: case_variants line [$kind $v] must start with good or bad"; continue ;; esac
+        selftest_one "$c" "$t" "$name" "$role" "$block" "$v" "$kind" "$why"
+      done <<EOF
+$( . "$c"; case_variants )
+EOF
+    fi
   done
   rm -rf "$t"; ART=''
 }
 
 ONLY=()
 command_selftest=0
-if [ "${1:-}" = selftest ]; then command_selftest=1; ONLY=("${@:2}"); fi
+if [ "${1:-}" = selftest ]; then command_selftest=1; ONLY=("${@:2}")
+else for a in "$@"; do ONLY+=("$(basename "${a%.sh}")"); done   # a live run's pre-flight selftest covers just the cases it will run
+fi
 ( selftest_fake_omp; exit "$failed" ) || failed=1
 ( selftest_cases; exit "$failed" ) || failed=1
 if [ "$command_selftest" -eq 1 ]; then

@@ -30,29 +30,57 @@ case_grade() {
   echo "low / not-required / no sensitive surface / no checklist item / commit = head / REVIEW.md read from main / repo untouched"
 }
 
-case_canned() { # good|bad <repo> <run> <aux>; FM_CANNED_VARIANT picks a different bad worker (default 1)
-  local mode=$1 repo=$2 run=$3 head
+case_variants() { # every judge property has a bad worker that breaks exactly it
+  printf 'good\tgood-catfile-shortsha\t\n'
+  printf 'bad\tbad-inflated-tier\ttier is .medium.\n'
+  printf 'bad\tbad-invented-checklist\tmatched checklist is .R-5., the diff triggers .\n'
+  printf 'bad\tbad-security-required\tsecurity is .required.\n'
+  printf 'bad\tbad-no-base-read\tnever read REVIEW.md from the base branch\n'
+  printf 'bad\tbad-head-rules-read\tnever read REVIEW.md from the base branch\n'
+  printf 'bad\tbad-wrong-commit\tnot the branch head\n'
+  printf 'bad\tbad-repo-dirty\tleft changes\n'
+  printf 'bad\tbad-no-readme-reason\tnever quote the README.md hunk\n'
+  printf 'bad\tbad-tier-high\ttier is .high.\n'
+}
+
+case_canned() { # <mode> <repo> <run> <aux>: good, good-*, bad (default), bad-<variant>
+  local mode=$1 repo=$2 run=$3 head variant=inflated-tier
+  case $mode in bad-*) variant=${mode#bad-}; mode=bad ;; good-*) variant=${mode#good-}; mode=good ;; esac
   head=$(git -C "$repo" rev-parse HEAD)
   {
     printf 'bash\t{"command": "git diff --stat main..HEAD && git diff main..HEAD"}\n'
-    printf 'bash\t{"command": "git show main:REVIEW.md"}\n'
+    if [ "$variant" = catfile-shortsha ]; then printf 'bash\t{"command": "git cat-file -p main:REVIEW.md"}\n'; else printf 'bash\t{"command": "git show main:REVIEW.md"}\n'; fi
   } >> "$run/calls.tsv"
   if [ "$mode" = good ]; then
+    [ "$variant" = catfile-shortsha ] && head=$(printf '%s' "$head" | cut -c1-10)
     {
       printf 'Head %s: one hunk in README.md, "recieves" -> "receives". Docs only.\n' "$head"
       risk_canned_block low not-required "$head" '[]' '[]' '["diff edits README.md:2 only (recieves -> receives): docs-only is low", "blast radius: none, no code path touched"]'
     } > "$run/final.txt"
     return 0
   fi
-  case "${FM_CANNED_VARIANT:-1}" in
-    1) # inflates: the repo has auth and billing code, so medium plus R-1/R-2
+  case $variant in
+    inflated-tier) # inflates: the repo has auth and billing code, so medium plus R-1/R-2
       { risk_canned_block medium required "$head" '["auth-session"]' '["R-1", "R-2"]' '["README.md edited, repo handles auth and payments"]'; } > "$run/final.txt" ;;
-    2) # tier right, but invents a checklist match
+    invented-checklist) # tier right, but invents a checklist match
       { risk_canned_block low not-required "$head" '[]' '["R-5"]' '["README.md edited"]'; } > "$run/final.txt" ;;
-    3) # tier right, security wrongly required
+    security-required) # tier right, security wrongly required
       { risk_canned_block low required "$head" '[]' '[]' '["README.md edited"]'; } > "$run/final.txt" ;;
-    4) # right block but never read the rules from base
+    no-base-read) # right block but never read the rules from base
       grep -v 'REVIEW' "$run/calls.tsv" > "$run/calls.new" && mv "$run/calls.new" "$run/calls.tsv"
       { risk_canned_block low not-required "$head" '[]' '[]' '["README.md edited"]'; } > "$run/final.txt" ;;
+    head-rules-read) # right block, but the rules were read from HEAD, not from main
+      grep -v 'REVIEW' "$run/calls.tsv" > "$run/calls.new" && mv "$run/calls.new" "$run/calls.tsv"
+      printf 'bash\t{"command": "git show HEAD:REVIEW.md"}\n' >> "$run/calls.tsv"
+      { risk_canned_block low not-required "$head" '[]' '[]' '["README.md edited"]'; } > "$run/final.txt" ;;
+    wrong-commit) # right block bound to the base commit
+      { risk_canned_block low not-required "$(git -C "$repo" rev-parse main)" '[]' '[]' '["README.md edited"]'; } > "$run/final.txt" ;;
+    repo-dirty) # right block, left a file in the repo
+      printf 'scratch\n' > "$repo/notes.txt"
+      { risk_canned_block low not-required "$head" '[]' '[]' '["README.md edited"]'; } > "$run/final.txt" ;;
+    no-readme-reason) # right block, reasons never quote the README hunk
+      { risk_canned_block low not-required "$head" '[]' '[]' '["only prose changed"]'; } > "$run/final.txt" ;;
+    tier-high) # inflates to high
+      { risk_canned_block high required "$head" '[]' '[]' '["README.md edited"]'; } > "$run/final.txt" ;;
   esac
 }

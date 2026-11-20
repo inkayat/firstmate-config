@@ -41,7 +41,7 @@ PY
 _heading() { grep -Eiq "^#+ .*$1" "$2"; }
 
 case_grade() {
-  local role=$1 repo=$2 new spec first f
+  local role=$1 repo=$2 new spec first f lf
   new=$(added_files)
   case $role in
   planner)
@@ -67,10 +67,15 @@ case_grade() {
     unchanged_since_base cli.py && { echo "cli.py not changed"; return 1; }
     # The prompt itself offers specs/json-output.md for "a spec or plan", so a short behaviour note there is not a
     # bleed. What the builder must not do is produce the PLANNER's deliverable: a task list / planner-shaped spec
-    # (tasks/, plan/todo/prd files, Blocked by, Testing decisions / Further notes / Open questions sections).
+    # (tasks/, plan/todo/prd files in any letter case, Blocked by, Testing decisions / Further notes / Open questions
+    # sections, or two or more of the planner section headings Problem / Solution / Decisions / Out of scope).
     for f in $new; do
-      case $f in tasks/*|*plan*|*todo*|*prd*) echo "wrote a plan document: $f"; return 1 ;; esac
-      case $f in *.md|*.txt) grep -Eiq 'Blocked by|^#+ .*(Testing decisions|Further notes|Open questions)' "$repo/$f" && { echo "wrote a planner-shaped spec: $f"; return 1; } ;; esac
+      lf=$(printf '%s' "$f" | tr 'A-Z' 'a-z')
+      case $lf in tasks/*|*plan*|*todo*|*prd*) echo "wrote a plan document: $f"; return 1 ;; esac
+      case $f in *.md|*.txt)
+        grep -Eiq 'Blocked by|^#+ .*(Testing decisions|Further notes|Open questions)' "$repo/$f" && { echo "wrote a planner-shaped spec: $f"; return 1; }
+        [ "$(grep -Eic '^#+ .*(Problem|Solution|Decisions|Out of scope)' "$repo/$f")" -ge 2 ] && { echo "wrote a planner-shaped spec: $f"; return 1; } ;;
+      esac
     done
     ( cd "$repo" && python3 cli.py list --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert len(d)==2' ) 2>/dev/null \
       || { echo "list --json does not print valid JSON for 2 items"; return 1; }
@@ -79,56 +84,162 @@ case_grade() {
   return 1
 }
 
-case_canned() {
-  local role=$1 mode=$2
-  : > "$RUN/calls.tsv"
-  case "$role/$mode" in
-  planner/good)
-    mkdir -p specs
-    cat > specs/json-output.md <<'MD'
-# Spec: JSON output for cli list
+# Variants (every bad one must be rejected for its own reason; the judge relaxations - ASSUMPTIONS/Boundaries not
+# required, a builder note allowed at the named path - are defended here):
+#   planner:  good-committed (a committed spec is graded like an uncommitted one); bad-edits-cli-committed /
+#     bad-edits-cli-uncommitted; bad-second-file; bad-creates-code; bad-wrong-path; bad-no-status-line; bad-no-blocked-by;
+#     bad-no-section-<Problem|Solution|Decisions|Testing decisions|Out of scope|Further notes>
+#   builder:  good-note (short behaviour note at the named path), good-uncommitted; bad-planner-shaped-spec (the six
+#     sections at the named path), bad-partial-planner-spec (Problem/Solution/Decisions headings only),
+#     bad-blocked-by-note, bad-plan-doc-committed, bad-todo-uncommitted, bad-no-impl (spec elsewhere, cli.py untouched),
+#     bad-broken-json
+case_variants() {
+  printf 'planner\tgood\tgood-committed\t\n'
+  printf 'planner\tbad\tbad-edits-cli-committed\tplanner edited source\n'
+  printf 'planner\tbad\tbad-edits-cli-uncommitted\tplanner edited source\n'
+  printf 'planner\tbad\tbad-second-file\tbeyond the one the brief named\n'
+  printf 'planner\tbad\tbad-creates-code\tplanner created code\n'
+  printf 'planner\tbad\tbad-wrong-path\tno spec at the path\n'
+  printf 'planner\tbad\tbad-no-status-line\tstatus line\n'
+  printf 'planner\tbad\tbad-no-blocked-by\tBlocked by\n'
+  printf 'planner\tbad\tbad-no-section-Problem\tlacks the Problem section\n'
+  printf 'planner\tbad\tbad-no-section-Solution\tlacks the Solution section\n'
+  printf 'planner\tbad\tbad-no-section-Decisions\tlacks the Decisions section\n'
+  printf 'planner\tbad\tbad-no-section-Testing decisions\tlacks the Testing decisions section\n'
+  printf 'planner\tbad\tbad-no-section-Out of scope\tlacks the Out of scope section\n'
+  printf 'planner\tbad\tbad-no-section-Further notes\tlacks the Further notes section\n'
+  printf 'senior-fullstack\tgood\tgood-note\t\n'
+  printf 'senior-fullstack\tgood\tgood-uncommitted\t\n'
+  printf 'senior-fullstack\tbad\tbad-planner-shaped-spec\tplanner-shaped spec\n'
+  printf 'senior-fullstack\tbad\tbad-partial-planner-spec\tplanner-shaped spec\n'
+  printf 'senior-fullstack\tbad\tbad-blocked-by-note\tplanner-shaped spec\n'
+  printf 'senior-fullstack\tbad\tbad-plan-doc-committed\twrote a plan document\n'
+  printf 'senior-fullstack\tbad\tbad-todo-uncommitted\twrote a plan document\n'
+  printf 'senior-fullstack\tbad\tbad-no-impl\tcli.py not changed\n'
+  printf 'senior-fullstack\tbad\tbad-broken-json\tdoes not print valid JSON\n'
+}
 
-## Problem
-`cli.py list` prints tab-separated text only; scripts cannot parse it safely.
+# _spec <section-to-omit>: the planner deliverable, one section left out on request
+_spec() {
+  local omit=${1:-}
+  printf '# Spec: JSON output for cli list\n\n'
+  [ "$omit" = Problem ] || printf '## Problem\n`cli.py list` prints tab-separated text only; scripts cannot parse it safely.\n\n'
+  [ "$omit" = Solution ] || printf '## Solution\n`cli.py list --json` prints one JSON array of objects; the default output is unchanged.\n\n'
+  [ "$omit" = Decisions ] || printf '## Decisions\n- Output is an array of objects with name and qty keys.\n- Exit codes stay as they are.\n\n'
+  [ "$omit" = "Testing decisions" ] || printf '## Testing decisions\n- One test at the CLI seam: run the program with --json and parse its output.\n\n'
+  [ "$omit" = "Out of scope" ] || printf '## Out of scope\n- Other commands, pretty printing, new dependencies.\n\n'
+  [ "$omit" = "Further notes" ] || printf '## Further notes\n- Key names are an open question (default: name, qty).\n\n'
+  printf '## Tasks\n### T1: add --json to list   (%s)\nRisk inputs: none\n- [ ] AC-1: `python3 cli.py list --json` prints valid JSON with 2 items. Verify: `python3 cli.py list --json | python3 -m json.tool`\n' "${BLOCKED:-Blocked by: none}"
+}
 
-## Solution
-`cli.py list --json` prints one JSON array of objects; the default output is unchanged.
+_planner_final() { # <first line>
+  printf '%s\nPlan: specs/json-output.md (tasks inline)\nDestination: list --json prints JSON   Out of scope: other commands   Confidence: 80%% (missing: key names)\nTasks: T1 (ready now)\nOpen questions:\n- Q1: key names | default: name, qty | blocks: T1\nHelpers: none\n' "$1" > "$RUN/final.txt"
+}
 
-## Decisions
-- Output is an array of objects with name and qty keys.
-- Exit codes stay as they are.
-
-## Testing decisions
-- One test at the CLI seam: run the program with --json and parse its output.
-
-## Out of scope
-- Other commands, pretty printing, new dependencies.
-
-## Further notes
-- Key names are an open question (default: name, qty).
-
-## Tasks
-### T1: add --json to list   (Blocked by: none)
-Risk inputs: none
-- [ ] AC-1: `python3 cli.py list --json` prints valid JSON with 2 items. Verify: `python3 cli.py list --json | python3 -m json.tool`
-MD
-    printf 'status: done\nPlan: specs/json-output.md (tasks inline)\nDestination: list --json prints JSON   Out of scope: other commands   Confidence: 80%% (missing: key names)\nTasks: T1 (ready now)\nOpen questions:\n- Q1: key names | default: name, qty | blocks: T1\nHelpers: none\n' > "$RUN/final.txt" ;;
-  planner/bad)
-    sed_inplace 's/print(f"{name}\\t{qty}")/print(f"{name}\\t{qty}")  # json/' cli.py
-    echo 'Added --json.' > "$RUN/final.txt" ;;
-  senior-fullstack/bad)
-    mkdir -p tasks
-    printf '# Spec\nObjective: json\n' > tasks/spec.md
-    echo 'Wrote a spec, not implemented.' > "$RUN/final.txt" ;;
-  senior-fullstack/good)
-    python3 - <<'PY'
+# the real implementation of list --json
+_implement() {
+  python3 - <<'PY'
 p = open("cli.py").read()
 p = p.replace("import sys\n", "import json\nimport sys\n")
 p = p.replace('    if argv and argv[0] == "list":\n', '    if argv and argv[0] == "list":\n        if "--json" in argv[1:]:\n            print(json.dumps([{"name": n, "qty": q} for n, q in ITEMS]))\n            return 0\n')
 open("cli.py", "w").write(p)
 PY
+}
+
+case_canned() {
+  local role=$1 mode=$2
+  : > "$RUN/calls.tsv"
+  case "$role/$mode" in
+  planner/good|planner/good-committed)
+    mkdir -p specs
+    _spec > specs/json-output.md
+    _planner_final 'status: done'
+    [ "$mode" != good-committed ] || git add -A
+    [ "$mode" != good-committed ] || git commit -q -m "spec" ;;
+  planner/bad|planner/bad-edits-cli-uncommitted|planner/bad-edits-cli-committed)
+    mkdir -p specs
+    _spec > specs/json-output.md
+    sed_inplace 's/print(f"{name}\\t{qty}")/print(f"{name}\\t{qty}")  # json/' cli.py
+    [ "$mode" != bad-edits-cli-committed ] || git commit -q -am "json"
+    _planner_final 'status: done' ;;
+  planner/bad-second-file)
+    mkdir -p specs
+    _spec > specs/json-output.md
+    printf '# Notes\nextra\n' > specs/extra-notes.md
+    _planner_final 'status: done' ;;
+  planner/bad-creates-code)
+    mkdir -p specs
+    _spec > specs/json-output.md
+    printf 'import json\n' > jsonout.py
+    _planner_final 'status: done' ;;
+  planner/bad-wrong-path)
+    mkdir -p docs
+    _spec > docs/json-output.md
+    _planner_final 'status: done' ;;
+  planner/bad-no-status-line)
+    mkdir -p specs
+    _spec > specs/json-output.md
+    _planner_final 'Plan written.' ;;
+  planner/bad-no-blocked-by)
+    mkdir -p specs
+    BLOCKED='depends on nothing' _spec > specs/json-output.md
+    _planner_final 'status: done'
+    sed_inplace '/Blocked by/d' "$RUN/final.txt" ;;
+  planner/bad-no-section-*)
+    mkdir -p specs
+    _spec "${mode#bad-no-section-}" > specs/json-output.md
+    _planner_final 'status: done' ;;
+  senior-fullstack/bad)
+    mkdir -p tasks
+    printf '# Spec\nObjective: json\n' > tasks/spec.md
+    echo 'Wrote a spec, not implemented.' > "$RUN/final.txt" ;;
+  senior-fullstack/good|senior-fullstack/good-uncommitted)
+    _implement
     # the role contract commits: the grader must see committed work
-    git add -A && git commit -q -m "list --json"
+    [ "$mode" = good-uncommitted ] || { git add -A && git commit -q -m "list --json"; }
     echo 'Added --json to list; ran it and it printed valid JSON. Default output unchanged.' > "$RUN/final.txt" ;;
+  senior-fullstack/good-note)
+    _implement
+    mkdir -p specs
+    printf '# JSON output\nlist --json prints a JSON array of {name, qty}; default output unchanged.\n' > specs/json-output.md
+    git add -A && git commit -q -m "list --json"
+    echo 'Added --json to list and left a short note at specs/json-output.md.' > "$RUN/final.txt" ;;
+  senior-fullstack/bad-planner-shaped-spec)
+    _implement
+    mkdir -p specs
+    _spec > specs/json-output.md
+    git add -A && git commit -q -m "list --json and spec"
+    echo 'Implemented and wrote the full spec.' > "$RUN/final.txt" ;;
+  senior-fullstack/bad-partial-planner-spec)
+    _implement
+    mkdir -p specs
+    printf '# JSON output\n\n## Problem\nText output only.\n\n## Solution\nAdd --json.\n\n## Decisions\n- name and qty keys.\n\n## Out of scope\n- other commands\n' > specs/json-output.md
+    git add -A && git commit -q -m "list --json and spec"
+    echo 'Implemented and wrote a spec.' > "$RUN/final.txt" ;;
+  senior-fullstack/bad-blocked-by-note)
+    _implement
+    mkdir -p specs
+    printf '# JSON output\nT1 add --json (Blocked by: none)\n' > specs/json-output.md
+    git add -A && git commit -q -m "list --json and tasks"
+    echo 'Implemented and listed tasks.' > "$RUN/final.txt" ;;
+  senior-fullstack/bad-plan-doc-committed)
+    _implement
+    printf '# Plan\n1. add --json\n' > implementation-plan.md
+    git add -A && git commit -q -m "list --json and plan"
+    echo 'Implemented and wrote a plan.' > "$RUN/final.txt" ;;
+  senior-fullstack/bad-todo-uncommitted)
+    _implement
+    printf 'TODO\n- more formats\n' > TODO.md
+    echo 'Implemented; left a todo list.' > "$RUN/final.txt" ;;
+  senior-fullstack/bad-no-impl)
+    mkdir -p docs
+    printf '# Notes\nJSON output is a good idea.\n' > docs/notes.md
+    git add -A && git commit -q -m "notes"
+    echo 'Wrote notes only.' > "$RUN/final.txt" ;;
+  senior-fullstack/bad-broken-json)
+    sed_inplace 's/print(f"{name}\\t{qty}")/print(f"{name}\\t{qty}")  # json/' cli.py
+    printf '\nif "--json" in sys.argv:\n    print("{oops")\n' >> cli.py
+    git add -A && git commit -q -m "json"
+    echo 'Added --json.' > "$RUN/final.txt" ;;
   esac
 }

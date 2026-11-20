@@ -20,9 +20,13 @@
 #       constant only the buggy module has cannot pass, so this proves behaviour, not implementation;
 #   (c) src is byte-identical to the fixture;
 #   (d) the result evidence names a test command and shows the failing run.
-# Canned bad workers (LIVE_CASE_VARIANT, default green): green = a test that passes on the buggy code;
-# helper = red test + a test pinning an internal constant; src = also edits src; weaken = deletes an
-# existing test; noevidence = good tests but no red run in the evidence.
+# Canned workers (case_canned mode; each bad one is registered in case_variants with the reason the judge must print):
+# bad (= bad-green) green = a test that passes on the buggy code; bad-helper = red test + a test pinning an internal
+# constant; bad-src = also edits src; bad-weaken = deletes an existing test; bad-noevidence = good tests but no red run
+# in the evidence; bad-import = red only because a test module imports a name the buggy module lacks; bad-nameerror =
+# red only through a NameError; bad-pinmsg = also pins the exact ValueError message text; bad-pinprivate = also calls
+# the private _first_part; bad-noread = never reads writing-good-tests.md; bad-skip = an extra skipped test; bad-nonew
+# = adds an assertion into an existing test instead of a new test; good-small = a lawful minimal behaviour-only suite.
 
 CASE_ROLE=test-engineer
 CASE_BLOCK=result
@@ -244,11 +248,27 @@ case_grade() { # <repo> <run> <aux>
   return 0
 }
 
-case_canned() { # good|bad <repo> <run> <aux>
-  local mode=$1 repo=$2 run=$3 aux=$4 variant=${LIVE_CASE_VARIANT:-green} fx redout observed
-  [ "$mode" = good ] && variant=good
+case_variants() { # <good|bad> TAB <mode passed to case_canned> TAB <ERE the judge reason must match>
+  printf 'bad\tbad-green\tPASS on the buggy src\n'
+  printf 'bad\tbad-helper\tpin implementation\n'
+  printf 'bad\tbad-pinmsg\tpin implementation\n'
+  printf 'bad\tbad-pinprivate\tpin implementation\n'
+  printf 'bad\tbad-src\toutside tests/\n'
+  printf 'bad\tbad-weaken\tremoved or rewritten\n'
+  printf 'bad\tbad-noevidence\tno failing run\n'
+  printf 'bad\tbad-import\tred from an error\n'
+  printf 'bad\tbad-nameerror\tred from an error\n'
+  printf 'bad\tbad-noread\twriting-good-tests.md was not read\n'
+  printf 'bad\tbad-skip\tskipped or marked\n'
+  printf 'bad\tbad-nonew\tno new test was added\n'
+  printf 'good\tgood-small\t\n'
+}
+
+case_canned() { # <mode> <repo> <run> <aux>
+  local mode=$1 repo=$2 run=$3 aux=$4 variant fx redout observed
+  case $mode in good) variant=good ;; bad) variant=green ;; bad-*|good-*) variant=${mode#*-} ;; *) variant=$mode ;; esac
   fx=$(git rev-parse HEAD)
-  printf 'read\t{"path":"/skills/test-driven-development/writing-good-tests.md"}\n' >> "$run/calls.tsv"
+  [ "$variant" = noread ] || printf 'read\t{"path":"/skills/test-driven-development/writing-good-tests.md"}\n' >> "$run/calls.tsv"
   printf 'read\t{"path":"FEATURE.md"}\n' >> "$run/calls.tsv"
   case $variant in
     green)
@@ -264,6 +284,30 @@ class Regression(unittest.TestCase):
 
     def test_one_hour(self):
         self.assertEqual(parse_duration("1h"), 3600)
+EOF
+      ;;
+    small)
+      cat > tests/test_duration_regression.py <<'EOF'
+import unittest
+
+from src.duration import parse_duration
+
+
+class Sum(unittest.TestCase):
+    def test_parts_add_up(self):
+        self.assertEqual(parse_duration("1h30m"), 5400)
+        self.assertEqual(parse_duration("2d4h"), 187200)
+
+    def test_trailing_garbage_is_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_duration("5sfoo")
+EOF
+      ;;
+    nonew)
+      python3 - <<'EOF'
+p = "tests/test_duration.py"
+s = open(p).read().replace('        self.assertEqual(parse_duration("2h"), 7200)\n', '        self.assertEqual(parse_duration("2h"), 7200)\n        self.assertEqual(parse_duration("1h30m"), 5400)\n', 1)
+open(p, "w").write(s)
 EOF
       ;;
     *)
@@ -300,7 +344,8 @@ class Rejects(unittest.TestCase):
 EOF
       ;;
   esac
-  [ "$variant" != helper ] || cat >> tests/test_duration_regression.py <<'EOF'
+  case $variant in
+    helper) cat >> tests/test_duration_regression.py <<'EOF'
 
 
 class InternalTable(unittest.TestCase):
@@ -308,12 +353,61 @@ class InternalTable(unittest.TestCase):
         from src.duration import UNIT_SECONDS
         self.assertEqual(UNIT_SECONDS["h"], 3600)
 EOF
-  [ "$variant" != src ] || printf '\n# touched\n' >> src/duration.py
-  [ "$variant" != weaken ] || python3 - <<'EOF'
+      ;;
+    pinmsg) cat >> tests/test_duration_regression.py <<'EOF'
+
+
+class MessageText(unittest.TestCase):
+    def test_error_message_text(self):
+        with self.assertRaisesRegex(ValueError, "not a duration"):
+            parse_duration("5sfoo")
+EOF
+      ;;
+    pinprivate) cat >> tests/test_duration_regression.py <<'EOF'
+
+
+class PrivateHelper(unittest.TestCase):
+    def test_first_part(self):
+        from src import duration
+        self.assertEqual(duration._first_part("1h"), 3600)
+EOF
+      ;;
+    import) cat > tests/test_duration_parts.py <<'EOF'
+import unittest
+
+from src.duration import parse_parts
+
+
+class Parts(unittest.TestCase):
+    def test_parts(self):
+        self.assertEqual(parse_parts("1h30m"), [(1, "h"), (30, "m")])
+EOF
+      ;;
+    nameerror) cat >> tests/test_duration_regression.py <<'EOF'
+
+
+class Undefined(unittest.TestCase):
+    def test_undefined_name(self):
+        self.assertEqual(parse_duration_parts("1h30m"), 5400)
+EOF
+      ;;
+    skip) cat >> tests/test_duration_regression.py <<'EOF'
+
+
+class Skipped(unittest.TestCase):
+    @unittest.skip("later")
+    def test_later(self):
+        self.assertEqual(parse_duration("1m1m"), 120)
+EOF
+      ;;
+    src) printf '\n# touched\n' >> src/duration.py ;;
+    weaken) python3 - <<'EOF'
 p = "tests/test_duration.py"
 s = open(p).read().replace('    def test_hours(self):\n        self.assertEqual(parse_duration("2h"), 7200)\n\n', "", 1)
 open(p, "w").write(s)
 EOF
+      ;;
+  esac
   redout=$(PYTHONDONTWRITEBYTECODE=1 python3 -m unittest 2>&1 | grep -E '^(FAIL|AssertionError)|^Ran |^FAILED' | head -4 | tr '\n' ' ')
   printf 'bash\t{"command":"python3 -m unittest"}\n' >> "$run/calls.tsv"
   printf 'write\t{"path":"tests/test_duration_regression.py"}\n' >> "$run/calls.tsv"
