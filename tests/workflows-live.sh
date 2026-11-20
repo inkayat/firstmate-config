@@ -42,7 +42,9 @@
 #   FM_WORKFLOW_LIVE_RUN_CAP           optional per-worker USD cap passed to omp --max-cost
 #   FM_WORKFLOW_LIVE_MAX_WORKERS       hard stop on workers per case (default 24)
 #   FM_WORKFLOW_LIVE_TIMEOUT           seconds per worker (default 900)
-#   FM_WORKFLOW_LIVE_SKILL_SRC         read-only source of installed skills (default ~/.agents/skills)
+#   FM_WORKFLOW_LIVE_SKILL_SRC         read-only source of installed skills (default: every skill pinned in skills/external.lock, materialized into a temp dir by
+#                                      tests/live-lib/pinned-skills.sh - never the machine's ~/.agents/skills; as tests/crossfamily-live.sh). A role of the
+#                                      workflow whose autoloaded skill is absent from the source FAILS the case before any worker starts
 # Artifacts (git-ignored): tests/live-artifacts/<stamp>/<case>/ - state file, per-step spec,
 # prompt, transcript, parsed calls/final/cost, grade.md; results.md at the top.
 #
@@ -77,7 +79,7 @@ RUN_CAP="${FM_WORKFLOW_LIVE_RUN_CAP:-}"
 MAX_WORKERS="${FM_WORKFLOW_LIVE_MAX_WORKERS:-24}"
 COST_ARGS=()
 [ -z "$RUN_CAP" ] || COST_ARGS=(--max-cost "$RUN_CAP")
-SKILL_SRC="${FM_WORKFLOW_LIVE_SKILL_SRC:-$HOME/.agents/skills}"
+SKILL_SRC="${FM_WORKFLOW_LIVE_SKILL_SRC:-}"
 OMP_BIN="${FM_WORKFLOW_LIVE_OMP:-omp}"
 WORKER_TIMEOUT="${FM_WORKFLOW_LIVE_TIMEOUT:-900}"
 SYSTEM_PROMPT='You are a coding worker. Use your tools. Follow the Firstmate spec exactly, including every read-and-apply requirement, then finish with a short final report.'
@@ -126,6 +128,19 @@ sealed_clone() {
     && git -C "$1" reflog expire --expire=now --all && git -C "$1" gc -q --prune=now
 }
 
+# missing_role_skills <state> <config-root> <skills-dir>: "role:skill ..." for every autoloadSkills entry of a role this workflow uses that has no SKILL.md in <skills-dir>
+missing_role_skills() {
+  local r f sk out=''
+  for r in $(jq -r '.definition.roles | to_entries[] | .value' "$1" | sort -u); do
+    f="$2/roles/$r/ROLE.md"
+    [ -f "$f" ] || { out="$out $r:ROLE.md"; continue; }
+    for sk in $(awk 'FNR==1 {n=0; on=0} /^---$/ {n++; next} n==1 && /^autoloadSkills:/ {on=1; next} n==1 && on && /^  - / {print $2; next} n==1 && on {on=0}' "$f"); do
+      [ -f "$3/$sk/SKILL.md" ] || out="$out $r:$sk"
+    done
+  done
+  printf '%s' "${out# }"
+}
+
 # --- the oracle's lifetime and the oracle-hunting detector ------------------------------------------
 # The QA kit (the hidden oracle) is materialized into $KIT only while a QA worker runs it, or the driver itself runs case_hidden /
 # case_kit_only / case_assert, and removed right after; a worker that follows a path from QA's feedback or searches the disk finds an
@@ -139,12 +154,15 @@ kit_only_check() { local rc; kit_open; case_kit_only "$@"; rc=$?; kit_close; ret
 # whose target IS the root, /tmp, $TMPDIR or the scratch parent itself - not a directory the worker was handed, such as its data folder,
 # and not a glob that cannot match the oracle's names). A worker's OWN prompt file (the path omp shows it for the @file attachment) is not a
 # hunt either; every other prompt file is (the QA worker's prompt carries the kit path).
-HUNT_RE='fm-wf-live-(kit|prompts|sessions)|(^|[^A-Za-z0-9_])kit\.(py|js)|tests/live[-/]|live-artifacts|(^|[^A-Za-z0-9_]|\\n)(find|ls|fd|du|tree)([^;&|\\]|\\")*([ "]|\\")(/|/tmp|/var|/private|(/private)?/var/folders(/[A-Za-z0-9_*]+){0,2}(/T)?|\$TMPDIR|\$\{TMPDIR[^}]*\})(/+\*?)?([ "'"'"'\\;&|)]|$)'
+_H_PRE='(^|[^A-Za-z0-9_]|\\n)'; _H_MID='([^;&|\\]|\\")*([ "]|\\")'; _H_TAIL='(/+\*?)?([ "'"'"'\\;&|)]|$)'
+_H_ROOTS='/|/var|/private|(/private)?/var/folders(/[A-Za-z0-9_*]+){0,2}(/T)?|\$TMPDIR|\$\{TMPDIR[^}]*\}'
+# a bare `ls /tmp` is not a hunt (the kit directory is empty outside QA); find/fd/du/tree over /tmp still is
+HUNT_RE='fm-wf-live-(kit|prompts|sessions)|(^|[^A-Za-z0-9_])kit\.(py|js)|(^|[/ ])kit/|tests/live[-/]|live-artifacts|'"${_H_PRE}(find|fd|du|tree)${_H_MID}(${_H_ROOTS}|/tmp)${_H_TAIL}|${_H_PRE}ls${_H_MID}(${_H_ROOTS})${_H_TAIL}"
 hunt_scan() { # <step-dir>: the calls of that worker that look like a hunt for the oracle
   local f own
   own=$(basename "$1" | cut -c1-2 | sed 's/^0//'); [ "$(basename "$1")" != control ] || own=control
   for f in "$1/calls.tsv" "$1/subcalls.tsv"; do
-    [ -f "$f" ] && sed "s#fm-wf-live-prompts\\.[A-Za-z0-9]*/$own\\.md##g" "$f" | grep -aiE "$HUNT_RE" | cut -c1-220
+    [ -f "$f" ] && sed "s#fm-wf-live-prompts\\.[A-Za-z0-9]*/$own\\.md##g" "$f" | ( shopt -s nocasematch; while IFS= read -r l; do [[ $l =~ $HUNT_RE ]] && printf '%s\n' "${BASH_REMATCH[0]}"; done )
   done
   return 0
 }
@@ -290,6 +308,9 @@ drive() {
   ( cd "$CONFIG_ROOT" && tar -cf - $(ls -d roles bin firstmate workflows skills REVIEW.md README.md AGENTS.md 2>/dev/null) ) | tar -xf - -C "$SCR_CFG" || { DRIVE_ERR='cannot build the sanitized config copy'; return 1; }
   export FM_CONFIG_ROOT="$SCR_CFG" FM_SKILLS_ROOT="$SCR_HOME/.agents/skills"
   "$W" next "$CASE_WORKFLOW" "$STATE" --task "$CASE_TASK" > "$RUN/start.json" 2>&1 || { DRIVE_ERR="cannot start the workflow: $(cat "$RUN/start.json")"; return 1; }
+  # every skill a role of this workflow autoloads must exist in the skills the workers get: a role run without part of its contract is a FAIL, not a quiet pass
+  local missing; missing=$(missing_role_skills "$STATE" "$SCR_CFG" "$SCR_HOME/.agents/skills")
+  [ -z "$missing" ] || { DRIVE_ERR="required skill(s) absent from the skill source $SKILL_SRC: $missing"; return 1; }
   N=0
   local out status kind step iter role output
   while :; do
@@ -513,7 +534,8 @@ SH
   OMP_BIN=$fake; MODEL=fake; SKILL_SRC="$t/skills"; SELFTEST_MODE=1
   mkdir -p "$SKILL_SRC"
   local s
-  for s in test-driven-development ponytail verification-before-completion code-review-and-quality ponytail-review karpathy-guidelines spec-driven-development planning-and-task-breakdown; do
+  for s in $(awk 'FNR==1 {n=0; on=0} /^---$/ {n++; next} n==1 && /^autoloadSkills:/ {on=1; next} n==1 && on && /^  - / {print $2; next} n==1 && on {on=0}' "$CONFIG_ROOT"/roles/*/ROLE.md | sort -u) \
+           test-driven-development ponytail verification-before-completion code-review-and-quality ponytail-review karpathy-guidelines spec-driven-development planning-and-task-breakdown; do
     mkdir -p "$SKILL_SRC/$s"; : > "$SKILL_SRC/$s/SKILL.md"
   done
   for c in "$CASES_DIR"/*.sh; do
@@ -625,7 +647,8 @@ NEG
     L bash '{"command": "ls -dt /var/folders/x6/T/fm-wf-live-kit.abc"}'
     L read '{"path": "/tmp/fm-wf-live-kit.Ab12/kit.py"}'
     L bash '{"command": "cat /Users/x/firstmate-config/tests/live-workflows/qa-loop.sh"}'
-    L bash '{"command": "ls /tmp"}'
+    L bash '{"command": "find /tmp -maxdepth 2 -type d"}'
+    L bash '{"command": "cat /tmp/kit/expected.json"}'
     L bash '{"command": "ls -la /"}'
     L bash '{"command": "ls -la /var/folders/x6/bsp0vly53_d039y4d9ydmw0w0000gn/T/"}'
     L bash '{"command": "find /private/var/folders -maxdepth 4 -type d"}'
@@ -641,6 +664,7 @@ NEG
     L write '{"path": "tests/test_kit.py"}'
     L bash '{"command": "ls /tmp/fm-wf-live-repo.X/ws/3/app"}'
     L bash '{"command": "git log --oneline"}'
+    L bash '{"command": "node /tmp/t.js; which chrome-devtools-axi; ls /tmp | head -20; lsof -iTCP -sTCP:LISTEN"}'
     L bash '{"command": "find . -name *.py"}'
     L bash '{"command": "pwd -P; ls /var/folders/x6/bsp0vly53_d039y4d9ydmw0w0000gn/T//fm-wf-live-data.vOdDBu/"}'
     L bash '{"command": "ls -la /var/folders/x6/bsp0vly53_d039y4d9ydmw0w0000gn/T/fm-wf-live-data.AbCd/reports"}'
@@ -651,9 +675,9 @@ NEG
     L bash '{"command": "ls foo\ncd /tmp\nbar"}'
     L bash '{"command": "cd /var/folders/x6/bsp/T/fm-wf-live-repo.X/ws/control && ls"}'
   } > "$t/hunt/good/calls.tsv"
-  [ "$(hunt_scan "$t/hunt/bad" | wc -l | tr -d ' ')" = 13 ] && [ -z "$(hunt_scan "$t/hunt/good")" ] \
+  [ "$(hunt_scan "$t/hunt/bad" | wc -l | tr -d ' ')" = 14 ] && [ -z "$(hunt_scan "$t/hunt/good")" ] \
     && pass 'selftest: the oracle-hunting detector flags find /, scans of /tmp or the scratch parent, kit paths and case files, and leaves ordinary calls (a handed data folder included) alone' \
-    || fail "selftest: the hunting detector is off (bad: $(hunt_scan "$t/hunt/bad" | wc -l | tr -d ' ') of 13; good: $(hunt_scan "$t/hunt/good" | wc -l | tr -d ' ') of 0)"
+    || fail "selftest: the hunting detector is off (bad: $(hunt_scan "$t/hunt/bad" | wc -l | tr -d ' ') of 14; good: $(hunt_scan "$t/hunt/good" | wc -l | tr -d ' ') of 0)"
   # a worker's OWN prompt file (the @file attachment path omp shows it) is not a hunt; any other prompt file, and a listing of the prompts
   # folder, is (the QA worker's prompt carries the kit path)
   mkdir -p "$t/hunt/06-own" "$t/hunt/06-other" "$t/hunt/control"
@@ -696,6 +720,11 @@ fi
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM
 ART="$ART_ROOT/$STAMP"
 mkdir -p "$ART"
+if [ -z "$SKILL_SRC" ]; then
+  PIN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/fm-wf-pinned.XXXXXX")
+  bash "$CONFIG_ROOT/tests/live-lib/pinned-skills.sh" "$PIN_DIR" >/dev/null 2>"$ART/pinned-skills.err" || { printf 'FAIL - cannot materialize the pinned skills (%s); the live run needs them (set FM_WORKFLOW_LIVE_SKILL_SRC to override)\n' "$(head -c 200 "$ART/pinned-skills.err")" >&2; rm -rf "$PIN_DIR"; exit 1; }
+  SKILL_SRC="$PIN_DIR/skills"
+fi
 printf '# Live workflow results (%s, model %s, thinking %s)\n\n| case | workflow | path taken (engine state) | loop forced / hidden check | control (forcing input removed) | workers | USD |\n|---|---|---|---|---|---|---|\n' "$STAMP" "$MODEL" "$THINKING" > "$ART/results.md"
 if [ "$#" -gt 0 ]; then cases=("$@"); else cases=("$CASES_DIR"/*.sh); fi
 for c in "${cases[@]}"; do
@@ -703,6 +732,7 @@ for c in "${cases[@]}"; do
   [ -f "$c" ] || { fail "no such live case: $c"; continue; }
   ( run_case "$c" ) || failed=1
 done
+[ -z "${PIN_DIR:-}" ] || rm -rf "$PIN_DIR"
 leftover=$(scrub_artifacts "$ART")
 printf '\n%s\n' "$(cat "$ART/results.md")"
 printf 'artifacts: %s  model: %s (thinking %s)  total cost: %s USD (budget %s)  credential-like strings left after scrubbing: %s\n' "$ART" "$MODEL" "$THINKING" "$(cat "$ART/.spent" 2>/dev/null || echo 0)" "${BUDGET:-none}" "$leftover"
