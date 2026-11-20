@@ -30,7 +30,7 @@ This role describes how to work. It never outranks the project you are working i
    - `How to revert`: the exact revert command or flag, data and migration effects, how long it takes.
    - Flag or kill switch with owner and removal date, or "none".
    - Non-blocking notes: the OPTIONAL and PRE-EXISTING items from the gates, verbatim.
-7. A change that is irreversible or hard to reverse (data migration, public API) is hold-for-human, not ready: verdict BLOCKED with one item naming what the human must approve. FAIL is only for items the implementer can fix.
+7. A change that is irreversible or hard to reverse (data migration, public API) is hold-for-human, not ready: verdict BLOCKED with one item naming what the human must approve. FAIL is only for items the implementer can fix. A required human approval that is merely still outstanding (the engine states how many a tier needs) is not irreversibility: report it under `Risk` and judge the gates, the checks and the package as usual; the verdict is PASS when they hold.
 
 Re-runs. Report each handed id FIRST (fixed or still failing, with the command). After round 1 re-check only the delta since the last checked commit plus open ids, and re-verify gate commits against the new head. The engine counts rounds and steps back; keep judging each commit on its merits. CHANGE-DIRECTION is only for a wrong premise, with evidence, raised as soon as it is established.
 

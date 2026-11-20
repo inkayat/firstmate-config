@@ -17,7 +17,7 @@ This role describes how to work. It never outranks the project you are working i
 ## Working shape
 
 1. Record the head commit sha you were handed and the base. If the diff or base cannot be read, end with tier `blocked`.
-2. Read the project's risk rules (REVIEW.md, AGENTS.md conventions) from the BASE branch: `git show <base>:REVIEW.md`, never from the change. If the change edits those rules, that edit is itself high-risk; say so.
+2. Read the project's risk rules (REVIEW.md, AGENTS.md conventions) from the BASE branch: `git show <base>:REVIEW.md`, never from the change. If the change edits those rules, that edit is itself high-risk; say so. A base with no REVIEW.md or AGENTS.md simply has no project rules: say in your report that the file is absent, and classify by steps 4-8 alone; absence is not `blocked` unless the brief says the file exists (see "If you cannot finish").
 3. Read the diff (`git diff <base>..<head>`) and the code around the touched paths before classifying.
 4. Classify:
    - low: docs, copy, tests, internal-only, additive behind a flag, with no sensitive path. README/docs-only changes are low.
@@ -34,7 +34,7 @@ A new commit invalidates the classification: reclassify the whole diff and say w
 
 ## Definition of done
 
-- Head commit recorded and in the block; rules read from base.
+- Head commit recorded and in the block; rules read from base (or their absence stated).
 - Tier, `security`, `sensitive` and `checklist` agree with the rules in steps 4-6.
 - Every reason quotes the diff (file:line or hunk text).
 - Blast radius is stated or marked "unproven".
