@@ -12,7 +12,8 @@
 CASE_WORKFLOW=build-test-review
 CASE_TASK='Add rename_user(user_id, new_name) to store.py: it changes the user'"'"'s name and returns the updated user dict; an unknown user_id raises KeyError. Keep the change small and add tests under tests/.'
 CASE_CATCH_STEP=review
-CASE_EXPECT_PATH='^implement:done classify:(low|medium|high) qa:pass review:fail verify-review:fail implement:done classify:(low|medium|high) qa:pass review:pass( security:pass)? ship:pass deliver:done$'
+# one OR TWO review-fix loops: a cross-family reviewer may legitimately catch a second, unseeded defect in the fix (extra rounds are recorded in the grade output)
+CASE_EXPECT_PATH='^implement:done classify:(low|medium|high) qa:pass (review:fail verify-review:fail implement:done classify:(low|medium|high) qa:pass ){1,2}review:pass( security:pass)? ship:pass deliver:done$'
 CASE_FORCE_AFTER=implement:1  # the QA kit passes but the hidden audit check must FAIL after the first implementation
 CASE_FORCE_KIT_PASS=1         # ... and the QA kit alone passes at that point (QA must not be the one to catch it)
 
@@ -124,9 +125,9 @@ R
 
 case_assert() { # <run-dir> <repo>
   local st=$1/data/workflow.json fb
-  fb=$(jq -r '[.history[] | select(.step == "review" and .outcome == "fail") | .feedback[] | .what + " " + .where] | join("\n")' "$st")
+  fb=$(jq -r '[.history[] | select(.step == "review" and .outcome == "fail")] | .[0].feedback | map(.what + " " + .where) | join("\n")' "$st")   # the FIRST review must catch the seeded defect
   printf '%s' "$fb" | grep -qiE 'trail|audit|R2' || { echo "the review finding never names the missing trail entry"; return 1; }
-  fb=$(jq -r '[.history[] | select(.step == "verify-review" and .outcome == "fail") | .feedback[] | .what + " " + .where] | join("\n")' "$st")
+  fb=$(jq -r '[.history[] | select(.step == "verify-review" and .outcome == "fail")] | .[0].feedback | map(.what + " " + .where) | join("\n")' "$st")
   printf '%s' "$fb" | grep -qiE 'trail|audit|R2' || { echo "the verifier never confirmed the missing trail entry"; return 1; }
   jq -e '[.history[] | select(.step == "implement")] | length >= 2 and (.[-1].answers | length) >= 1' "$st" >/dev/null || { echo "the fixing implementer run reported no answer to the confirmed finding"; return 1; }
 }
