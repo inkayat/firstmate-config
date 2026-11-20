@@ -12,6 +12,10 @@
 #   form.noValidate on its own, so the first implementation was never vulnerable.)
 # Forced loop: implement -> classify -> qa PASS -> ui-verify FAIL (real browser, screenshot evidence, the shown 415 text) -> implement
 #   (fixes from that feedback: the form-encoded body) -> classify -> qa PASS -> ui-verify PASS -> review PASS -> ship PASS -> deliver.
+#   CASE_EXPECT_PATH deliberately allows any further review, security or verify rounds between ui-verify:pass and ship:pass (for example
+#   security:fail verify-security:fail implement:done ... security:pass): a legitimate review-fix loop is success. It requires ship:pass
+#   deliver:done and a complete status, so a round cap (step-back, redirect:escalate) or an implementer change-direction after a
+#   confirmed finding is NOT accepted: those are designed engine outcomes (workflows/ui-build-verify-review.json) but not this case's goal.
 # Outside judge (deterministic code, a real headless browser, never a model): the hidden check = the node kit (validateSignup) + six
 #   flows driven in a real browser against a private copy of the dev server serving the repository under test (empty, blank, no-@,
 #   no-dot, valid with Pro, valid with Free: the alert region and the result line, text and visibility) + the server log must show an
