@@ -12,9 +12,14 @@
 # above the DLQ window (7+ days / a week / outliving the DLQ) AND guards a
 # reused key with a different payload (422 / payload hash / different body).
 # The control normally picks 24h and never mentions the payload guard.
+# LIVE FINDING (rewritten roles/architecture/ROLE.md): the no-skill control now passes both checks
+#   (30-day retention tied to queue.yaml:7, 422 on a different request hash, 409 in flight) from the model's
+#   own baseline plus the body's generic "constraints first / trace every system the change touches". The body
+#   does not state idempotency or retention rules, so CASE_BODY_PHRASE would be a false claim.
 CASE_KIND=role
 CASE_ROLE=architecture
 CASE_SKILL_ONLY_TOKENS="TOCTOU requestHash"
+CASE_CONTROL_INFORMATIONAL='the no-skill control derives retention from queue.yaml and the payload-hash 422 guard from the model baseline; ROLE.md carries neither rule'
 CASE_PROMPT='POST /charges is retried by clients and by our worker queue, and some customers got charged twice.
 Decide how to make retries safe: what the dedupe key is, where its state lives, and how long it is kept.
 The code is in this repo.'

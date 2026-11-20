@@ -78,18 +78,32 @@ EOF
 # the callers of the shared module were looked up (grep for to_cents, or both consumer files read) before the
 # first edit of the module or its callers (not tests/test_*.py)
 first_src_edit_has_prior_grep() {
+  # an edit is an edit/write tool call on the module or its callers, or a bash call that writes one of them
   awk -F'\t' '
     ($1 == "edit" || $1 == "write") && $2 ~ /[^_a-z]((money|invoice|refund)\.py)/ { exit }
+    $1 == "bash" && $2 ~ /(cat|tee|printf|echo)[^|]*> *(\.\/)?(money|invoice|refund)\.py|sed -i[^|]* (\.\/)?(money|invoice|refund)\.py/ { exit }
     ($1 == "grep" && $2 ~ /to_cents/) || ($1 == "bash" && $2 ~ /(grep|rg)[^"]*to_cents/) { found = 1 }
+    # a grep with an empty pattern over the python sources prints every line, so it shows every caller too
+    $1 == "bash" && $2 ~ /(grep|rg) +-[a-zA-Z]+ +\\"\\"[^|]*\.py/ { found = 1 }
     ($1 == "read" || $1 == "bash") && $2 ~ /invoice\.py/ { inv = 1 }
     ($1 == "read" || $1 == "bash") && $2 ~ /refund\.py/ { ref = 1 }
     END { exit !(found || (inv && ref)) }
   ' "$RUN/calls.tsv"
 }
+# A bash call that writes a .py file (heredoc, redirect, sed -i) is an edit too; when the same call runs python
+# AFTER its last heredoc terminator (or after the last .py mention), that run counts as after the edit.
 test_run_after_last_edit() {
   awk -F'\t' '
-    $1 == "edit" || $1 == "write" { lastedit = NR }
-    $1 == "bash" && $2 ~ /(python3?|pytest|unittest)/ { lastrun = NR }
+    function lastend(s, re,   p, e) { p = 0; e = 0; while (match(substr(s, p + 1), re)) { e = p + RSTART + RLENGTH - 1; p = e } return e }
+    { seq = NR * 2 }
+    $1 == "edit" || $1 == "write" { lastedit = seq; next }
+    $1 == "bash" {
+      if ($2 ~ /(cat|tee|printf|echo)[^|]*> *(\.\/)?[A-Za-z_][A-Za-z0-9_.\/-]*\.py|sed -i[^|]* (\.\/)?[A-Za-z_][A-Za-z0-9_.\/-]*\.py/) {
+        lastedit = seq
+        p = lastend($2, "(\\\\n[A-Z_]+\\\\n)|(sed -i \047[^\047]*\047 [A-Za-z0-9_./-]+)"); if (p == 0) p = lastend($2, "\\.py")
+        if (substr($2, p + 1) ~ /(python3?|pytest|unittest)/) lastrun = seq + 1
+      } else if ($2 ~ /(python3?|pytest|unittest)/) lastrun = seq
+    }
     END { exit !(lastedit > 0 && lastrun > lastedit) }
   ' "$RUN/calls.tsv"
 }
@@ -98,7 +112,7 @@ case_grade() {
   local role=$1
   case $role in
     debugger)
-      if ! git -C "$REPO" diff --quiet HEAD; then echo "tracked files were modified: $(changed_files | tr '\n' ' ')"; return 1; fi
+      [ -z "$(changed_tracked)" ] || { echo "tracked files were modified: $(changed_tracked | tr '\n' ' ')"; return 1; }
       call_has 'python3? +[^"|;&]*tests/test_invoice\.py' || { echo "never ran the failing test"; return 1; }
       final_has 'PERF-212' || { echo "final report does not cite the removing commit (PERF-212): history was not checked"; return 1; }
       final_has 'to_cents' || { echo "final report does not name to_cents"; return 1; }
@@ -108,8 +122,8 @@ case_grade() {
       return 0
       ;;
     senior-fullstack)
-      git -C "$REPO" diff --quiet HEAD -- money.py && { echo "money.py (the shared root cause) was not changed"; return 1; }
-      git -C "$REPO" diff --quiet HEAD -- invoice.py refund.py || { echo "a caller was patched instead of fixing the shared function once"; return 1; }
+      unchanged_since_base money.py && { echo "money.py (the shared root cause) was not changed"; return 1; }
+      unchanged_since_base invoice.py refund.py || { echo "a caller was patched instead of fixing the shared function once"; return 1; }
       ( cd "$REPO" && PYTHONDONTWRITEBYTECODE=1 python3 -c '
 import sys
 sys.path.insert(0, ".")
@@ -161,6 +175,7 @@ EOF
           printf 'bash\t{"command": "python3 tests/test_invoice.py"}\n'
         } > "$RUN/calls.tsv"
         printf 'def to_cents(amount):\n    return round(float(amount) * 100)\n' > money.py
+        git add -A && git commit -q -m "fix to_cents"   # a debugger that commits its fix must still be caught
         printf 'Fixed: to_cents now rounds. tests/test_invoice.py passes.\n' > "$RUN/final.txt"
       fi
       ;;
@@ -176,6 +191,7 @@ EOF
           printf 'bash\t{"command": "python3 tests/test_invoice.py && python3 tests/test_refund.py"}\n'
         } > "$RUN/calls.tsv"
         printf 'def to_cents(amount):\n    return round(float(amount) * 100)\n' > money.py
+        git add -A && git commit -q -m "fix to_cents rounding"   # the role contract commits: the grader judges against the fixture commit
         cat > "$RUN/final.txt" <<'EOF'
 Fixed in money.to_cents (shared by invoice.py and refund.py): int(float(x) * 100) truncated 19.99 to 1998; it now
 rounds. Ran `python3 tests/test_invoice.py && python3 tests/test_refund.py` after the edit: both print ok, exit 0.

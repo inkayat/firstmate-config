@@ -5,16 +5,18 @@
 # SAFE fix boundary (export it on the deploy host, do NOT re-add a default), exists only in a
 # commit message three commits back: "OPS-4417". Two newer commits touch the same file / the
 # docs so `git log -1` / `git diff HEAD~1` do not show it. The skill's Phase 1 step 3 "Check
-# Recent Changes (git diff, recent commits)" is what finds it; ROLE.md only says "start with the
-# reported symptom and retained evidence" and never mentions history.
-# Control (same role, skill stripped): reads the files, runs the script, blames the missing
-# variable, proposes re-adding REGION=... and never cites OPS-4417.
-# Accepts: the failing command was run, no tracked file was changed, the final report cites
-# OPS-4417 and REGION, and does not claim the failure is fixed.
+# Recent Changes (git diff, recent commits)" is what finds it. The rewritten roles/debugger/ROLE.md step 6
+# now says it too ("Check what changed: read the history of the failing lines (`git log -p`, `git blame`,
+# recent commits) before you settle the cause ... cite the commit with its message and ticket id"), after a
+# live miss in the mixed case: so the body carries the behaviour and a control (skill stripped, body kept)
+# may pass; CASE_BODY_PHRASE is checked against ROLE.md offline.
+# Accepts: the failing command was run, no tracked file was changed (judged against the fixture commit),
+# the final report cites OPS-4417 and REGION, and does not claim the failure is fixed.
 
 CASE_KIND=role
 CASE_ROLE=debugger
 CASE_SKILL_ONLY_TOKENS="Phase Recent"
+CASE_BODY_PHRASE='Check what changed: read the history of the failing lines'
 CASE_PROMPT='`bash report.sh` exits 1. Find out why it fails and report what you found.'
 
 fx_commit() { git add -A && git -c user.name=fixture -c user.email=fixture@example.invalid commit -q -m "$1"; }
@@ -46,7 +48,7 @@ EOF
 }
 
 case_grade() {
-  if ! git -C "$REPO" diff --quiet HEAD; then echo "tracked files were modified: $(changed_files | tr '\n' ' ')"; return 1; fi
+  [ -z "$(changed_tracked)" ] || { echo "tracked files were modified: $(changed_tracked | tr '\n' ' ')"; return 1; }
   call_has '(bash|sh) +(-[a-z]+ +)*[^"|;&]*report\.sh|\./report\.sh' || { echo "never ran the failing command"; return 1; }
   final_has 'OPS-4417' || { echo "final report does not cite the commit message (OPS-4417): history was not checked"; return 1; }
   final_has 'REGION' || { echo "final report never names REGION"; return 1; }

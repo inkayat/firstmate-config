@@ -9,9 +9,11 @@
 # security, verify-security, ship) / risk (classify) steps are recorded with --report <the worker's
 # final report> and the engine parses the outcome from the fenced block that ends it; a report step
 # (the planner) is recorded with --outcome done|blocked and the plan file as --report; the decision
-# step (redirect) is answered mechanically with `escalate` (the live cases must not change
-# direction); deliver is recorded, never performed. Then it grades from the engine's state, the
-# transcripts and the final fixture repository.
+# step (redirect) is answered mechanically with `escalate` unless the case names another choice (CASE_DECIDE_REDIRECT, and
+# CASE_DECIDE for research-decide's decide step; both with CASE_DECIDE_REASON); deliver is recorded, never performed. A report step
+# (researcher, architect) ends its report with `status: done|blocked|change-direction` on a line of its own; the driver records that.
+# Workers see only a sanitized copy of the checkout (roles, bin, workflows, skills; no tests/, no .git), so they cannot read the
+# judge. Then it grades from the engine's state, the transcripts and the final fixture repository.
 #
 # What this proves: roles, block contracts, handoff and loop mechanics hold with real
 # workers: QA failing a change and the implementer fixing it from QA's feedback, a review
@@ -50,6 +52,13 @@
 #   case_hidden <repo> <kit> (0 = acceptance satisfied), case_kit_only <repo> <kit>, case_assert <run> <repo>,
 #   case_canned <role> <prompt> <cwd> (offline stand-in worker; tests/live-lib/canned.sh answers the roles
 #   a case does not customise and builds the result/verdict/risk blocks).
+#   CASE_NEEDS (tools that must be on PATH, else the case is SKIPPED, never passed), CASE_DECIDE_REDIRECT / CASE_DECIDE / CASE_DECIDE_REASON
+#   (the mechanical answers to the redirect / other decision steps; default escalate), CASE_EXPECT_STATUS (default complete),
+#   CASE_NO_CONTROL=1 (the hidden check is the judge), CASE_NEGATIVE (lines "<fake-mode> => <ERE>": the offline self-test plays a canned
+#   worker that skips the property the case is built to catch (FAKE_MODE) and the case must FAIL with a grade.md line matching the ERE),
+#   case_serve <repo> <aux> (optional: start services, background pids appended to <aux>/pids, print KEY=VALUE lines that go into every
+#   worker environment and are readable by case_extra via svc_get KEY), case_stop <aux> (optional), case_canned_pre <role> <prompt> <cwd>
+#   (consulted before canned.sh; return 1 for the roles it does not answer).
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -88,10 +97,10 @@ build_prompt() {
 
 # run_omp <cwd> <prompt-file> <session-dir> <stdout> <stderr>
 run_omp() {
-  ( cd "$1" && env -i HOME="$HOME" PATH="$PATH" TERM=dumb LANG=C.UTF-8 OMP_SKIP_SETUP=1 PYTHONDONTWRITEBYTECODE=1 \
+  ( cd "$1" && env -i HOME="$HOME" PATH="$PATH" TERM=dumb LANG=C.UTF-8 OMP_SKIP_SETUP=1 PYTHONDONTWRITEBYTECODE=1 ${SVC_ENV_LINES:-} \
       timeout "$WORKER_TIMEOUT" "$OMP_BIN" -p --model "$MODEL" --thinking "$THINKING" --no-extensions --no-skills --no-rules --no-context-files \
       --no-lsp --no-pty --no-title --tools read,grep,glob,bash,edit,write --system-prompt "$SYSTEM_PROMPT" \
-      --session-dir "$3" "${COST_ARGS[@]}" --auto-approve --cwd "$1" "@$2" > "$4" 2> "$5" )
+      --session-dir "$3" ${COST_ARGS[@]+"${COST_ARGS[@]}"} --auto-approve --cwd "$1" "@$2" > "$4" 2> "$5" )
 }
 
 # sealed_clone <dest> [<rev>]: a clone of the fixture repository with no way back to it. With a <rev> the
@@ -106,18 +115,46 @@ sealed_clone() {
     && git -C "$1" reflog expire --expire=now --all && git -C "$1" gc -q --prune=now
 }
 
+# --- the oracle's lifetime and the oracle-hunting detector ------------------------------------------
+# The QA kit (the hidden oracle) is materialized into $KIT only while a QA worker runs it, or the driver itself runs case_hidden /
+# case_kit_only / case_assert, and removed right after; a worker that follows a path from QA's feedback or searches the disk finds an
+# empty directory.
+kit_close() { [ -n "${KIT:-}" ] && [ -d "$KIT" ] && find "$KIT" -mindepth 1 -delete 2>/dev/null; return 0; }
+kit_open() { kit_close; ! declare -F case_kit_setup >/dev/null || case_kit_setup "$KIT"; }
+hidden_check() { local rc; kit_open; case_hidden "$@"; rc=$?; kit_close; return $rc; }
+kit_only_check() { local rc; kit_open; case_kit_only "$@"; rc=$?; kit_close; return $rc; }
+# What counts as going looking for the oracle (any worker but QA, whose job is to run its kit): the kit directory or its file names, the
+# case files and judges of this repository, the artifact tree, or a scan of the scratch parent / the filesystem root.
+HUNT_RE='fm-wf-live-(kit|prompts|sessions|ctl)|(^|[^A-Za-z0-9_])kit\.(py|js)|tests/live[-/]|live-artifacts|(^|[^A-Za-z0-9_])(find|ls|fd|du|tree)[^;&|]*[ "]((/|/var|/var/folders[^ "]*|/private[^ "]*|/tmp|/tmp/|\$TMPDIR|\$\{TMPDIR[^ "]*)[ "]|/var/folders|/private/var)'
+hunt_scan() { # <step-dir>: the calls of that worker that look like a hunt for the oracle
+  local f
+  for f in "$1/calls.tsv" "$1/subcalls.tsv"; do [ -f "$f" ] && grep -aiE "$HUNT_RE" "$f" | cut -c1-220; done
+  return 0
+}
+grade_hunt() { # ok/FAIL lines: no non-QA worker went looking for the oracle
+  local d role hits roles i=0 n=0
+  roles=$(jq -r '. as $st | .history[] | select($st.definition.steps[.step].kind == "work") | $st.definition.roles[$st.definition.steps[.step].role]' "$STATE" 2>/dev/null)
+  for d in "$RUN"/steps/[0-9][0-9]-*; do
+    [ -d "$d" ] || continue
+    i=$((i + 1)); role=$(printf '%s\n' "$roles" | sed -n "${i}p")
+    [ "$role" != qa ] || continue
+    n=$((n + 1)); hits=$(hunt_scan "$d")
+    [ -z "$hits" ] || printf 'FAIL - worker %s (%s) went looking for the oracle: %s\n' "$(basename "$d" | cut -c1-2)" "$role" "$(printf '%s' "$hits" | head -1)"
+  done
+  printf 'ok   - no non-QA worker (%d checked) went looking for the oracle (kit dir, case files, artifacts, scratch scans)\n' "$n"
+}
 # --- the driver ------------------------------------------------------------------------
 # One worker step. Globals: RUN REPO DATA KIT STATE BASE0 N.
 worker_step() { # <role> <step> <iteration> <output-contract: result|verdict|risk|report>
-  local role=$1 step=$2 iter=$3 output=$4 sd spec extra intent cwd rc head prev outcome
+  local role=$1 step=$2 iter=$3 output=$4 sd spec extra intent cwd rc head prev outcome committer rep
   sd="$RUN/steps/$(printf '%02d' "$N")-$step"
   mkdir -p "$sd" "$RUN/runs/$step:$iter" "$SCR_SESSIONS/$N"
   spec=$("$W" next "$CASE_WORKFLOW" "$STATE" --spec) || { DRIVE_ERR="no spec for step $step"; return 1; }
   printf '%s\n' "$spec" > "$sd/spec.txt"
-  case $role in
-    senior-fullstack) cwd=$REPO ;;
-    *) cwd="$SCR_REPO/ws/$N"; sealed_clone "$cwd" ;;
-  esac
+  # a step the definition lets commit (commits: true) works IN the task repository; every other step - verdicts, the
+  # classification, reports, the step-back - works in its own sealed clone and can change nothing the task keeps
+  committer=$(jq -r --arg s "$step" '.definition.steps[$s].commits // false' "$STATE")
+  if [ "$committer" = true ]; then cwd=$REPO; else cwd="$SCR_REPO/ws/$N"; sealed_clone "$cwd"; fi
   prev=$(git -C "$REPO" rev-parse HEAD)
   extra=$(case_extra "$step" "$role" "$iter" "$KIT" "$cwd" "$DATA" 2>/dev/null || true)
   intent=$CASE_TASK
@@ -130,19 +167,23 @@ $extra"
   cp "$sd/spec.txt" "$RUN/runs/$step:$iter/spec.txt"
   printf '%s\n' "$intent" > "$RUN/runs/$step:$iter/intent.txt"
   if over_budget; then DRIVE_ERR="budget $BUDGET USD reached (spent $SPENT)"; return 1; fi
+  [ "$role" != qa ] || kit_open   # the oracle exists on disk only while a QA worker runs it
   run_omp "$cwd" "$SCR_PROMPTS/$N.md" "$SCR_SESSIONS/$N" "$sd/stdout.txt" "$sd/stderr.txt"; rc=$?
+  kit_close
   printf '%s\n' "$rc" > "$sd/rc"
   cp -r "$SCR_SESSIONS/$N" "$sd/session"
   parse_session "$sd/session" "$sd"
   spent_add "$(cat "$sd/cost.txt")"
   [ -s "$sd/final.txt" ] || printf 'The worker produced no report (omp exit %s).\n' "$rc" > "$sd/final.txt"
-  if [ "$role" = senior-fullstack ] && [ -n "$(git -C "$REPO" status --porcelain)" ]; then
+  # the report file the engine records (and later steps are handed to read) lives in the scratch data folder, never in the artifacts
+  mkdir -p "$DATA/reports"; rep="$DATA/reports/$(printf '%02d' "$N")-$step.txt"; cp "$sd/final.txt" "$rep"
+  if [ "$committer" = true ] && [ -n "$(git -C "$REPO" status --porcelain)" ]; then
     git -C "$REPO" add -A && git -C "$REPO" commit -q -m "driver: the worker left changes uncommitted" && printf 'yes\n' > "$sd/autocommit"
   fi
   case $output in
     result|verdict|risk)
       # the outcome is parsed by the engine from the final fenced block of the worker's own report
-      "$W" next "$CASE_WORKFLOW" "$STATE" --report "$sd/final.txt" > "$sd/next.json" 2>&1 || { DRIVE_ERR="engine refused the result of $step: $(cat "$sd/next.json")"; return 1; } ;;
+      "$W" next "$CASE_WORKFLOW" "$STATE" --report "$rep" > "$sd/next.json" 2>&1 || { DRIVE_ERR="engine refused the result of $step: $(cat "$sd/next.json")"; return 1; } ;;
     *)
       if [ "$role" = planner ]; then
         if [ "$rc" -eq 0 ] && [ -s "$DATA/plan.md" ]; then outcome=done; else outcome=blocked; fi
@@ -151,25 +192,47 @@ $extra"
           || { DRIVE_ERR="engine refused the result of $step: $(cat "$sd/next.json")"; return 1; }
       else
         outcome=done; [ "$rc" -eq 0 ] || outcome=blocked
-        "$W" next "$CASE_WORKFLOW" "$STATE" --outcome "$outcome" --report "$sd/final.txt" > "$sd/next.json" 2>&1 || { DRIVE_ERR="engine refused the result of $step: $(cat "$sd/next.json")"; return 1; }
+        # a report step ends with its status on a first line: status: done|blocked|change-direction (the researcher, the architect)
+        if [ "$rc" -eq 0 ]; then
+          case $(grep -m1 -iE '^[*`# ]*status: *(done|blocked|change-direction)' "$sd/final.txt" | tr 'A-Z' 'a-z') in
+            *"status: blocked"*) outcome=blocked ;; *"status: change-direction"*) outcome=change-direction ;;
+          esac
+        fi
+        "$W" next "$CASE_WORKFLOW" "$STATE" --outcome "$outcome" --report "$rep" > "$sd/next.json" 2>&1 || { DRIVE_ERR="engine refused the result of $step: $(cat "$sd/next.json")"; return 1; }
       fi ;;
   esac
-  if [ "$role" = senior-fullstack ]; then
-    # the hidden acceptance check after every implementer run (it is what the cases force and grade)
-    case_hidden "$REPO" "$KIT" > /dev/null 2>&1; printf '%s\n' "$?" > "$RUN/runs/$step:$iter/hidden.rc"
+  if [ "$committer" = true ]; then
+    # the hidden acceptance check after every committing step (it is what the cases force and grade)
+    hidden_check "$REPO" "$KIT" > /dev/null 2>&1; printf '%s\n' "$?" > "$RUN/runs/$step:$iter/hidden.rc"
     cp "$RUN/hidden.last" "$RUN/runs/$step:$iter/hidden.txt" 2>/dev/null
-    case_kit_only "$REPO" "$KIT" >/dev/null 2>&1; printf '%s\n' "$?" > "$RUN/runs/$step:$iter/kit.rc"
+    kit_only_check "$REPO" "$KIT" >/dev/null 2>&1; printf '%s\n' "$?" > "$RUN/runs/$step:$iter/kit.rc"
   fi
   return 0
 }
 
-# The `redirect` decision, applied MECHANICALLY: a worker raised a change of direction, which the live
-# cases never expect; the driver escalates it. A Captain model would judge (reshape, close or escalate).
-
+# A decision step is answered MECHANICALLY with the choice the case names: the `redirect` decision (a worker raised a change of
+# direction) with CASE_DECIDE_REDIRECT, every other decision (research-decide's `decide`) with CASE_DECIDE; both default to
+# `escalate`, so a case that does not expect a decision never changes direction. A Captain model would judge.
 decision_step() { # <step>
-  local step=$1
-  "$W" next "$CASE_WORKFLOW" "$STATE" --decide escalate --reason "mechanical rule: the live cases must not change direction, so a raised change of direction is escalated to the human" > "$RUN/steps/decision-$step.json" 2>&1 \
+  local step=$1 choice reason
+  if [ "$step" = redirect ]; then choice=${CASE_DECIDE_REDIRECT:-escalate}; else choice=${CASE_DECIDE:-escalate}; fi
+  reason=${CASE_DECIDE_REASON:-"mechanical rule: the live cases must not change direction, so a raised change of direction is escalated to the human"}
+  "$W" next "$CASE_WORKFLOW" "$STATE" --decide "$choice" --reason "$reason" > "$RUN/steps/decision-$step.json" 2>&1 \
     || { DRIVE_ERR="engine refused the decision: $(cat "$RUN/steps/decision-$step.json")"; return 1; }
+  printf '%s\n' "$choice" > "$RUN/steps/decision-$step.choice"
+}
+
+# Services a case needs while its workers run (case hook): case_serve <repo> <aux-dir> starts them (background pids appended to
+# <aux-dir>/pids, logs in <aux-dir>) and prints KEY=VALUE lines (no spaces in a value); the lines are put in every worker's
+# environment (a worker's bash sees APP_URL=... and a unique CHROME_DEVTOOLS_AXI_SESSION=...) and are readable by case_extra
+# through svc_get KEY. case_stop <aux-dir> (optional) stops what the pids cannot (a browser session).
+svc_get() { printf '%s\n' "${SVC_ENV_LINES:-}" | sed -n "s/^$1=//p" | head -1; }
+svc_stop() {
+  local p
+  [ -n "${SCR_AUX:-}" ] || return 0
+  ! declare -F case_stop >/dev/null || case_stop "$SCR_AUX" >/dev/null 2>&1
+  if [ -f "$SCR_AUX/pids" ]; then while read -r p; do kill "$p" >/dev/null 2>&1; done < "$SCR_AUX/pids"; : > "$SCR_AUX/pids"; fi
+  return 0
 }
 
 drive() {
@@ -182,8 +245,8 @@ drive() {
   local tmp=${TMPDIR:-/tmp}
   SCR_REPO=$(mktemp -d "$tmp/fm-wf-live-repo.XXXXXX"); SCR_KIT=$(mktemp -d "$tmp/fm-wf-live-kit.XXXXXX")
   SCR_DATA=$(mktemp -d "$tmp/fm-wf-live-data.XXXXXX"); SCR_HOME=$(mktemp -d "$tmp/fm-wf-live-home.XXXXXX")
-  SCR_PROMPTS=$(mktemp -d "$tmp/fm-wf-live-prompts.XXXXXX"); SCR_SESSIONS=$(mktemp -d "$tmp/fm-wf-live-sessions.XXXXXX")
-  REPO="$SCR_REPO/repo"; DATA=$SCR_DATA; KIT=$SCR_KIT; STATE="$DATA/workflow.json"
+  SCR_PROMPTS=$(mktemp -d "$tmp/fm-wf-live-prompts.XXXXXX"); SCR_SESSIONS=$(mktemp -d "$tmp/fm-wf-live-sessions.XXXXXX"); SCR_AUX=$(mktemp -d "$tmp/fm-wf-live-aux.XXXXXX")
+  REPO="$SCR_REPO/repo"; DATA=$SCR_DATA; KIT=$SCR_KIT; STATE="$DATA/workflow.json"; SVC_ENV_LINES=''
   mkdir -p "$REPO" "$SCR_REPO/ws" "$RUN/steps" "$RUN/runs" "$SCR_HOME/.agents/skills"
   for s in "$SKILL_SRC"/*/; do s=$(basename "$s"); cp -rL "$SKILL_SRC/$s" "$SCR_HOME/.agents/skills/$s" 2>/dev/null; done
   [ ! -d "$(dirname "$SKILL_SRC")/references" ] || cp -rL "$(dirname "$SKILL_SRC")/references" "$SCR_HOME/.agents/references" 2>/dev/null
@@ -193,8 +256,16 @@ drive() {
   ( cd "$REPO" && git init -q . && git config user.email live@example.invalid && git config user.name live \
     && printf '__pycache__/\n*.pyc\n' >> .git/info/exclude && case_setup && git add -A && git commit -q -m fixture ) || { DRIVE_ERR='fixture setup failed'; return 1; }
   BASE0=$(git -C "$REPO" rev-parse HEAD)
-  ! declare -F case_kit_setup >/dev/null || case_kit_setup "$KIT"
-  export FM_CONFIG_ROOT="$CONFIG_ROOT" FM_SKILLS_ROOT="$SCR_HOME/.agents/skills"
+  # the kit directory stays EMPTY between the moments the oracle is needed (kit_open / kit_close): nothing for a worker to find
+  if declare -F case_serve >/dev/null; then
+    SVC_ENV_LINES=$(case_serve "$REPO" "$SCR_AUX") || { DRIVE_ERR='the case services did not start'; return 1; }
+    printf '%s\n' "$SVC_ENV_LINES" > "$SCR_AUX/env"
+  fi
+  # Workers must not reach the judge: the spec's role paths point into a SANITIZED copy of the checkout (no tests/, no .git);
+  # the engine binary itself still runs from the real checkout.
+  SCR_CFG=$(mktemp -d "$tmp/fm-wf-live-cfg.XXXXXX")
+  ( cd "$CONFIG_ROOT" && tar -cf - $(ls -d roles bin firstmate workflows skills REVIEW.md README.md AGENTS.md 2>/dev/null) ) | tar -xf - -C "$SCR_CFG" || { DRIVE_ERR='cannot build the sanitized config copy'; return 1; }
+  export FM_CONFIG_ROOT="$SCR_CFG" FM_SKILLS_ROOT="$SCR_HOME/.agents/skills"
   "$W" next "$CASE_WORKFLOW" "$STATE" --task "$CASE_TASK" > "$RUN/start.json" 2>&1 || { DRIVE_ERR="cannot start the workflow: $(cat "$RUN/start.json")"; return 1; }
   N=0
   local out status kind step iter role output
@@ -222,15 +293,15 @@ drive() {
 # --- grading ---------------------------------------------------------------------------------
 # Generic loop evidence, from the engine's state, the per-step artifacts and the final repository.
 grade_generic() { # -> lines "ok - ..." / "FAIL - ..." on stdout
-  python3 - "$RUN" "$CASE_EXPECT_PATH" <<'PY'
+  python3 - "$RUN" "$CASE_EXPECT_PATH" "${CASE_EXPECT_STATUS:-complete}" <<'PY'
 import json, os, re, sys, glob
-run, expect = sys.argv[1], sys.argv[2]
+run, expect, want_status = sys.argv[1], sys.argv[2], sys.argv[3]
 st = json.load(open(os.path.join(run, "data", "workflow.json")))
 out = []
 def res(ok, text): out.append(("ok   - " if ok else "FAIL - ") + text)
 hist = st["history"]
 path = " ".join("%s:%s" % (h["step"], h["outcome"]) for h in hist)
-res(st["status"] == "complete", "the workflow completed" + ("" if st["status"] == "complete" else " (status %s: %s)" % (st["status"], (st.get("escalation") or {}).get("reason"))))
+res(st["status"] == want_status, "the workflow ended %s" % want_status + ("" if st["status"] == want_status else " (status %s: %s)" % (st["status"], (st.get("escalation") or {}).get("reason"))))
 res(re.search(expect, path) is not None, "the path taken matches the expected loop shape: %s" % path)
 res(all(h["valid"] for h in hist if "valid" in h), "every worker ended its report with a valid result/verdict/risk block (no parser-FAIL, no redo)")
 steps = st["definition"]["steps"]
@@ -289,28 +360,37 @@ run_control() { # sets CONTROL_RC (hidden check rc), CONTROL_NOTE
   parse_session "$sd/session" "$sd"
   spent_add "$(cat "$sd/cost.txt")"
   [ -z "$(git -C "$cwd" status --porcelain)" ] || { git -C "$cwd" add -A && git -C "$cwd" commit -q -m "driver: control left changes uncommitted"; }
-  case_hidden "$cwd" "$KIT" >/dev/null 2>&1; CONTROL_RC=$?
+  hidden_check "$cwd" "$KIT" >/dev/null 2>&1; CONTROL_RC=$?
   cp "$RUN/hidden.last" "$sd/hidden.txt" 2>/dev/null
   return 0
 }
 
 run_case() { # <case-file>: drives, grades, controls; appends a results row; returns 0 when everything held
-  local case_file=$1 name ok=1 g hidden_final control_text force_text cost0 row_path
+  local case_file=$1 name ok=1 g hidden_final control_text force_text cost0 row_path need
   name=$(basename "$case_file" .sh)
   RUN="$ART/$name"; mkdir -p "$RUN"
   # shellcheck source=/dev/null
   . "$case_file"
   CASE_FILE=$case_file; DRIVE_ERR=''
-  trap 'rm -rf "${SCR_REPO:-}" "${SCR_KIT:-}" "${SCR_DATA:-}" "${SCR_HOME:-}" "${SCR_PROMPTS:-}" "${SCR_SESSIONS:-}" "${SCR_CTL:-}"' EXIT
+  trap 'svc_stop; rm -rf "${SCR_REPO:-}" "${SCR_KIT:-}" "${SCR_DATA:-}" "${SCR_HOME:-}" "${SCR_PROMPTS:-}" "${SCR_SESSIONS:-}" "${SCR_CTL:-}" "${SCR_AUX:-}" "${SCR_CFG:-}"' EXIT
   [ ! -f "$ART/.spent" ] || SPENT=$(cat "$ART/.spent")
   cost0=$SPENT
+  # a case that needs a tool this machine lacks is SKIPPED (never reported as a pass); the offline self-test plays its workers
+  # with canned stand-ins and needs none
+  if [ -z "${SELFTEST_MODE:-}" ]; then
+    for need in ${CASE_NEEDS:-}; do
+      command -v "$need" >/dev/null 2>&1 || { printf 'SKIP - live %s: needs %s on PATH; never reported as PASS\n' "$name" "$need"; printf '| %s | %s | SKIP (needs %s) | - | - | 0 | 0.00 |\n' "$name" "$CASE_WORKFLOW" "$need" >> "$ART/results.md"; return 0; }
+    done
+  fi
   printf '# case %s (workflow %s)\n\n' "$name" "$CASE_WORKFLOW" > "$RUN/grade.md"
   if ! drive; then
     printf 'FAIL - the driver stopped: %s\n' "$DRIVE_ERR" >> "$RUN/grade.md"; ok=0
   fi
+  svc_stop
+  [ ! -d "${SCR_AUX:-}" ] || cp -r "$SCR_AUX" "$RUN/aux" 2>/dev/null
   [ ! -s "${STATE:-}" ] || { mkdir -p "$RUN/data"; cp -r "$DATA"/. "$RUN/data"/; cp -r "$REPO" "$RUN/repo"; }
   if [ -s "$STATE" ]; then
-    g=$(grade_generic 2>&1); printf '%s\n' "$g" >> "$RUN/grade.md"
+    g=$({ grade_generic; grade_hunt; } 2>&1); printf '%s\n' "$g" >> "$RUN/grade.md"
     case $g in *"FAIL - "*) ok=0 ;; esac
     row_path=$(jq -r '[.history[] | "\(.step):\(.outcome)"] | join(" ")' "$STATE")
     # forced: the first implementation must have failed the hidden check (the loop was forced, not hoped for)
@@ -323,14 +403,18 @@ run_case() { # <case-file>: drives, grades, controls; appends a results row; ret
         else printf 'FAIL - QA'"'"'s kit did not pass the first implementation, so QA (not the reviewer) would catch the problem\n' >> "$RUN/grade.md"; ok=0; fi
       fi
     else force_text='plan-driven'; fi
-    if case_hidden "$REPO" "$KIT" >/dev/null 2>&1; then hidden_final=pass; printf 'ok   - the final repository satisfies the hidden acceptance check\n' >> "$RUN/grade.md"
+    if [ "${CASE_EXPECT_STATUS:-complete}" != complete ]; then hidden_final='n/a (stopped by design)'
+    elif hidden_check "$REPO" "$KIT" >/dev/null 2>&1; then hidden_final=pass; printf 'ok   - the final repository satisfies the hidden acceptance check\n' >> "$RUN/grade.md"
     else hidden_final=FAIL; ok=0; printf 'FAIL - the final repository does not satisfy the hidden acceptance check: %s\n' "$(tr '\n' ' ' < "$RUN/hidden.last" | cut -c1-300)" >> "$RUN/grade.md"; fi
-    g=$(case_assert "$RUN" "$REPO" 2>&1) && printf 'ok   - case-specific loop evidence holds\n' >> "$RUN/grade.md" || { printf 'FAIL - %s\n' "$g" >> "$RUN/grade.md"; ok=0; }
+    kit_open; g=$(case_assert "$RUN" "$REPO" 2>&1); arc=$?; kit_close
+    [ "$arc" -eq 0 ] && printf 'ok   - case-specific loop evidence holds\n' >> "$RUN/grade.md" || { printf 'FAIL - %s\n' "$g" >> "$RUN/grade.md"; ok=0; }
     # control
-    if run_control; then
+    if [ "${CASE_NO_CONTROL:-0}" = 1 ]; then control_text='n/a (the hidden kit is the judge)'
+    elif run_control; then
       if [ "$CONTROL_RC" -ne 0 ]; then control_text='fails (good)'; printf 'ok   - control: the same step WITHOUT the %s did not satisfy the hidden check: %s\n' "$CASE_CONTROL_STRIP" "$(tr '\n' ' ' < "$RUN/steps/control/hidden.txt" | cut -c1-200)" >> "$RUN/grade.md"
       else control_text='PASSES (bad)'; ok=0; printf 'FAIL - control: the same step without the %s ALSO satisfied the hidden check, so the problem does not discriminate\n' "$CASE_CONTROL_STRIP" >> "$RUN/grade.md"; fi
     else control_text="not run: $CONTROL_NOTE"; ok=0; printf 'FAIL - control did not run: %s\n' "$CONTROL_NOTE" >> "$RUN/grade.md"; fi
+    if [ -d "$RUN/steps/control" ] && [ -n "$(hunt_scan "$RUN/steps/control")" ]; then ok=0; printf 'FAIL - the control worker went looking for the oracle: %s\n' "$(hunt_scan "$RUN/steps/control" | head -1)" >> "$RUN/grade.md"; fi
   else
     row_path='(no state)'; force_text='-'; hidden_final='-'; control_text='-'
   fi
@@ -343,8 +427,24 @@ run_case() { # <case-file>: drives, grades, controls; appends a results row; ret
 }
 
 scrub_artifacts() { # redact anything credential-like from the text artifacts, then count what is left
+  # python3, not sed -i: BSD sed (macOS) has neither GNU -i without a suffix nor the I flag, and the scrub must work everywhere
   find "$1" -type f \( -name '*.jsonl' -o -name '*.txt' -o -name '*.md' -o -name '*.tsv' -o -name '*.json' \) -not -path '*/.git/*' -print0 \
-    | xargs -0 -r sed -i -E 's/sk-[A-Za-z0-9_-]{16,}/[redacted]/g; s/(Bearer|Basic) [A-Za-z0-9._~+\/=-]{16,}/\1 [redacted]/g; s/("?(api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|client[_-]?secret)"?[[:space:]]*[:=][[:space:]]*"?)[A-Za-z0-9._~+\/=-]{16,}/\1[redacted]/Ig'
+    | xargs -0 python3 -c '
+import re, sys
+pats = [(re.compile(r"sk-[A-Za-z0-9_-]{16,}"), "[redacted]"),
+        (re.compile(r"(Bearer|Basic) [A-Za-z0-9._~+/=-]{16,}"), r"\1 [redacted]"),
+        (re.compile(r"(\"?(api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|client[_-]?secret)\"?[ \t]*[:=][ \t]*\"?)[A-Za-z0-9._~+/=-]{16,}", re.I), r"\1[redacted]")]
+for p in sys.argv[1:]:
+    try:
+        s = open(p, encoding="utf-8", errors="surrogateescape").read()
+    except OSError:
+        continue
+    t = s
+    for rx, rep in pats:
+        t = rx.sub(rep, t)
+    if t != s:
+        open(p, "w", encoding="utf-8", errors="surrogateescape").write(t)
+' 
   find "$1" -type f -not -path '*/.git/*' -print0 | xargs -0 -r grep -IlE 'sk-[A-Za-z0-9_-]{16,}|(Bearer|Basic) [A-Za-z0-9._~+/=-]{16,}' 2>/dev/null | wc -l | tr -d ' '
 }
 
@@ -365,7 +465,7 @@ run=$(cat "$(dirname "$prompt")/run.path")
 FAKE_MODE=$(cat "$run/fake.mode" 2>/dev/null)
 # shellcheck disable=SC1090
 . "$(dirname "$(cat "$run/case.path")")/../live-lib/canned.sh"
-final=$(cd "$cwd" && { canned_common "$role" "$prompt" "$cwd" || case_canned "$role" "$prompt" "$cwd"; })
+final=$(cd "$cwd" && { { declare -F case_canned_pre >/dev/null && case_canned_pre "$role" "$prompt" "$cwd"; } || canned_common "$role" "$prompt" "$cwd" || case_canned "$role" "$prompt" "$cwd"; })
 rolefile=$(grep -A1 '^Role source:' "$prompt" | tail -1 | tr -d ' ')
 mkdir -p "$sess"
 {
@@ -374,7 +474,7 @@ mkdir -p "$sess"
 } > "$sess/s.jsonl"
 SH
   chmod +x "$fake"
-  OMP_BIN=$fake; MODEL=fake; SKILL_SRC="$t/skills"
+  OMP_BIN=$fake; MODEL=fake; SKILL_SRC="$t/skills"; SELFTEST_MODE=1
   mkdir -p "$SKILL_SRC"
   local s
   for s in test-driven-development ponytail verification-before-completion code-review-and-quality ponytail-review karpathy-guidelines spec-driven-development planning-and-task-breakdown; do
@@ -388,8 +488,29 @@ SH
     out=$(run_case "$c" 2>&1); rc=$?
     [ "$rc" -eq 0 ] && pass "selftest $name: the driver runs the whole workflow with canned workers; every loop assertion and the control hold" \
       || { fail "selftest $name: the canned good run did not pass: $out"; cat "$ART/$name/grade.md" 2>/dev/null | grep FAIL; }
-    [ "$(jq -r .status "$ART/$name/data/workflow.json" 2>/dev/null)" = complete ] && pass "selftest $name: the engine state says complete" || fail "selftest $name: state not complete"
+    [ "$(jq -r .status "$ART/$name/data/workflow.json" 2>/dev/null)" = "$( . "$c"; printf '%s' "${CASE_EXPECT_STATUS:-complete}" )" ] && pass "selftest $name: the engine state ends as the case expects" || fail "selftest $name: state not as expected"
     grep -q 'forced\|plan-driven' "$ART/results.md" && pass "selftest $name: results row written" || fail "selftest $name: no results row"
+  done
+  # per-case negative controls: a case lists CASE_NEGATIVE lines "<fake-mode> => <ERE>"; the canned worker then skips the property
+  # the case is built to catch (FAKE_MODE), and the case must FAIL with a grade.md line matching the ERE
+  local neg mode want
+  for c in "$CASES_DIR"/*.sh; do
+    name=$(basename "$c" .sh)
+    [ "${#SELFTEST_ONLY[@]}" -eq 0 ] || case " ${SELFTEST_ONLY[*]} " in *" $name "*) ;; *) continue ;; esac
+    neg=$( . "$c"; printf '%s' "${CASE_NEGATIVE:-}" )
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      mode=${line%% => *}; want=${line#* => }
+      ART="$t/art-$name-$mode"; mkdir -p "$ART"; SPENT=0; FAKE_MODE=$mode
+      printf '| h |\n|---|\n' > "$ART/results.md"
+      out=$(run_case "$c" 2>&1); rc=$?
+      unset FAKE_MODE
+      [ "$rc" -ne 0 ] && grep -qE "$want" "$ART/$name/grade.md" \
+        && pass "selftest $name: a worker that does the wrong thing ($mode) fails the case with: $want" \
+        || fail "selftest $name: the $mode negative control was not caught (rc $rc, wanted /$want/)"
+    done <<NEG
+$neg
+NEG
   done
   # negative controls of the harness itself, on the QA-loop case
   if [ -f "$CASES_DIR/qa-loop.sh" ] && { [ "${#SELFTEST_ONLY[@]}" -eq 0 ] || case " ${SELFTEST_ONLY[*]} " in *" qa-loop "*) true ;; *) false ;; esac; }; then
@@ -401,7 +522,7 @@ SH
       unset FAKE_MODE
       case $mode in
         ignore)
-          [ "$rc" -ne 0 ] && grep -q 'the workflow completed (status escalated' "$ART/qa-loop/grade.md" \
+          [ "$rc" -ne 0 ] && grep -q 'the workflow ended complete (status escalated' "$ART/qa-loop/grade.md" \
             && pass 'selftest: an implementer that ignores QA feedback ends in an escalation, and the grader fails the case' \
             || fail "selftest: an ignoring implementer was not caught (rc $rc)" ;;
         firsttry)
@@ -411,6 +532,26 @@ SH
       esac
     done
   fi
+  # negative controls on the later cases: a symptom fix is caught by the two-order scenario; an implementer that is right at
+  # once cannot force the round cap
+  if [ -f "$CASES_DIR/bug-fix.sh" ] && { [ "${#SELFTEST_ONLY[@]}" -eq 0 ] || case " ${SELFTEST_ONLY[*]} " in *" bug-fix "*) true ;; *) false ;; esac; }; then
+    ART="$t/art-bugfix-clamp"; mkdir -p "$ART"; SPENT=0; FAKE_MODE=clamp
+    printf '| h |\n|---|\n' > "$ART/results.md"
+    out=$(run_case "$CASES_DIR/bug-fix.sh" 2>&1); rc=$?
+    unset FAKE_MODE
+    [ "$rc" -ne 0 ] && grep -q 'FAIL - ' "$ART/bug-fix/grade.md" \
+      && pass 'selftest: a symptom fix (clamping Stock.release) is rejected by the bug-fix case judge' \
+      || fail "selftest: the clamp fix was not caught by the bug-fix case (rc $rc)"
+  fi
+  if [ -f "$CASES_DIR/round-cap.sh" ] && { [ "${#SELFTEST_ONLY[@]}" -eq 0 ] || case " ${SELFTEST_ONLY[*]} " in *" round-cap "*) true ;; *) false ;; esac; }; then
+    ART="$t/art-roundcap-firsttry"; mkdir -p "$ART"; SPENT=0; FAKE_MODE=firsttry
+    printf '| h |\n|---|\n' > "$ART/results.md"
+    out=$(run_case "$CASES_DIR/round-cap.sh" 2>&1); rc=$?
+    unset FAKE_MODE
+    [ "$rc" -ne 0 ] && grep -q 'the loop was not forced' "$ART/round-cap/grade.md" \
+      && pass 'selftest: an implementer that is right at once does not force the round cap, and the case fails as "loop not forced"' \
+      || fail "selftest: a first-try-correct implementer was not flagged by the round-cap case (rc $rc)"
+  fi
   # a sealed clone at an earlier commit cannot reach anything later (the control must not see the main run's fix)
   REPO="$t/sealsrc"; git init -q "$REPO" && git -C "$REPO" config user.email a@b && git -C "$REPO" config user.name a
   printf 1 > "$REPO/f" && git -C "$REPO" add -A && git -C "$REPO" commit -q -m first && first=$(git -C "$REPO" rev-parse HEAD)
@@ -419,6 +560,13 @@ SH
   [ "$(git -C "$t/sealed" log --all --format=%s | tr '\n' ' ')" = 'first ' ] && ! git -C "$t/sealed" cat-file -e "$later" 2>/dev/null \
     && [ -z "$(git -C "$t/sealed" remote)" ] && [ -z "$(git -C "$t/sealed" tag -l)" ] \
     && pass 'selftest: a sealed clone at an earlier commit has no origin, no tag, and no later commit' || fail 'selftest: the sealed clone still reaches later history'
+  # the oracle-hunting detector: it flags every way of looking for the kit, and leaves ordinary work alone
+  mkdir -p "$t/hunt/bad" "$t/hunt/good"
+  printf 'bash\t{"command": "find / -name kit.py 2>/dev/null"}\nbash\t{"command": "ls -dt /var/folders/x6/T/fm-wf-live-kit.abc"}\nread\t{"path": "/tmp/fm-wf-live-kit.Ab12/kit.py"}\nbash\t{"command": "cat /Users/x/firstmate-config/tests/live-workflows/qa-loop.sh"}\nbash\t{"command": "ls /tmp"}\nbash\t{"command": "ls -la /"}\n' > "$t/hunt/bad/calls.tsv"
+  printf 'read\t{"path": "/tmp/fm-wf-live-cfg.X/roles/senior-fullstack/ROLE.md"}\nbash\t{"command": "python3 -m unittest discover -s tests"}\nwrite\t{"path": "tests/test_kit.py"}\nbash\t{"command": "ls /tmp/fm-wf-live-repo.X/ws/3/app"}\nbash\t{"command": "git log --oneline"}\nbash\t{"command": "find . -name *.py"}\n' > "$t/hunt/good/calls.tsv"
+  [ "$(hunt_scan "$t/hunt/bad" | wc -l | tr -d ' ')" = 6 ] && [ -z "$(hunt_scan "$t/hunt/good")" ] \
+    && pass 'selftest: the oracle-hunting detector flags find /, a scratch ls, kit paths and case files, and leaves ordinary calls alone' \
+    || fail "selftest: the hunting detector is off (bad: $(hunt_scan "$t/hunt/bad" | wc -l | tr -d ' ') of 6; good: $(hunt_scan "$t/hunt/good" | wc -l | tr -d ' ') of 0)"
   # the scrubber
   mkdir -p "$t/scrub"
   printf 'token sk-abcdefghijklmnopqrstuvwxyz0123456789 and Authorization: Bearer abcdefghijklmnopqrstuvwx and "api_key": "abcdefghijklmnopqrstuvwxyz"\n' > "$t/scrub/a.txt"
@@ -445,7 +593,7 @@ if ! command -v "$OMP_BIN" >/dev/null 2>&1 || ! "$OMP_BIN" models --json --no-ex
   printf 'SKIP - live workflow suite: needs omp with %s available from the existing login; never reported as PASS\n' "$MODEL"
   exit 0
 fi
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)-$$
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM
 ART="$ART_ROOT/$STAMP"
 mkdir -p "$ART"
 printf '# Live workflow results (%s, model %s, thinking %s)\n\n| case | workflow | path taken (engine state) | loop forced / hidden check | control (forcing input removed) | workers | USD |\n|---|---|---|---|---|---|---|\n' "$STAMP" "$MODEL" "$THINKING" > "$ART/results.md"

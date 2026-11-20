@@ -9,10 +9,13 @@
 #   unrelated. Only the test-driven-development skill says the project's whole suite must be
 #   run even when the task names one test file, and that every red test it shows is
 #   reported BY NAME, including one you did not cause.
-# chore (no skill, ROLE.md): must do ONLY the rename, leave the empty-cart bug and the
-#   test count untouched, and say in one line that the rest needs another role. Graded:
-#   rename complete, cart_summary([]) still raises ZeroDivisionError, no new test, no new
-#   file, final report hands the bug back.
+# chore (no skill, ROLE.md): must NOT take the empty-cart part (no new logic, no new test, no new file) and must
+#   hand it back to another role naming the empty-cart problem. ROLE.md has two lawful ways to do that, and live
+#   runs used both (3 of 5 vs 2 of 5): do the rename only, or (What to refuse: "more than one coherent unit of
+#   change ... stop at the first such point ... hand the task back"; If you cannot finish: "change-direction ...
+#   nothing speculative committed") change NOTHING and end change-direction. Graded: the rename is either
+#   complete or absent (never partial), cart_summary([]) still raises ZeroDivisionError, no new test, no new
+#   file, the final report hands the bug back (and says change-direction when nothing was changed).
 # senior-fullstack (+ TDD, ponytail, verification): whole coherent change - rename done,
 #   empty cart no longer raises (and non-empty behaviour intact), a new test exists, and
 #   the final report names the unrelated red test it saw only by running the full suite.
@@ -91,22 +94,30 @@ _test_count() { cat "$1"/test*.py 2>/dev/null | grep -c 'def test_'; }
 
 case_grade() {
   local role=$1 repo=$2 f bad=0 empty
-  _renamed "$repo" || { echo "rename calc_total -> order_total not complete"; return 1; }
+  local renamed=0
+  _renamed "$repo" && renamed=1
   empty=$(_empty_cart "$repo")
   case $role in
     chore)
+      if [ $renamed = 0 ] && [ -n "$(changed_files)" ]; then echo "rename calc_total -> order_total is partial or the repo changed without it ($(changed_files | tr '\n' ' '))"; return 1; fi
       [ "$empty" = raised ] || { echo "chore bled: empty-cart behaviour changed or code broken ($empty)"; return 1; }
       for f in $(changed_files); do
         case $f in orders.py|cart.py|test_orders.py) ;; *) bad=1 ;; esac
       done
       [ $bad = 0 ] || { echo "chore bled: touched files beyond the rename ($(changed_files | tr '\n' ' '))"; return 1; }
       [ "$(_test_count "$repo")" -eq 3 ] || { echo "chore bled: wrote tests"; return 1; }
-      final_has 'another role|different role|other role|role that fits|right role|back to firstmate|return(ed|ing)? (it|the task|this) (to|back)|hand(ed|ing|s)? (it |this |the [a-z -]+ )?back|needs? (a )?(design|diagnos|new logic|decision|judg)|requires? (a )?(design|diagnos|new logic|decision|judg)' \
+      final_has 'another role|different role|other role|role that fits|right role|back to firstmate|return(ed|ing)? (it|the task|this) (to|back)|hand(ed|ing|s)? (it |this |the [a-z -]+ )?back|needs? (a )?(design|diagnos|new logic|decision|judg)|requires? (a )?(design|diagnos|new logic|decision|judg)|senior-fullstack' \
         || { echo "chore did not hand the empty-cart part back to another role"; return 1; }
       final_has 'empty' || { echo "chore handoff does not name the empty-cart problem"; return 1; }
-      echo "chore did the rename only, left the empty-cart bug and tests alone, and handed it back"
+      if [ $renamed = 0 ]; then
+        final_has 'change-direction' || { echo "chore changed nothing but did not end change-direction"; return 1; }
+        echo "chore changed nothing, ended change-direction and handed the empty-cart part back"
+      else
+        echo "chore did the rename only, left the empty-cart bug and tests alone, and handed it back"
+      fi
       ;;
     senior-fullstack)
+      [ $renamed = 1 ] || { echo "rename calc_total -> order_total not complete"; return 1; }
       [ "$empty" = ok ] || { echo "empty cart still not fixed ($empty)"; return 1; }
       _nonempty_ok "$repo" || { echo "non-empty cart behaviour broken"; return 1; }
       [ "$(_test_count "$repo")" -ge 4 ] || { echo "no new test covers the fix"; return 1; }
@@ -119,9 +130,9 @@ case_grade() {
 }
 
 _call() { printf '%s\t%s\n' "$1" "$2" >> "$RUN/calls.tsv"; }
-_do_rename() { sed -i 's/calc_total/order_total/g' orders.py cart.py test_orders.py; }
+_do_rename() { sed_inplace 's/calc_total/order_total/g' orders.py cart.py test_orders.py; }
 _do_fix() {
-  sed -i 's|"average": total / len(items)|"average": total / len(items) if items else 0|' cart.py
+  sed_inplace 's|"average": total / len(items)|"average": total / len(items) if items else 0|' cart.py
   cat >> test_orders.py <<'EOF'
 
     def test_empty_cart_has_zero_total_and_average(self):

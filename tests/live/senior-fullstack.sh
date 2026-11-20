@@ -71,15 +71,19 @@ if __name__ == "__main__":
 EOF
 }
 
-# Ordered trace: first test-file edit < first unittest run after it < first src edit.
+# Ordered trace: first test-file write < first test run after it < first src write. A write is an edit/write tool
+# call on the file, or a bash call that writes it (python open(...,'w'), heredoc/redirect, tee, sed -i). A bash call
+# that writes the test file AND runs the tests (in that order, one call) counts as write + run; a call that writes
+# the source never counts as the run that came before it.
 _sf_order_ok() {
   awk -F'\t' '
-    function touches_test(t, a) { return (t == "edit" || t == "write" || t == "bash") && a ~ /tests\/test_textkit\.py/ && a !~ /unittest/ && t != "bash" }
-    function touches_src(t, a)  { return (t == "edit" || t == "write" || (t == "bash" && a ~ /(sed -i|>|tee)[^"]*src\/textkit\.py/)) && a ~ /src\/textkit\.py/ && a !~ /tests\/test_textkit\.py/ || (t == "edit" && a ~ /src\/textkit\.py/ && a !~ /\[tests\/test_textkit/) }
-    { if (!T && touches_test($1, $2)) T = NR
-      else if (T && !R && $1 == "bash" && $2 ~ /unittest|pytest/) R = NR
-      if (!S && touches_src($1, $2) && !touches_test($1, $2)) S = NR }
-    END { exit !(T && R && S && T < R && R < S) }
+    function testw(t, a) { return a ~ /tests\/test_textkit\.py/ && ((t == "edit" || t == "write") || (t == "bash" && (a ~ /open\(/ || a ~ /sed -i/ || a ~ /tee/ || a ~ /(cat|printf|echo)[^|]*>+ *[^ ]*tests\/test_textkit\.py/))) }
+    function srcw(t, a)  { return a ~ /src\/textkit\.py/ && a !~ /tests\/test_textkit\.py/ && ((t == "edit" || t == "write") || (t == "bash" && (a ~ /sed -i/ || a ~ /tee/ || a ~ /(cat|printf|echo)[^|]*>+ *[^ ]*src\/textkit\.py/ || a ~ /open\([^)]*src\/textkit/))) }
+    function run(t, a)   { return t == "bash" && a ~ /unittest|pytest/ }
+    { if (!S && srcw($1, $2)) S = NR
+      else if (!T && testw($1, $2)) { T = NR; if (run($1, $2)) R = NR }
+      else if (T && !R && run($1, $2)) R = NR }
+    END { exit !(T && R && S && T <= R && R < S) }
   ' "$RUN/calls.tsv"
 }
 
@@ -110,12 +114,14 @@ case_canned() {
       printf 'bash\t{"command":"python3 -m unittest"}\n'
     } > "$RUN/calls.tsv"
     printf 'Added test_text_exactly_width_is_unchanged, watched it fail (he...), fixed <= in truncate; textkit tests pass. Full suite: python3 -m unittest still has 1 failure, pre-existing and out of scope: test_sunday_wraps_to_monday in tests/test_dates.py (next_weekday(6) returns 7). Left alone.\n' > "$RUN/final.txt"
-    sed -i 's/len(text) < width/len(text) <= width/' src/textkit.py
+    sed_inplace 's/len(text) < width/len(text) <= width/' src/textkit.py
     python3 - <<'EOF'
 p = "tests/test_textkit.py"
 s = open(p).read().replace('\n\nif __name__', '    def test_text_exactly_width_is_unchanged(self):\n        self.assertEqual(truncate("hello", 5), "hello")\n\n\nif __name__', 1)
 open(p, "w").write(s)
 EOF
+    # the role contract commits: the grader must see committed work (changes are judged against the fixture commit)
+    git add -A && git commit -q -m "fix truncate at exact width"
   else
     {
       printf 'read\t{"path":"src/textkit.py"}\n'
@@ -124,7 +130,7 @@ EOF
       printf 'bash\t{"command":"python3 -m unittest tests.test_textkit"}\n'
     } > "$RUN/calls.tsv"
     printf 'Fixed the off-by-one in truncate and added a test. Tests pass.\n' > "$RUN/final.txt"
-    sed -i 's/len(text) < width/len(text) <= width/' src/textkit.py
+    sed_inplace 's/len(text) < width/len(text) <= width/' src/textkit.py
     python3 - <<'EOF'
 p = "tests/test_textkit.py"
 s = open(p).read().replace('\n\nif __name__', '    def test_exact(self):\n        self.assertEqual(truncate("hello", 5), "hello")\n\n\nif __name__', 1)

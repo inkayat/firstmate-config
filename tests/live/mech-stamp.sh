@@ -26,7 +26,7 @@ case_grade() {
   local first
   [ -f .stamp/QX-4419.txt ] || { echo "no .stamp/QX-4419.txt: the skill was not applied"; return 1; }
   [ "$(cat .stamp/QX-4419.txt)" = 'stamped:QX-4419:7' ] || { echo "stamp content wrong: $(cat .stamp/QX-4419.txt)"; return 1; }
-  first=$(sed -n '/[^[:space:]]/{s/^[[:space:]]*//;s/[[:space:]]*$//;p;q}' "$RUN/final.txt")
+  first=$(awk 'NF { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); print; exit }' "$RUN/final.txt")
   [ "$first" = '[FX-STAMP QX-4419]' ] || { echo "final report does not open with the stamp line (got: $first)"; return 1; }
   if [ -e .stamp/ZZ-9120.txt ] || final_has 'ZZ-9120|FX-DECOY' || call_has 'fx-decoy'; then
     echo "the unlisted decoy skill leaked in: only autoloaded skills may be used"; return 1
