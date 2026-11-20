@@ -468,8 +468,8 @@ SH
     waited=0
     while [ ! -f "$wt/worker-argv.txt" ] && [ "$waited" -lt 100 ]; do sleep 0.1; waited=$((waited + 1)); done
     argv=$(cat "$wt/worker-argv.txt" 2>/dev/null)
-    launched_model=$(printf '%s\n' "$argv" | sed -n '/^--model$/{n;p;}')
-    launched_effort=$(printf '%s\n' "$argv" | sed -n '/^--thinking$/{n;p;}')
+    launched_model=$(printf '%s\n' "$argv" | awk '$0 == "--model" { getline; print; exit }')
+    launched_effort=$(printf '%s\n' "$argv" | awk '$0 == "--thinking" { getline; print; exit }')
     delivered="$TMP/delivered-brief.txt"
     printf '%s\n' "$argv" > "$delivered"
 
