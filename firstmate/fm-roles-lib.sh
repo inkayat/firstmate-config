@@ -33,26 +33,30 @@ role_frontmatter() {
   ' "$1"
 }
 
-# role_autoload_skills <role> - one autoloadSkills entry per line, in file
-# order, duplicates kept (the lint reports them). Prints nothing for a role
-# without the key or with `autoloadSkills: []`. Accepts only the block list
-# form the roles use; any other shape fails loudly rather than being guessed.
-role_autoload_skills() {
+# role_frontmatter_list <role> <key> - one entry per line of the frontmatter
+# block list `<key>:`, in file order, duplicates kept (the lint reports them).
+# Prints nothing for a role without the key or with `<key>: []`. Accepts only
+# the block list form the roles use; any other shape fails loudly rather than
+# being guessed. autoloadSkills, tools and spawns are read through this.
+role_frontmatter_list() {
   local file fm
   file=$(role_file "$1") || { printf 'no such role: %s\n' "$1" >&2; return 1; }
   fm=$(role_frontmatter "$file") || { printf 'role %s: frontmatter is missing or not closed\n' "$1" >&2; return 1; }
-  printf '%s\n' "$fm" | awk '
-    /^autoloadSkills:[[:space:]]*\[\][[:space:]]*$/ { next }
-    /^autoloadSkills:[[:space:]]*$/ { in_list = 1; next }
-    /^autoloadSkills:/ { bad = 1; next }
+  printf '%s\n' "$fm" | awk -v key="$2" '
+    $0 ~ "^" key ":[[:space:]]*\\[\\][[:space:]]*$" { next }
+    $0 ~ "^" key ":[[:space:]]*$" { in_list = 1; next }
+    $0 ~ "^" key ":" { bad = 1; next }
     in_list && /^[[:space:]]+-[[:space:]]+[A-Za-z0-9][A-Za-z0-9_-]*[[:space:]]*$/ {
       sub(/^[[:space:]]+-[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); print; next
     }
     in_list && /^[[:space:]]/ { bad = 1; next }
     { in_list = 0 }
     END { if (bad) exit 1 }
-  ' || { printf 'role %s: autoloadSkills is not a plain block list of skill names\n' "$1" >&2; return 1; }
+  ' || { printf 'role %s: %s is not a plain block list\n' "$1" "$2" >&2; return 1; }
 }
+
+# role_autoload_skills <role> - the role's autoloadSkills, one name per line.
+role_autoload_skills() { role_frontmatter_list "$1" autoloadSkills; }
 
 # role_frontmatter_name <role> - the `name:` value (OMP agent name).
 role_frontmatter_name() {

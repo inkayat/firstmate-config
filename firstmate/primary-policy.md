@@ -5,6 +5,13 @@ captain works; it never overrides `AGENTS.md`, and it never overrides a
 project's own instructions. It is longer than one default read: page
 through to the end.
 
+**Standing rule (full text in section 8).** Every non-trivial code-changing
+task MUST run a workflow: before the first worker is launched, resolve it with
+`bin/fm-workflow select <kind> --delivery <mode>` and start it with
+`bin/fm-workflow next`. Only the closed list of exceptions in section 8 runs
+none. It is repeated here because a default read of this file can stop before
+section 8.
+
 ## 0. Routing and agent trace (temporary, debugging period)
 
 Until the captain ends this debugging period, print a short trace in the
@@ -31,7 +38,8 @@ a display or print prospective stages as if already dispatched:
 - `Skills` is derived, never chosen: exactly the assigned role's frontmatter
   `autoloadSkills` (`bin/fm-role-handoff --skills <role>`), by skill directory
   name, comma-separated, in the role file's order. `Skills: none` stands
-  alone for a role that autoloads nothing (`scout`, `chore`), with no
+  alone for a role that autoloads nothing (`scout`, `chore`, `tenth-man`,
+  `risk-classifier`), with no
   `No skill:` line. Nothing else: no project-local skill (the Captain does
   not select those, section 2), no installed-but-unlisted skill, no official
   FirstMate internal skill.
@@ -50,7 +58,7 @@ a display or print prospective stages as if already dispatched:
   `bin/fm-workflow trace <state-file>` from the task's state file and never
   typed from memory:
 
-      Workflow: <workflow> v<version> | step <step> #<run> | loops <loop> <used>/<max>, ... | <running|complete|escalated>
+      Workflow: <workflow> v<version> | step <step> #<run> | loops <loop> <used>/<max>, ... | <running|complete|closed|escalated>
 
   `bin/fm-workflow trace <state-file> <captured-block>` fails when a captured
   Workflow line differs from the derived one; `tests/routing-trace.sh check`
@@ -157,7 +165,8 @@ path, each with the same requirement. `bin/fm-role-handoff <role>` in this
 repository prints exactly that block from the role's frontmatter; paste it into
 `## Firstmate spec` unchanged. The Captain never adds, drops, swaps or names a
 skill of its own for a task: a different skill set is a different role, and a
-skill-less role (`scout`, `chore`) hands over none. Official FirstMate's
+skill-less role (`scout`, `chore`, `tenth-man`, `risk-classifier`) hands over
+none. Official FirstMate's
 `bin/fm-brief.sh` has no `--worker-role`, `--skill` or `--skill-root` option
 and does not reject unknown arguments, so never pass them: nothing would be
 selected or recorded. The worker's first input carries these paths and
@@ -319,10 +328,12 @@ ship. Neither mapping is fixed: a QUICK question can be a scout, a QUICK
 rename a ship; a DEEP diagnosis is naturally a scout, a DEEP fix naturally a
 ship. Judge the actual task, not the category label.
 
-**Build, test and review are a workflow, not one worker.** A task that needs
-implementation, independent QA and independent code review, with or without a
-plan first, follows a workflow (section 8) instead of being routed once; each
-of its steps is then routed here like any task.
+**Build, test and review are a workflow, not one worker.** A task that changes
+code follows a workflow (section 8, mandatory for non-trivial code-changing
+work) instead of being routed once: implementation, independent QA, fresh-context
+review with verified findings and, when the change touches a sensitive surface,
+a blocking security review, with or without a plan first. Each of its steps is
+then routed here like any task.
 
 **Task handoff.** Name the assigned role and absolute role source path
 (through the section 2 role handoff), input/output artifacts, acceptance,
@@ -353,40 +364,71 @@ repository.
 ## 4. Roles
 
 Roles live at `$FM_CONFIG_ROOT/roles/<name>/ROLE.md`. Each file opens with
-OMP task-agent frontmatter - `name: fm-<name>`, a `description`, and
-optional `autoloadSkills` - so the same file is both the role a brief points
-at and a valid OMP agent definition. `install.sh` links each one into OMP's
-user agent root as `~/.omp/agent/agents/fm-<name>.md`, so every OMP session
-can spawn `fm-<name>`; it never replaces an entry there that is not its own.
-A role's `autoloadSkills` is its whole skill set (section 5); choosing the
-role is the only way a task gets a skill.
+OMP task-agent frontmatter - `name: fm-<name>`, a `description`, optional
+`autoloadSkills`, an explicit `tools` list and, for a role that calls
+sub-agents, `spawns` - so the same file is both the role a brief points at and
+a valid OMP agent definition. `install.sh` links each one into OMP's user agent
+root as `~/.omp/agent/agents/fm-<name>.md`, so every OMP session can spawn
+`fm-<name>`; it never replaces an entry there that is not its own. A role's
+`autoloadSkills` is its whole skill set (section 5); choosing the role is the
+only way a task gets a skill. `roles/manifest.json` is the one place that
+records each role's mode, what it may change, which final block it can end with
+and which roles it may call; `bin/fm-workflow check` validates it against the
+role files, the workflows and the call-graph rule of section 6.
 
 Core roles:
 
 - `senior-fullstack` - ordinary delivery work; mixed/no-specialist fallback
 - `architecture` - structural decisions, not implementation ownership
-- `tenth-man` - deliberate adversarial challenge; risk-triggered or explicitly
-  requested, never routine
+- `tenth-man` - deliberate adversarial challenge of a plan, design, finding or
+  completion claim; risk-triggered or explicitly requested, never routine
+  outside a workflow that binds it as a standing step (`research-decide`)
 
 Specialist roles - a starting set, not a closed list. Adding one is a new
-role file plus its line here, never a new dispatch category:
+role file plus its line here and its entry in the manifest, never a new
+dispatch category:
 
 - `security-engineer` - finds, evidences, and ranks security weaknesses in a
-  named scope; report-only, never exploits
-- `code-reviewer` - read-only review of a handed diff, including a review
-  the captain explicitly requests (section 7)
+  named scope; report-only, never exploits; a blocking gate when a workflow
+  asks
+- `code-reviewer` - read-only review of a handed diff in fresh context,
+  including a review the captain explicitly requests (section 7)
 - `refactorist` - one small, behavior-preserving improvement per task, proven
-  by tests
-- `debugger` - source-read-only diagnosis; explicitly authorized local/test
-  reproductions and a causal handoff, never source fixes
+  by the same checks before and after
+- `debugger` - source-read-only diagnosis anchored on a red-capable
+  reproduction; explicitly authorized local/test reproductions and a causal
+  handoff, never source fixes
 - `technical-writer` - scoped documentation of settled behavior/decisions;
   no code/config or behavior-defining policy edits merely because it is
   Markdown
 - `planner` - turns an unclear or oversized request into a written spec and
   an ordered task list; never implements
-- `qa` - independent verification of a change against the task's acceptance:
-  runs and probes it, never edits it, and ends with a machine-readable verdict
-  (section 8); `code-reviewer` ends its report with the same verdict block
+- `qa` - independent verification of a change against the task's acceptance
+  by running it; never edits it, and ends with a machine-readable verdict
+  (section 8)
+- `ui-qa` - independent verification of browser-visible behavior by driving
+  the real running app, with screenshot or snapshot evidence; ends with a
+  verdict
+- `test-engineer` - writes the verifiers (failing regression, property,
+  differential, end-to-end tests) and proves they fail for the intended reason;
+  never edits production source
+- `risk-classifier` - reads the change and sets its risk tier, whether a
+  security review is required and the diff-triggered checklist items that
+  match; ends with a risk block
+- `finding-verifier` - tries to disprove each review or security finding
+  before it reaches the implementer; only confirmed findings go back
+- `release-engineer` - decides ship-readiness for the head commit and prepares
+  the delivery package (verification stamp, risk, rollback); never pushes or
+  merges
+- `researcher` - answers a question from high-trust primary sources with cited
+  findings and confidence; distinct from `scout` (facts about this codebase)
+- `perf-engineer` - measure-first optimisation: baseline, one change at a
+  time, keep-or-revert, the limiter named
+- `lead` - owns one large, already-scoped deliverable inside one task worktree:
+  decomposes it, fans bounded slices to sub-agents, integrates and verifies; it
+  never replaces a workflow's independent QA or review steps
+- `improver` - turns recorded failure patterns into proposed role, rule or
+  skill changes through a PR; never self-applies (section 8, self-improvement)
 
 Skill-less roles (`tenth-man`, listed above, is one too) - choosing one of
 these is how a task gets no skill; the Captain never decides "no skill"
@@ -408,10 +450,12 @@ role handoff. A role describes how to work; it never outranks the project.
 Skills belong to roles, not to tasks. A role file's frontmatter
 `autoloadSkills` is the complete list of shared worker skills a worker running
 that role is handed (section 2): at most three per role, and none for a role
-that needs none (`scout`, `chore`, `tenth-man`). The Captain does not select, add, drop,
-budget, substitute or name skills for a delegated task, and does not name
-project-local skills. To change what a kind of work loads, change the role or
-add one (a role file plus its line in section 4, never a dispatch category).
+that needs none (`scout`, `chore`, `tenth-man`, `risk-classifier`). The Captain
+does not select, add, drop, budget, substitute or name skills for a delegated
+task, and does not name project-local skills. To change what a kind of work
+loads, change the role or add one (a role file plus its line in section 4,
+never a dispatch category). Which skill a role carries, and why, is recorded in
+README.md "Context and skills".
 
 An autoloaded skill must be a shared skill this repository manages (`skills/`
 or `skills/external.lock`), must exist at that path, and appears once per
@@ -482,6 +526,16 @@ inherited (rather than re-derived) the parent's context.
 `tests/worker-context.sh validate` checks fixture reports for this evidence;
 it does not enforce helper behavior or authorize task completion.
 
+**The call graph is data.** Which roles may call which through that helper
+lives in one place, `roles/manifest.json`, and each role's frontmatter `spawns`
+mirrors it. Only `lead`, `planner`, `finding-verifier` and `improver` call
+sub-agents, and every role they call calls nobody, so nothing recurses beyond
+one level; a helper never publishes, pushes, merges, creates a Firstmate task
+or widens its parent's scope. The `lead` role orchestrates inside one task
+only: Firstmate still launches the workflow's QA, review and security steps as
+separate fresh workers. `bin/fm-workflow check` (and `tests/workflows.sh`)
+validate the graph.
+
 ## 7. Completion
 
 A task is done when its stated outcome is demonstrated, not when the diff looks
@@ -504,9 +558,10 @@ task as part of its intended validation plan. Require the worker to exercise
 the affected user-visible behavior or flow end-to-end; confirming only that a
 page loads is insufficient. The implementation worker may perform it, or,
 when independence or risk justifies the extra task, FirstMate may assign a
-separate read-only verification worker. Request the capability generically;
-do not hardcode one machine's browser tool, create a permanent verifier role,
-or add another orchestration or completion mechanism.
+separate read-only verification worker: the `ui-qa` role, the verification
+worker of the `ui-build-verify-review` workflow (section 8). Request the
+capability generically; do not hardcode one machine's browser tool or add
+another orchestration or completion mechanism.
 
 Require concise evidence of the scenario and starting state, important actions,
 resulting state, relevant success or error behavior, issues found, fixes made,
@@ -526,7 +581,10 @@ matches the change's risk and scope.
 Official FirstMate `AGENTS.md` section 7 ("Selected delivery path and merge
 authority") owns review, fixes, and verification: the selected delivery path
 (`no-mistakes`, direct-PR, or local-only) owns its own rigor. This
-configuration adds no review requirement of its own. Section 3 still chooses
+configuration adds no review requirement of its own except the workflows of
+section 8: on direct-PR and local-only they are the captain's standing explicit
+request (stated in `captain.md`) for their QA, review, verification, security
+and ship steps; on `no-mistakes` they add none. Section 3 still chooses
 model and effort by semantics; no category, "substantive" classification, or
 security, payment, or other risk label is by itself authority for a reviewer.
 
@@ -534,11 +592,14 @@ security, payment, or other risk label is by itself authority for a reviewer.
 change as its path requires (see "Browser and manual verification" above) and
 no independent reviewer is dispatched or awaited - for substantive,
 cross-component, security, or payment work too - unless the captain
-explicitly requested one or the task runs a workflow (section 8), whose qa
-and code-review steps are that request. Genuine security, destructive,
-irreversible, and payment authority boundaries still escalate to the captain
-exactly as the official contract and the task's own authority require,
-independent of this section.
+explicitly requested one or the task runs a workflow (section 8), whose
+independent QA, review, finding-verification, security and ship steps are the
+captain's standing explicit request for them. That request is what the
+official contract requires for a separate review; it is never inferred from
+risk, and a per-task choice of none (section 8) withdraws it. Genuine
+security, destructive, irreversible, and payment authority boundaries still
+escalate to the captain exactly as the official contract and the task's own
+authority require, independent of this section.
 
 **Explicitly requested review.** When the captain explicitly requests a
 separate review or audit, or the authorized task is itself a knowledge-only
@@ -570,7 +631,8 @@ request for tests, a smoke run, or browser verification is evidence the
 worker performs under the selected path; by itself it grants no commit,
 push, or publication authority. If the work needs more rigor than the
 selected path gives, escalate whether to use `no-mistakes`; never silently
-add a reviewer instead.
+add a reviewer instead. When it is the selected path, the forced workflow of
+section 8 is `delegated-build`, which adds no reviewer and no gate.
 
 **Report.** State what was implemented and how it was verified; when a
 requested review ran, also who reviewed (route/model/harness) and the
@@ -588,76 +650,210 @@ in for verification of the actual task changes.
 A workflow is a declarative state machine in `workflows/<name>.json`
 (structure: `workflows/workflow.schema.json`) that `bin/fm-workflow` executes:
 named steps, each bound to a role alias, with an input contract, an output
-contract, one transition per outcome, and loop limits. The engine decides only
-what the definition says. It launches no agent, merges nothing and never
+contract, one transition per outcome, loop limits and gates. The engine decides
+only what the definition says. It launches no agent, merges nothing and never
 writes to a project; the Captain launches every step's worker through
-sections 2-3 exactly as it launches any worker. Two workflows exist.
+sections 2-3 exactly as it launches any worker. Seven workflows exist;
 `bin/fm-workflow list` prints each with its `when`:
 
-- Workflow `build-test-review`: implement, then independent QA, then independent code
-  review, then delivery. For a task that changes behavior or code, whose
-  requirement is clear enough to implement without a written plan, and that
-  warrants independent verification and review.
-- Workflow `plan-build-test-review`: the same with a planner step first; implement,
-  QA and review receive the plan. For a task that needs the above and whose
-  requirement a reasonable implementer could read two ways that behave
-  differently, or is too large to start without an ordered task list.
+- Workflow `build-test-review`: implement, classify the risk of the change,
+  independent QA, a fresh-context review whose findings a second worker
+  verifies, a blocking security review when the change touches a sensitive
+  surface, a ship-readiness check, delivery. For a task that changes behavior
+  or code and whose requirement is clear enough to implement without a plan.
+- Workflow `plan-build-test-review`: the same with a planner step first; every
+  later step receives the plan. For a requirement a reasonable implementer
+  could read two ways that behave differently, or too large to start without an
+  ordered task list.
+- Workflow `bug-fix`: diagnose to a red-capable reproduction, a failing
+  regression test written by the test-engineer, the fix (which may not touch
+  that test), then the same gates.
+- Workflow `refactor`: one behavior-preserving change proven by the same checks
+  before and after, then the same gates.
+- Workflow `ui-build-verify-review`: a browser-visible change gets QA and then a
+  real-browser verification with screenshot evidence before the review.
+- Workflow `research-decide`: research from primary sources, options with one
+  recommendation, a challenge, a recorded decision; changes no code.
+- Workflow `delegated-build`: implement, then delivery through `no-mistakes`
+  (see Composing with no-mistakes).
 
-**Choosing.** Small or mechanical work, a question, research, diagnosis or a
-change one worker can verify itself uses no workflow: the `chore` or the
-narrowest fitting role, as before. When `no-mistakes` is the selected delivery
-path it owns review and testing (section 7): use no workflow unless the captain
-explicitly asks for one. An explicit captain choice of workflow, or of none,
-always wins. A workflow is the captain's standing explicit request for its qa
-and code-review steps, and acting on their findings is the workflow's next
-step, not a separate authorization. Section 7's no-reviewer default applies
-to everything that runs no workflow.
+### Forcing
 
-**Running.**
+Every non-trivial code-changing task MUST run a workflow. Before the first
+worker is launched, classify the task into one kind of
+`workflows/selection.json` and resolve it with
+`bin/fm-workflow select <kind> --delivery <direct-pr|local-only|no-mistakes>`
+(`--delivery` is required where the delivery path decides the workflow, and
+`select` refuses without it);
+it prints `workflow: <name>` (start that workflow, below) or the one exception
+that applies. Print that result with the section 0 block. The exceptions are a
+closed list; nothing else exempts a task:
+
+1. `trivial-chore`: a trivial or mechanical change fully specified in the
+   brief (the `chore` role, or the narrowest fitting role, one worker).
+2. `question-or-diagnosis`: a pure question, research or diagnosis that changes
+   no code and records no decision (the researcher, scout, debugger or
+   architecture role alone).
+3. `captain-none`: the captain explicitly chose no workflow for this task
+   (`bin/fm-workflow select <kind> --none "<the stated choice>"`).
+
+A documentation-only task (`docs`) is outside the rule, not an exception: it
+changes no behavior, so it runs no workflow. A change to a role, skill,
+workflow or policy file defines agent behavior and is configuration: classify
+it `feature` or `refactor`.
+
+A task whose selected delivery path is `no-mistakes` is not a fourth way out:
+it runs `delegated-build`. When unsure whether a task is trivial, it is not.
+`bin/fm-workflow check` and `tests/workflows.sh` prove mechanically that every
+non-trivial code-changing kind resolves to an existing workflow under every
+delivery mode, that every workflow's roles exist and can produce their step's
+output, and that every role in `roles/manifest.json` is bound by a workflow,
+called by a bound role, or documented adhoc. They cannot prove that the Captain
+classified the task correctly or ran `select`; the printed result is the audit
+trail.
+
+### Composing with no-mistakes
+
+Official FirstMate (`AGENTS.md` section 7, "Selected delivery path and merge
+authority") gives `no-mistakes`, when selected, sole ownership of review,
+fixes, tests, documentation, push, PR and CI, and allows a separate review only
+on the captain's explicit request. A workflow is that explicit request for its
+own QA and review steps (section 7), but never on top of `no-mistakes`. So for
+a `no-mistakes` task the forced workflow is `delegated-build`: the implementer
+commits and shows what it ran (a result block), then Firstmate delivers through
+`no-mistakes`. It has no QA, review, verification or security worker; all its
+gates are observe-only, so no review gate blocks it; a change of direction can still
+be raised early. It adds tracking, an evidence record and an early-exit outcome,
+and nothing that holds work outside `no-mistakes` for a manual verdict. If the
+change needs more rigor than `no-mistakes` gives, escalate whether to use
+another path; never silently add a reviewer. The captain may withdraw the whole
+workflow for a task with `captain-none`.
+
+### Choosing
+
+Pick the kind by what the task is: new or changed behavior with a clear
+requirement (`feature`), with an ambiguous or oversized one
+(`feature-unclear`), a reported defect (`bugfix`), a restructuring that must not
+change behavior (`refactor`), a browser-visible change (`ui`), research that
+must end in a recorded decision (`decision`). A pure question or diagnosis
+(`question`) and trivial work (`trivial`) run no workflow. An explicit captain
+choice of workflow, or of none, always wins. Section 7's no-reviewer default
+applies to everything that runs no workflow.
+
+### Running
 
 1. Start with `bin/fm-workflow next <workflow> $FM_HOME/data/<task-id>/workflow.json --task <the captain's intent>`.
    The state file lives only in the task's data folder, never in a repository;
    it embeds the definition it started with, so editing `workflows/` never
-   changes a task in flight. `next` without a result flag only prints the current
-   step.
+   changes a task in flight. Beside it the engine appends `retro.jsonl` (see
+   Self-improvement). `next` without a result flag only prints the current
+   step. A state file from an older engine is refused with an instruction.
 2. Every `work` step is a fresh worker with its own task and worktree, even
    when a role repeats (the implementer's fix round): section 2's role-change
    rule, and each step's spec carries everything it needs, so no step relies on
    another worker's memory. Brief it with `next ... --spec` pasted into
    `## Firstmate spec` unchanged: it contains the step's instruction, its
    inputs, its output contract, and `bin/fm-role-handoff <role>` verbatim for
-   the role bound to the step's alias. Route the step by section 3 as any task:
-   the step's work picks the category (implementation steps IMPLEMENT or
-   IMPLEMENT-LARGE, qa and code-review steps REVIEW, plan by its semantics);
-   the role is the step's, never the category's. The change travels as a
-   commit range on the task branch, the plan as a file in the task's data
-   folder; record them with `--change` and `--report`.
-3. Record each result. Report step: `--outcome done|blocked`, with `--report`
-   and `--change` when the worker produced them. Verdict step (qa,
-   code-review): `--report <the worker's final report file>`; the outcome is
-   parsed from the verdict block by the engine, never read, inferred or
-   overridden by the Captain, and a missing or malformed verdict is a FAIL.
-   Decision step: `--decide <choice> --reason <why>`, by the criteria the step
-   prints; no worker is launched and the reason is kept in the state.
-   Delivery step: Firstmate delivers through the task's own delivery mode (for
-   direct-PR the worker that owns the branch pushes it and opens the PR ready
-   for review); it never merges, and `--outcome done` records it.
+   the role bound to the step's alias. The change travels as a commit range on
+   the task branch (the engine carries `base..commit`), a plan, diagnosis or
+   report as a file named in the step's inputs; each step's worktree starts from
+   that branch (section 2's carry-source route). Route the step by section 3 as
+   any task: implementation steps IMPLEMENT or IMPLEMENT-LARGE; classify, qa,
+   ui-verify, review, verify-*, security and ship steps REVIEW; the `challenge`
+   step (`research-decide`, the one workflow that runs `tenth-man` as a
+   standing step) TENTH-MAN; the `options` step ARCHITECTURE; plan, diagnose and
+   research steps by their semantics. The role is the step's, never the
+   category's.
+3. Record each result. A `result`, `verdict` or `risk` step: `--report <the
+   worker's final report file>`; the outcome is parsed from its final fenced
+   block by the engine, never read, inferred or overridden by the Captain. A
+   malformed review or QA verdict is a FAIL; a malformed verify-step verdict,
+   result or risk block is sent back twice, then blocked (a verifier's report
+   never silently loses the findings it was handed). A `report` step (plan,
+   diagnose, research, options):
+   `--outcome done|blocked|change-direction` with `--report`, the status being
+   the first line of the worker's report. Decision step:
+   `--decide <choice> --reason <why>`, by the criteria the step prints; no
+   worker is launched and the reason is kept in the state. Delivery step:
+   Firstmate delivers through the task's own delivery mode (for direct-PR the
+   worker that owns the branch pushes it and opens the PR ready for review,
+   with the ship step's package as the body); it never merges, and
+   `--outcome done` records it. The engine tracks the change itself, from the
+   `base` and `commit` of the result blocks.
 4. Feedback travels verbatim. The next step's spec carries the feedback list
    exactly as the verdict recorded it: pasted unchanged, never summarised,
-   merged, reordered, softened, or added to by the Captain. The implementer
-   addresses every item by id; QA re-evaluates against the same items; the
-   re-review is handed its own previous findings with the corrected delta.
-5. Each loop has `maxIterations` (5 in both workflows) and `onExhausted:
-   escalate`. A blocked step or an exhausted loop ends the state `escalated`,
-   and its spec lists every accumulated feedback entry verbatim. Report that
-   to the captain with the feedback; an escalated state is terminal, and
-   continuing is the captain's decision, never an edit of the state file.
-6. In the Captain chat, each block of section 0 for a worker of a workflow
-   also carries the derived `Workflow:` line.
+   merged, reordered, softened, or added to by the Captain. Only verified
+   findings go back to the implementer: a review or security FAIL goes first to
+   a fresh verify worker that tries to disprove each finding, and the
+   implementer receives only the findings it confirmed; style-only findings are
+   dropped; OPTIONAL (nit) and PRE-EXISTING items never go back, they are kept
+   as notes for the delivery. The implementer answers every handed id (fixed
+   with evidence, or rejected with a reason); QA and the re-review get the same
+   ids, the re-review only the delta and the findings already posted.
+5. Every fix is a new commit, so classify, QA and review run again on it; a
+   pass is valid only for the commit it ran on (a verdict names its commit; the
+   verification stamp marks a stale one).
+6. In the Captain chat, each block of section 0 for a worker of a workflow also
+   carries the derived `Workflow:` line.
+
+### Convergence, risk and direction
+
+- Round cap. The QA loop and the review loop allow 3 rounds. When a loop is
+  exhausted the author does not take a fourth: a `step-back` worker reconsiders
+  the approach from every accumulated finding and ends with change-direction or
+  with an escalation to the captain, with the feedback attached. An escalated
+  or closed state is terminal; continuing is the captain's decision, never an
+  edit of the state file.
+- Risk tiers are set by the change, not the author. `classify` sets low,
+  medium or high, whether a security review is required (a sensitive surface or
+  a high tier requires it) and the matched diff-triggered checklist items. A
+  required security review blocks like any gate. The human approvals required
+  follow the tier (0, 1, 2) and are printed by the delivery step as the
+  captain's to give: official merge authority (the captain's approval, or
+  `yolo` for green in-scope work) still governs the merge, and a high tier is a
+  security-sensitive merge that escalates to the captain even under `yolo`. An
+  agent's verdict - QA, review, security, release or the Captain's own - never
+  replaces a human's required approval, and the workflow never merges.
+- Change of direction. A worker, reviewer or plan that finds the approach
+  wrong ends with change-direction as soon as it is established, never as a
+  blocking comment on finished work. The `redirect` decision then reshapes (a
+  re-plan, at most twice), closes the task, or escalates to the captain. Raised
+  early, a wrong approach costs a closed task.
+- Verification stamp. The delivery step derives, from the recorded results,
+  which gates ran on which commit (or none): it goes into the delivery.
+
+### Gates: observe before enforce
+
+The engine's gates over the structured blocks - `evidence` (a done result shows
+commands with observed output), `answers` (every handed id answered), `commit`
+(a verdict names the head commit it judged), `coverage` (a verifier accounts
+for every finding) - start in observe mode: a would-block is recorded in the
+retro log and shown to the next worker, nothing is blocked. A definition flips
+a gate to enforce, by a normal PR, after the log shows its would-blocks were
+true positives; an enforced gate sends the step back with the problems, and
+the third attempt is let through (recorded escaped), so no gate wedges a run.
+
+### Self-improvement
+
+`bin/fm-retro` is the loop's whole machinery (bash and jq; no service, no
+network). The engine appends a record for every finding, confirmation, dropped
+finding, answer, gate result, round cap, escalation, change of direction and
+completion to `retro.jsonl` in the task's data folder, outside every
+repository; `bin/fm-retro record` adds what it cannot see (a reverted PR). `bin/fm-retro report` aggregates
+recurring finding classes per role, rounds-to-pass, the escalation rate and the
+noise rate (findings the verifier dropped or the implementer showed wrong);
+`bin/fm-retro propose` prints PROPOSALS only, for a class seen in two or more
+tasks. The `improver` role turns proposals into a change; it is applied only
+through a normal PR by a worker, approved by a human, never auto-applied and
+never by editing a role from inside a running task. `tests/evals.sh` scores each
+role or workflow change against fixtures of past failure patterns.
 
 Adding or changing a workflow is a JSON file under `workflows/` plus
-`bin/fm-workflow validate`, never an engine change; swapping the agent for a
-kind of work is one edit of the definition's `roles` map. Bump `version` on a
-behavior change. The engine proves sequence, handoff and loop mechanics; it
-cannot prove that the Captain chose the right workflow or that a worker read
-and applied its role.
+`bin/fm-workflow validate` and `check`, never an engine change. Swapping the
+agent for every task of a kind of work is one edit of the definition's `roles`
+map (a PR); for one task, `next ... --role <alias>=<role>` at the start (for
+example `implementer=lead` for one large, already-scoped step) swaps it in that
+task's embedded definition, validated like any definition. Bump
+`version` on a behavior change. The engine proves sequence, handoff, loop and
+routing mechanics; it cannot prove that the Captain chose the right workflow or
+that a worker read and applied its role.

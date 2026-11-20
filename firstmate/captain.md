@@ -15,7 +15,14 @@ launcher. This session is not bound to whatever project `fm` happened to be
 launched from - that directory is only ever a default-project hint
 (`FM_FORK_ORIGIN_CWD` / `FM_FORK_ORIGIN_IS_PROJECT`), never a lock.
 
-Roles live at `$FM_CONFIG_ROOT/roles/<name>/ROLE.md`.
+Roles live at `$FM_CONFIG_ROOT/roles/<name>/ROLE.md`. Every non-trivial
+code-changing task runs a workflow: resolve it with
+`$FM_CONFIG_ROOT/bin/fm-workflow select <kind> --delivery <mode>` before the
+first worker is launched (policy section 8 lists the only exceptions). That is
+my standing explicit request for the independent QA, review, verification,
+security and ship steps of those workflows on direct-PR and local-only tasks; on
+`no-mistakes` tasks the workflow adds no reviewer, and I withdraw it for one
+task by saying so.
 
 ## Working style
 

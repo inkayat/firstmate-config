@@ -68,7 +68,7 @@ lint_roles() {
 # --- 1. the real repository passes the lint --------------------------------------
 real=$(lint_roles "$FIX_SRC" "$POLICY")
 check 'role lint: every role and skill reference in this repository is clean' "$real" ''
-check 'role frontmatter: all roles found' "$(role_names | wc -l | tr -d ' ')" "$(ls "$FIX_SRC/roles" | wc -l | tr -d ' ')"
+check 'role frontmatter: all roles found' "$(role_names | wc -l | tr -d ' ')" "$(ls -d "$FIX_SRC"/roles/*/ | wc -l | tr -d ' ')"
 
 # --- 2. the lint fails on each defect ---------------------------------------------
 LINT_FIX="$T/lint-fixture"
@@ -131,23 +131,38 @@ Requirement:
     lacks "handoff $role: a skill-less role hands over no SKILL.md" "$out" 'SKILL.md'
   fi
 done
-check 'skill-less roles are exactly scout, chore and tenth-man' "$(printf '%s' "$SKILL_LESS" | tr ' ' '\n' | grep . | sort | tr '\n' ' ')" 'chore scout tenth-man '
+check 'skill-less roles are exactly scout, chore, tenth-man and risk-classifier' "$(printf '%s' "$SKILL_LESS" | tr ' ' '\n' | grep . | sort | tr '\n' ' ')" 'chore risk-classifier scout tenth-man '
 check 'chore, the neutral role, expands to no skill' "$("$HANDOFF" --skills chore)" ''
 out=$("$HANDOFF" no-such-role 2>&1); rc=$?
 check 'handoff for an unknown role fails' "$rc" 1
 has 'handoff for an unknown role says so' "$out" 'no such role'
 out=$("$HANDOFF" 'Bad Role' 2>&1); rc=$?
 check 'handoff rejects a malformed role name' "$rc" 1
-check 'handoff --roles lists every role' "$("$HANDOFF" --roles | sort | tr '\n' ' ')" "$(ls "$FIX_SRC/roles" | sort | tr '\n' ' ')"
-for sel in senior-fullstack code-reviewer refactorist architecture planner; do
-  case $sel in
-    senior-fullstack) w='test-driven-development ponytail verification-before-completion' ;;
-    code-reviewer) w='code-review-and-quality ponytail-review karpathy-guidelines' ;;
-    refactorist) w='code-simplification verification-before-completion karpathy-guidelines' ;;
-    architecture) w='api-and-interface-design' ;;
-    planner) w='spec-driven-development planning-and-task-breakdown' ;;
+check 'handoff --roles lists every role' "$("$HANDOFF" --roles | sort | tr '\n' ' ')" "$(ls -d "$FIX_SRC"/roles/*/ | xargs -n1 basename | sort | tr '\n' ' ')"
+# the inventory: the skills each role carries (README.md "Context and skills" records why; section 6 checks it)
+inventory() { # <role> -> its autoloadSkills, space separated
+  case $1 in
+    senior-fullstack) echo 'test-driven-development ponytail verification-before-completion' ;;
+    test-engineer) echo 'test-driven-development principle-test-behavior-not-implementation' ;;
+    refactorist) echo 'code-simplification verification-before-completion karpathy-guidelines' ;;
+    perf-engineer) echo 'performance-optimization benchmark-checklist' ;;
+    technical-writer) echo 'documentation-and-adrs' ;;
+    lead) echo 'planning-and-task-breakdown verification-before-completion' ;;
+    planner) echo 'spec-driven-development planning-and-task-breakdown be-ambitious' ;;
+    architecture) echo 'api-and-interface-design codebase-design be-ambitious' ;;
+    researcher) echo 'source-driven-development be-ambitious' ;;
+    debugger) echo 'systematic-debugging' ;;
+    qa|ui-qa|release-engineer|finding-verifier) echo 'verification-before-completion' ;;
+    code-reviewer) echo 'code-review-and-quality ponytail-review karpathy-guidelines' ;;
+    security-engineer) echo 'security-and-hardening verification-before-completion' ;;
+    improver) echo 'retro' ;;
+    scout|chore|tenth-man|risk-classifier) echo '' ;;
+    *) echo 'UNLISTED' ;;
   esac
-  check "role $sel carries the skills the inventory assigned it" "$("$HANDOFF" --skills "$sel" | tr '\n' ' ')" "$w "
+}
+for sel in $(role_names); do
+  w=$(inventory "$sel")
+  check "role $sel carries the skills the inventory assigned it" "$("$HANDOFF" --skills "$sel" | tr '\n' ' ' | sed 's/ $//')" "$w"
 done
 # karpathy-guidelines is for the refactoring and reviewing roles; senior-fullstack keeps ponytail.
 karpathy_roles=
@@ -191,5 +206,34 @@ drift=$("$FMC/install.sh" --verify 2>&1)
 has 'verify reports the unlinked planner role as drift' "$drift" 'fm-planner.md'
 has 'verify reports the unlinked chore role as drift' "$drift" 'fm-chore.md'
 check 'verify counts exactly the two missing role links' "$(printf '%s\n' "$drift" | tail -1)" 'verify: 2 drift item(s), 0 failure(s)'
+
+# --- 6. every role has the contract structure; its sub-agent section matches the manifest; the README table matches the frontmatter
+HEADS='Working shape|Definition of done|Evidence|What to refuse|If you cannot finish|Sub-agents|Final report'
+README_TEXT=$(cat "$FIX_SRC/README.md")
+for role in $(role_names); do
+  got=$(grep '^## ' "$ROLES_ROOT/$role/ROLE.md" | sed 's/^## //' | tr '\n' '|' | sed 's/|$//')
+  check "role $role: the contract headings, in order" "$got" "$HEADS"
+  want=$(jq -r --arg r "$role" '.roles[$r].spawns | map("fm-" + .) | sort | join(" ")' "$FIX_SRC/roles/manifest.json")
+  sect=$(awk '/^## Sub-agents$/ {p = 1; next} /^## / && p {exit} p {print}' "$ROLES_ROOT/$role/ROLE.md")
+  have=''
+  for tok in $(printf '%s\n' "$sect" | grep -o 'fm-[a-z-]*' | sort -u); do
+    role_file "${tok#fm-}" >/dev/null 2>&1 && have="$have $tok"
+  done
+  check "role $role: its Sub-agents section names exactly the roles the manifest lets it call" "$(printf '%s' "$have" | sed 's/^ //')" "$want"
+  if [ -n "$want" ]; then
+    has "role $role: a spawning role says helpers cannot start helpers" "$sect" 'cannot start helpers'
+    has "role $role: ... and that a helper never publishes or merges" "$sect" 'never publishes'
+  fi
+  row=$(printf '%s\n' "$README_TEXT" | grep -m1 "^| \`$role\` |" || true)
+  readme_skills=$(printf '%s\n' "$row" | awk -F'|' '{print $3}' | tr -d '`' | sed 's/^ *//; s/ *$//; s/, */ /g; s/^none$//')
+  check "README role -> skills table row for $role equals its frontmatter autoloadSkills" "$readme_skills" "$("$HANDOFF" --skills "$role" | tr '\n' ' ' | sed 's/ $//')"
+  [ -n "$row" ] && ok "README table has a row for $role" || bad "README table has no row for $role"
+done
+# the adopted external pins: each new pin is a managed skill with a real commit, never a branch
+for pin in addy:performance addy:source-driven pstack:benchmark pstack:test-behavior pocock:retro pocock:codebase-design ambition:be-ambitious; do
+  line=$(grep -m1 "^$pin	" "$FIX_SRC/skills/external.lock" || true)
+  check "external.lock pins $pin by a full commit sha" "$(printf '%s' "$line" | awk -F'\t' '{print $3}' | grep -cE '^[0-9a-f]{40}$')" 1
+done
+check 'external.lock tracks no branch: every commit field is a 40-hex sha' "$(awk -F'\t' '/^[^#]/ && NF >= 5 {print $3}' "$FIX_SRC/skills/external.lock" | grep -cvE '^[0-9a-f]{40}$')" 0
 
 finish
