@@ -600,6 +600,36 @@ import re, sys
 exp = sys.argv[1]; l = sys.stdin.read().splitlines()
 sys.exit(0 if [re.search(exp, x) is not None for x in l] == [True, True, False, False] else 1)' "$rl_path" \
     && pass 'selftest review-loop: the loop-shape regex accepts one or two review-fix loops and rejects a missed seeded defect and a third loop' || fail 'selftest review-loop: the loop-shape regex is off'
+  # QA-fix rounds inside a review-fix loop (A:review-loop run a3: QA rightly failed the review fix once): accepted up to the qa-fix budget of 3 in total;
+  # the seeded defect must still be caught by the first review, and the path must still end review:pass ... ship:pass deliver:done
+  local rl_a3 rl_qa3 rl_qa4 rl_late rl_nofin rl_p1 rl_p2
+  rl_p1='implement:done classify:low qa:pass review:fail verify-review:fail implement:done classify:medium'
+  rl_p2='review:pass security:pass ship:pass deliver:done'
+  rl_a3="$rl_p1 qa:fail implement:done classify:medium qa:pass $rl_p2"
+  rl_qa3="$rl_p1 qa:fail implement:done classify:medium qa:fail implement:done classify:medium qa:fail implement:done classify:medium qa:pass $rl_p2"
+  rl_qa4="$rl_p1 qa:fail implement:done classify:medium qa:fail implement:done classify:medium qa:fail implement:done classify:medium qa:fail implement:done classify:medium qa:pass $rl_p2"
+  rl_late='implement:done classify:low qa:pass review:pass verify-review:pass implement:done classify:low qa:pass review:fail verify-review:fail implement:done classify:low qa:pass review:pass ship:pass deliver:done'
+  rl_nofin="$rl_p1 qa:fail implement:done classify:medium qa:pass review:pass security:pass ship:fail"
+  printf '%s\n%s\n%s\n%s\n%s\n' "$rl_a3" "$rl_qa3" "$rl_qa4" "$rl_late" "$rl_nofin" | python3 -c '
+import re, sys
+exp = sys.argv[1]; l = sys.stdin.read().splitlines()
+sys.exit(0 if [re.search(exp, x) is not None for x in l] == [True, True, False, False, False] else 1)' "$rl_path" \
+    && pass 'selftest review-loop: a QA-fix round after the review fix is accepted (up to the budget of 3); a fourth QA failure, a defect caught only after a passed first review, and a path that does not end ship:pass deliver:done are rejected' || fail 'selftest review-loop: the QA-fix loop-shape is off'
+  # QA-fix rounds in BOTH review-fix loops share the one budget of 3
+  rl_qa4="${rl_qa3/ review:pass/ review:fail verify-review:fail implement:done classify:low qa:fail implement:done classify:low qa:pass review:pass}"
+  printf '%s\n' "$rl_qa4" | python3 -c '
+import re, sys
+sys.exit(1 if re.search(sys.argv[1], sys.stdin.read().strip()) else 0)' "$rl_path" \
+    && pass 'selftest review-loop: QA failures across two review-fix loops beyond the qa-fix budget are rejected' || fail 'selftest review-loop: the total qa-fix budget is not enforced'
+  # the hidden acceptance check: a final repository without the audit entry (the seeded defect left in) fails it; the fixed one passes
+  local hr="$t/hid-repo" hk="$t/hid-kit" hrun="$t/hid-run" hc1 hc2
+  mkdir -p "$hr/tests" "$hk" "$hrun"
+  ( . "$CASES_DIR/review-loop.sh"; cd "$hr" && case_setup && printf '\n\ndef rename_user(user_id, new_name):\n    USERS[user_id]["name"] = new_name\n    return get_user(user_id)\n' >> store.py )
+  ( REPO=$hr; KIT=$hk; RUN=$hrun; . "$CASES_DIR/review-loop.sh"; hidden_check "$hr" "$hk" ) >/dev/null 2>&1; hc1=$?; grep -q AUDIT "$hrun/hidden.last" 2>/dev/null || hc1=9
+  ( . "$CASES_DIR/review-loop.sh"; cd "$hr" && { printf 'import trail\n'; cat store.py; } > s.new && mv s.new store.py && sed -i.bak 's/    return get_user(user_id)$/    trail.append("rename_user", user_id)\n    return get_user(user_id)/' store.py && rm -f store.py.bak )
+  ( REPO=$hr; KIT=$hk; RUN=$hrun; . "$CASES_DIR/review-loop.sh"; hidden_check "$hr" "$hk" ) >/dev/null 2>&1; hc2=$?
+  [ "$hc1" -ne 0 ] && [ "$hc1" -ne 9 ]; hc1=$?
+  [ "$hc1" -eq 0 ] && [ "$hc2" -eq 0 ] && pass 'selftest review-loop: the hidden acceptance check fails a final repository without the audit entry and passes one with it' || fail "selftest review-loop: the hidden check is off (hc1 $hc1, hc2 $hc2)"
   rl_st="$t/rl-state"; mkdir -p "$rl_st/data"
   jq -n '{history: [{step:"review",outcome:"fail",feedback:[{what:"style nit",where:"store.py"}]},{step:"verify-review",outcome:"fail",feedback:[{what:"style nit",where:"store.py"}]},{step:"implement",outcome:"done",answers:[1]},{step:"review",outcome:"fail",feedback:[{what:"R2 trail missing",where:"store.py"}]}]}' > "$rl_st/data/workflow.json"
   [ -n "$( . "$CASES_DIR/review-loop.sh"; case_assert "$rl_st" "$rl_st" 2>&1 )" ] \

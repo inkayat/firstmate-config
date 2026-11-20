@@ -13,7 +13,9 @@ CASE_WORKFLOW=build-test-review
 CASE_TASK='Add rename_user(user_id, new_name) to store.py: it changes the user'"'"'s name and returns the updated user dict; an unknown user_id raises KeyError. Keep the change small and add tests under tests/.'
 CASE_CATCH_STEP=review
 # one OR TWO review-fix loops: a cross-family reviewer may legitimately catch a second, unseeded defect in the fix (extra rounds are recorded in the grade output)
-CASE_EXPECT_PATH='^implement:done classify:(low|medium|high) qa:pass (review:fail verify-review:fail implement:done classify:(low|medium|high) qa:pass ){1,2}review:pass( security:pass)? ship:pass deliver:done$'
+# after each implement:done, QA may FAIL the fix and send it back (qa:fail implement:done classify:*) before it passes; the engine's qa-fix budget is 3 rounds in
+# total, which the lookahead enforces across the whole path. The seeded defect must still be caught by the FIRST review (review:fail verify-review:fail).
+CASE_EXPECT_PATH='^(?!(?:.*qa:fail){4})implement:done classify:(low|medium|high) qa:pass (review:fail verify-review:fail implement:done classify:(low|medium|high) (qa:fail implement:done classify:(low|medium|high) ){0,3}qa:pass ){1,2}review:pass( security:pass)? ship:pass deliver:done$'
 CASE_FORCE_AFTER=implement:1  # the QA kit passes but the hidden audit check must FAIL after the first implementation
 CASE_FORCE_KIT_PASS=1         # ... and the QA kit alone passes at that point (QA must not be the one to catch it)
 
