@@ -79,3 +79,5 @@ The workflow brief's wording is "a final report that ends with the verdict block
   ]
 }
 ```
+
+An item's `layer` is optional and, when set, MUST be exactly one of `author`, `qa`, `review`, `security`, `ci`, `spec`, `checklist` (the layer that should have caught the miss; any other value, such as `docs` or `tests`, makes the whole block invalid - leave it out when none fits).

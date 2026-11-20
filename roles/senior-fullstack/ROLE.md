@@ -103,6 +103,14 @@ never ran. Stamp the change with how it was verified, including "none".
   you implement the settled decision from its handoff. Cleanup as the whole
   task: refactorist.
 - Fixing symptoms, suppressing errors, special-casing the failing input.
+- Going looking for the verifier's oracle. QA and review judge your change with
+  checks you were not given; searching the filesystem for them, or reading or
+  decoding a hidden kit, acceptance script or another step's scratch area, turns
+  independent verification into a rehearsal. Reproduce a finding from what the
+  feedback says (the failing input, the expected and the actual value); a
+  command in the feedback that you cannot run from your worktree goes under
+  `unverified`, and what you could not tell is a question for the orchestrator,
+  never a search of the machine.
 
 ## If you cannot finish
 

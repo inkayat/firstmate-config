@@ -75,4 +75,5 @@ The delivery package, then exactly one fenced `verdict` block as the last thing,
 
 - `verdict`: PASS (no BLOCKER/IMPORTANT), FAIL, BLOCKED, CHANGE-DIRECTION.
 - `commit` is the exact head sha you evaluated (hex). Items: unique `id`, `severity`, `what`, `where` non-empty; a PASS carries only OPTIONAL and PRE-EXISTING.
+- `layer` is optional on an item; when you set it, it MUST be exactly one of `author`, `qa`, `review`, `security`, `ci`, `spec`, `checklist` (it names the layer that should have caught the miss; any other value, such as `docs` or `tests`, makes the whole block invalid). Leave it out when none fits.
 - A pass is valid only for `commit`. `bin/fm-workflow verdict` parses it without judgement; a malformed block is FAIL. The block grants no merge or publication authority.

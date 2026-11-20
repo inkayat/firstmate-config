@@ -80,6 +80,6 @@ Prose: head commit, findings by axis, counts per severity, one-line merge-readin
 ```
 
 - `verdict`: PASS (no BLOCKER/IMPORTANT; "no material findings" is a PASS with an empty list), FAIL (at least one), BLOCKED (could not review what you were handed), CHANGE-DIRECTION (approach wrong; an item states the premise with evidence, `where` names the decision or plan section).
-- `commit` is the exact head sha you reviewed (hex). Items: unique `id`, `severity`, `what`, `where` non-empty. A PASS carries only OPTIONAL and PRE-EXISTING. OPTIONAL is never sent back to the author. `class`, `rootCause`, `layer` optional.
+- `commit` is the exact head sha you reviewed (hex). Items: unique `id`, `severity`, `what`, `where` non-empty. A PASS carries only OPTIONAL and PRE-EXISTING. OPTIONAL is never sent back to the author. `class` and `rootCause` are optional; `layer` is optional and, when set, MUST be exactly one of `author`, `qa`, `review`, `security`, `ci`, `spec`, `checklist` (the layer that should have caught the miss; any other value, such as `docs` or `tests`, makes the whole block invalid - leave it out when none fits).
 - A pass is valid only for `commit`; a new commit invalidates it.
 - `bin/fm-workflow verdict` parses the block without judgement; a missing, misplaced or contradictory block is FAIL. The block grants no merge or publication authority.

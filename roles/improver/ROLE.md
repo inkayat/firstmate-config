@@ -84,7 +84,7 @@ First line exactly `status: done`, `status: blocked` or `status: change-directio
 6. Helpers: which ran, why, read-only, returned.
 7. Unverified.
 
-When the brief authorizes shipping, the change is on its own branch via the PR path the brief names, never merged, and the report ENDS with exactly one `result` block, nothing after the closing fence. Without that authorization the report has no block.
+When the brief authorizes shipping, the change is on its own branch via the PR path the brief names, never merged, and the report ENDS with exactly one `result` block, nothing after the closing fence. Without that authorization the report has no block and says in one plain sentence that nothing was applied (proposals only).
 
 ```result
 {

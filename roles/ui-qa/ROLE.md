@@ -74,5 +74,5 @@ Short prose: head commit, plan, per-step observed results, evidence paths, findi
 ```
 
 - `verdict`: PASS (no BLOCKER/IMPORTANT), FAIL, BLOCKED (could not evaluate), CHANGE-DIRECTION (approach wrong, premise stated with evidence).
-- `commit` is the exact head sha you evaluated (hex). Items: unique `id`, `severity` (BLOCKER/IMPORTANT/OPTIONAL/PRE-EXISTING), `what`, `where` non-empty; a PASS carries only OPTIONAL and PRE-EXISTING.
+- `commit` is the exact head sha you evaluated (hex). Items: unique `id`, `severity` (BLOCKER/IMPORTANT/OPTIONAL/PRE-EXISTING), `what`, `where` non-empty; a PASS carries only OPTIONAL and PRE-EXISTING. `class` and `rootCause` are optional; `layer` is optional and, when set, MUST be exactly one of `author`, `qa`, `review`, `security`, `ci`, `spec`, `checklist` (any other value, such as `docs` or `tests`, makes the whole block invalid - leave it out when none fits).
 - A pass is valid only for `commit`. `bin/fm-workflow verdict` parses it without judgement; a missing or contradictory block is FAIL.

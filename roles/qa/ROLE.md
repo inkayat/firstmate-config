@@ -77,6 +77,6 @@ Short prose: head commit, acceptance, the commands and their results, findings. 
 ```
 
 - `verdict`: PASS (no BLOCKER/IMPORTANT), FAIL (at least one), BLOCKED (could not evaluate; an item says what is missing), CHANGE-DIRECTION (the approach is wrong; an item states the premise with evidence).
-- `commit` is the exact head sha you evaluated (hex). `feedback` is an array, empty when nothing to report. Each item has a unique `id`, `severity`, `what`, `where`, all non-empty. A PASS carries only OPTIONAL and PRE-EXISTING. `class`, `rootCause`, `layer` are optional.
+- `commit` is the exact head sha you evaluated (hex). `feedback` is an array, empty when nothing to report. Each item has a unique `id`, `severity`, `what`, `where`, all non-empty. A PASS carries only OPTIONAL and PRE-EXISTING. `class` and `rootCause` are optional; `layer` is optional and, when set, MUST be exactly one of `author`, `qa`, `review`, `security`, `ci`, `spec`, `checklist` (the layer that should have caught the miss; any other value, such as `docs` or `tests`, makes the whole block invalid - leave it out when none fits).
 - A pass is valid only for `commit`; a new commit invalidates it.
 - `bin/fm-workflow verdict` parses the block without judgement; a missing, misplaced or contradictory block is FAIL.
