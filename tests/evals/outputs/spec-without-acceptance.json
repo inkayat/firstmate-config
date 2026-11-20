@@ -1,0 +1,20 @@
+{
+  "raw": [
+    {
+      "what": "The Firstmate spec is missing acceptance criteria; QA cannot verify the change",
+      "where": "firstmate/primary-policy.md section 2"
+    }
+  ],
+  "verified": [
+    {
+      "what": "The Firstmate spec is missing acceptance criteria; QA cannot verify the change",
+      "where": "firstmate/primary-policy.md section 2"
+    }
+  ],
+  "final": [
+    {
+      "what": "Missing acceptance criteria in the spec block; require them before launch",
+      "where": "firstmate/primary-policy.md section 2"
+    }
+  ]
+}

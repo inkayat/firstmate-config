@@ -1,0 +1,10 @@
+{
+  "id": "verdict-no-commit-binding",
+  "set": "tuning",
+  "key": "A verdict was accepted without recording which commit it judged, so it could be replayed on a different change.",
+  "keywords": [
+    "verdict",
+    "commit",
+    "binding"
+  ]
+}

@@ -1,0 +1,484 @@
+#!/usr/bin/env bash
+# fm-retro - the self-improvement log and its readers. Improvements are PROPOSALS
+# only: nothing here ever edits a role, a workflow, a policy or a file of any
+# repository. The only file this command writes is the append-only task log.
+#
+# Usage:
+#   fm-retro record --event <e> [--task <id>] [--workflow W] [--version N] [--step S] [--run R]
+#                   [--role R] [--outcome O] [--severity S] [--class C] [--id I] [--what T]
+#                   [--where T] [--root-cause T] [--layer L] [--caught-by R] [--disposition D]
+#                   [--commit SHA] [--detail <json object>]
+#       Append one JSON line to $FM_HOME/data/<task>/retro.jsonl (--task absent or "-":
+#       $FM_HOME/data/retro/misc.jsonl). FM_HOME defaults to $HOME/.firstmate. Refused
+#       inside a git work tree unless the file is git-ignored.
+#   fm-retro report [--root <data dir>] [--workflow W] [--since <epoch>]
+#       Plain-text numbers over every <root>/*/retro.jsonl: rounds-to-pass, escalation,
+#       noise, gates, recurring finding classes, layers, severities.
+#   fm-retro propose [--root <data dir>] [--min-cases 2] [--workflow W]
+#       Proposals (prose) from the log. Writes nothing.
+#   fm-retro eval patterns [--file <patterns.json>] [--config-root <dir>]
+#       Check that the roles and workflows still carry the protection each recorded
+#       failure pattern needs. Exit 1 when any pattern fails.
+#   fm-retro eval replay <cases-dir> <outputs-dir> [--min-final-recall <0..1>] [--max-control-fp <n>]
+#       Score recorded finder outputs against known-incident cases (tuning and test
+#       sets apart) and clean controls. Exit 1 on a threshold miss or a broken fixture.
+#
+# Needs bash and jq (any jq 1.6+). No network, no telemetry.
+set -u
+
+self=${BASH_SOURCE[0]}
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case $target in /*) self=$target ;; *) self="$(cd "$(dirname "$self")" && pwd)/$target" ;; esac
+done
+SELF_ROOT="$(cd "$(dirname "$self")/.." && pwd -P)"
+CONFIG_ROOT="${FM_CONFIG_ROOT:-$SELF_ROOT}"
+FM_DATA="${FM_HOME:-$HOME/.firstmate}/data"
+
+die() { printf 'fm-retro: %s\n' "$*" >&2; exit 1; }
+usage() { sed -n '/^# Usage:/,/^# Needs bash/p' "$self" | sed 's/^# \{0,1\}//' | sed '$d' >&2; exit 2; }
+command -v jq >/dev/null 2>&1 || die 'jq is required'
+
+in_list() { # <value> <word>...
+  local v=$1 w
+  shift
+  for w in "$@"; do [ "$w" = "$v" ] && return 0; done
+  return 1
+}
+
+# ---------------------------------------------------------------- record
+cmd_record() {
+  local event='' task='' workflow='' version='' step='' run='' role='' outcome='' severity='' class=''
+  local id='' what='' where='' root_cause='' layer='' caught_by='' disposition='' commit='' detail=''
+  while [ "$#" -gt 0 ]; do
+    [ "$#" -ge 2 ] || die "$1 needs a value"
+    case $1 in
+      --event) event=$2 ;; --task) task=$2 ;; --workflow) workflow=$2 ;; --version) version=$2 ;;
+      --step) step=$2 ;; --run) run=$2 ;; --role) role=$2 ;; --outcome) outcome=$2 ;;
+      --severity) severity=$2 ;; --class) class=$2 ;; --id) id=$2 ;; --what) what=$2 ;;
+      --where) where=$2 ;; --root-cause) root_cause=$2 ;; --layer) layer=$2 ;;
+      --caught-by) caught_by=$2 ;; --disposition) disposition=$2 ;; --commit) commit=$2 ;;
+      --detail) detail=$2 ;;
+      *) die "unknown option for record: $1" ;;
+    esac
+    shift 2
+  done
+  [ -n "$event" ] || die '--event is required'
+  in_list "$event" finding confirmed dropped answer gate escalation change-direction closed complete revert manual round-cap \
+    || die "--event must be one of finding confirmed dropped answer gate escalation change-direction closed complete revert manual round-cap, not: $event"
+  [ -z "$severity" ] || in_list "$severity" BLOCKER IMPORTANT OPTIONAL PRE-EXISTING \
+    || die "--severity must be BLOCKER, IMPORTANT, OPTIONAL or PRE-EXISTING, not: $severity"
+  [ -z "$layer" ] || in_list "$layer" author qa review security ci spec checklist \
+    || die "--layer must be one of author qa review security ci spec checklist, not: $layer"
+  [ -z "$disposition" ] || in_list "$disposition" open fixed rejected dropped \
+    || die "--disposition must be one of open fixed rejected dropped, not: $disposition"
+  if [ -n "$detail" ]; then
+    printf '%s' "$detail" | jq -e 'type == "object"' >/dev/null 2>&1 || die '--detail must be a JSON object'
+  else
+    detail=null
+  fi
+  case $event in
+    finding|revert)
+      [ -n "$class" ] || die "--class is required for a $event record"
+      [ -n "$layer" ] || die "--layer is required for a $event record" ;;
+  esac
+
+  local file
+  if [ -z "$task" ] || [ "$task" = - ]; then
+    task=''
+    file="$FM_DATA/retro/misc.jsonl"
+  else
+    case $task in */*|.*) die "task id must not contain '/' or start with '.': $task" ;; esac
+    file="$FM_DATA/$task/retro.jsonl"
+  fi
+  local dir anc rest real
+  dir=$(dirname "$file")
+  # Never inside a git work tree that would track the log (same rule as fm-workflow); checked
+  # on the nearest existing ancestor so a refusal leaves no directory behind.
+  anc=$dir
+  while [ ! -d "$anc" ]; do anc=$(dirname "$anc"); done
+  rest=${dir#"$anc"}
+  real="$(cd "$anc" && pwd -P)$rest/$(basename "$file")"
+  if command -v git >/dev/null 2>&1 && git -C "$anc" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+     && ! git -C "$anc" check-ignore -q "$real" 2>/dev/null; then
+    die "the log must live outside a repository (or be git-ignored): $file"
+  fi
+  mkdir -p "$dir" || die "cannot create $dir"
+
+  local line
+  line=$(jq -nc --arg ts "$(date +%s)" --arg task "$task" --arg workflow "$workflow" --arg version "$version" \
+    --arg step "$step" --arg run "$run" --arg role "$role" --arg event "$event" --arg outcome "$outcome" \
+    --arg severity "$severity" --arg class "$class" --arg id "$id" --arg what "$what" --arg where "$where" \
+    --arg rootCause "$root_cause" --arg layer "$layer" --arg caughtBy "$caught_by" \
+    --arg disposition "$disposition" --arg commit "$commit" --argjson detail "$detail" '
+    def num: if . == "" then null else (tonumber? // .) end;
+    { ts: ($ts | tonumber), task: $task, workflow: $workflow, version: ($version | num), step: $step,
+      run: ($run | num), role: $role, event: $event, outcome: $outcome, severity: $severity,
+      class: $class, id: $id, what: $what, where: $where, rootCause: $rootCause, layer: $layer,
+      caughtBy: $caughtBy, disposition: $disposition, commit: $commit, detail: $detail }
+    | with_entries(select(.value != null and .value != ""))') || die 'could not build the record'
+  printf '%s\n' "$line" >> "$file" || die "cannot append to $file"
+  printf '%s\n' "$file"
+}
+
+# ---------------------------------------------------------------- report / propose
+# Shared jq library. The input is the array of all (filtered) records, each carrying
+# `task` (from its folder when the record has none) and `_i`, its position in the read order.
+JQ_LIB=$(cat <<'JQ'
+def pct($a; $b): if $b == 0 then "n/a" else "\(($a * 100 / $b) | round)%" end;
+def num1: (. * 10 | round) / 10;
+def hist(f): group_by(f) | map("\(.[0] | f | tostring)=\(length)") | join(", ");
+def wfmap: reduce .[] as $r ({}; if $r.workflow != null and (.[$r.task] | not) then .[$r.task] = $r.workflow else . end);
+def tasks: map(select(._misc | not)) | group_by(.task) | map({task: .[0].task, wf: ((map(.workflow // empty) | .[0]) // "unknown"), ev: (map(.event) | unique), recs: .});
+def dget($k): if (.detail | type) == "object" then .detail[$k] else null end;
+def rsum: if type == "number" then . elif type == "object" then ([.[] | numbers] | add // 0) else 0 end;
+def blocking: map(select(.event == "finding" and (.severity == "BLOCKER" or .severity == "IMPORTANT")));
+# a rejected answer counts as noise unless a LATER finding of the same task re-raises the same id (an id-less answer is never re-raised)
+def open_rejections: . as $all | [ .[] | select(.event == "answer" and .disposition == "rejected") | . as $a
+  | select($a.id == null or all($all[]; (.event == "finding" and .task == $a.task and .id == $a.id and ._i > $a._i) | not)) ];
+def is_noisy($all): . as $f | $f.id != null and any($all[]; .task == $f.task and .id == $f.id and ._i > $f._i
+  and (.event == "dropped" or (.event == "answer" and .disposition == "rejected" and (. as $a
+    | all($all[]; (.event == "finding" and .task == $a.task and .id == $a.id and ._i > $a._i) | not)))));
+def gates: map(select(.event == "gate" and dget("gate") != null)) | group_by(dget("gate"))
+  | map({gate: (.[0] | dget("gate")), wb: map(select(dget("status") == "would-block")), bl: map(select(dget("status") == "blocked")), es: map(select(dget("status") == "escaped"))});
+# real findings: BLOCKER or IMPORTANT, not later dropped by the verifier; a revert counts as an IMPORTANT case
+def real: . as $all | map(select(
+    (.event == "finding" and (.severity == "BLOCKER" or .severity == "IMPORTANT")
+      and (. as $f | $f.id == null or all($all[]; (.event == "dropped" and .task == $f.task and .id == $f.id and ._i > $f._i) | not)))
+    or .event == "revert"))
+  | map(if .event == "revert" then .severity = "IMPORTANT" else . end);
+def classed: real | map(select(.class != null));
+def case_key: if ._misc then "revert-" + (.commit // "rec\(._i)") else .task end;
+def by_of: .caughtBy // .role // "unknown";
+def layer_of: .layer // "unknown";
+def artifact: {
+  author: "roles/senior-fullstack/ROLE.md or the project test conventions",
+  qa: "roles/qa/ROLE.md",
+  review: "roles/code-reviewer/ROLE.md or a REVIEW.md rule",
+  security: "roles/security-engineer/ROLE.md or a REVIEW.md rule",
+  spec: "roles/planner/ROLE.md",
+  checklist: "a REVIEW.md diff-triggered item",
+  ci: "a lint/CI check" }[.] // "classify the layer first";
+JQ
+)
+
+JQ_REPORT=$(cat <<'JQ'
+. as $all
+| ($all | tasks) as $ts
+| ($all | blocking) as $blk
+| ([$all[] | select(.event == "dropped")] | length) as $dropped
+| ($all | open_rejections | length) as $openrej
+| ([$all[] | select(.event == "answer" and .disposition == "rejected")] | length) as $rej
+| ($dropped + $openrej) as $noise
+| ($blk | length) as $m
+| ([$ts[] | select(.ev | any(. == "complete" or . == "escalation" or . == "closed"))] | length) as $done
+| ([$ts[] | select(.ev | any(. == "escalation"))] | length) as $esc
+| ([$ts[] | select(.ev | any(. == "change-direction"))] | length) as $cd
+| ([$all[] | select(.event == "round-cap")] | length) as $caps
+| ([$all[] | select(.event == "confirmed")] | length) as $conf
+| (def na: if . == 0 then "n/a" else tostring end; "verification: \($conf | na) confirmed, \($dropped | na) dropped of \($m | na) raised (BLOCKER|IMPORTANT findings)") as $verif
+| ($all | map(select(.event == "finding"))) as $fnd
+| ([$all[] | select(.event == "revert")] | length) as $rev
+| ([$all[] | select(.event == "manual")] | length) as $man
+| ([$fnd[] | select(.class == null)] | length) as $nocls
+| ($all | classed | group_by([.class, by_of])
+    | map({class: .[0].class, by: (.[0] | by_of), tasks: (map(case_key) | unique | length), n: length, layers: (hist(layer_of))})) as $groups
+| [ "fm-retro report: \($ts | length) task(s), \($all | length) record(s), \($skipped) skipped line(s)" ]
+  + ( if ($all | length) == 0 then ["no records yet"] else
+    [ "workflows:" ]
+    + [ $ts | group_by(.wf)[] | . as $g
+        | ([$g[].recs[] | select(.event == "complete") | (dget("rounds") | rsum)]) as $r
+        | "  \($g[0].wf): tasks \($g | length), complete \([$g[] | select(.ev | any(. == "complete"))] | length), escalated \([$g[] | select(.ev | any(. == "escalation"))] | length), closed \([$g[] | select(.ev | any(. == "closed"))] | length), rounds-to-pass "
+          + (if ($r | length) == 0 then "n/a" else "mean \(($r | add / length) | num1) max \($r | max)" end) ]
+    + [ "escalation rate: \($esc)/\($done) (\(pct($esc; $done)))",
+        "round caps: \($caps)",
+        "reverts: \($rev)",
+        "manual records: \($man)",
+        "findings without class: \($nocls)",
+        "change-direction rate: \($cd)/\($done) (\(pct($cd; $done)))",
+        "noise: \($noise)/\($m) (\(pct($noise; $m)))",
+        $verif,
+        "disputed (rejected answers): \($rej)/\($m)",
+        "gates:" ]
+    + ( [ $all | gates[] | "  \(.gate): would-block \(.wb | length), blocked \(.bl | length), escaped \(.es | length)" ] | if length == 0 then ["  none observed"] else . end )
+    + [ "recurring classes (>= 2 distinct tasks):" ]
+    + ( [ $groups[] | select(.tasks >= 2) | "  \(.class) (\(.by)): \(.tasks) tasks, \(.n) findings, layers \(.layers)" ] | if length == 0 then ["  none"] else . end )
+    + [ "one-off classes: \([$groups[] | select(.tasks < 2)] | length)",
+        "layers (should have been caught by): " + (if ($all | real | length) == 0 then "none" else ($all | real | hist(layer_of)) end),
+        "findings by severity: " + ([ "BLOCKER", "IMPORTANT", "OPTIONAL", "PRE-EXISTING" ] | map(. as $s | "\($s)=\([$fnd[] | select(.severity == $s)] | length)") | join(", ")) ]
+  end )
+| .[]
+JQ
+)
+
+JQ_PROPOSE=$(cat <<'JQ'
+. as $all
+| ($all | classed | group_by(.class)
+    | map({class: .[0].class, tasks: (map(case_key) | unique), recs: .})
+    | map(select((.tasks | length) >= $min))) as $cls
+| [ "PROPOSALS ONLY - nothing here is applied; each needs a worker PR and a human approval" ]
+  + ( if ($cls | length) == 0 then ["no proposals: no class recurs in >= \($min) distinct tasks yet"] else
+      [ $cls | to_entries[] | .key as $n | .value as $c
+        | ([$c.recs[] | by_of] | unique) as $by
+        | ([$c.recs[] | layer_of] | unique) as $layers
+        | ("[PROP-\($n + 1)] class \($c.class)"),
+          "  evidence: \($c.tasks | length) tasks (\($c.tasks | join(", "))); findings: " + ([$c.recs[] | "\(case_key)/\(.id // "-") (\(.severity // "unspecified"))"] | join(", ")),
+          "  caught by: \($by | join(", "))",
+          "  layer that should have caught it: \($layers | join(", "))",
+          ( $layers[] | "  -> layer \(.): " + (. | artifact) ),
+          ( if ($layers | any(. == "review" or . == "checklist")) then "  kind of change: a REVIEW.md-style rule (the class must be identifiable from a diff)" else empty end ),
+          ( if ($layers | any(. == "author" or . == "qa" or . == "spec")) then "  kind of change: a role-body change" else empty end ),
+          ( if ($layers | any(. == "ci")) then "  kind of change: a lint/CI check" else empty end ),
+          ( if ($layers | any(. == "unknown")) then "  kind of change: classify the layer first" else empty end ),
+          "  trigger (diff-readable): <fill in>",
+          "  check: <fill in>",
+          "  ladder: architecture > types > lint/check naming the fix > test > docs last",
+          "  disprove: three independent fm-tenth-man helpers via the improver role; 2 of 3 refuting drops it",
+          "  rollout: observe mode first (log would-block), enforce after review; bounded \"blocked twice then allow\"",
+          "  scoring: must not lower recall on the fixed test set nor raise clean-control false positives (tests/evals)" ]
+      + ( [ $cls | map({by: (.recs | map(by_of) | unique), class}) | map(.by[] as $b | {by: $b, class}) | group_by(.by)[]
+            | select(length >= 2) | "skill-gap: classes \(map(.class) | join(", ")) all land under role \(.[0].by): candidate skill-gap, evaluate pins" ] )
+    end )
+  + ( [ $all | gates[] | select((.wb | length) >= 3 and (.bl | length) == 0 and (.es | length) == 0)
+        | "gate-promotion candidate: \(.gate) would-block \(.wb | length)x, never blocked or escaped; inspect samples \(.wb | map(.task) | unique | join(", ")); if all true positives, promote to enforce in a PR" ] )
+  + ( [ $all | map(select(.event == "finding")) as $f | $f | group_by(.role // .step // "unknown")[]
+        | select(length >= 5) | ([.[] | select(is_noisy($all))] | length) as $nz
+        | select($nz * 100 > length * 30)
+        | "noise candidate: \(.[0].role // .[0].step // "unknown") noise \($nz)/\(length) (\(pct($nz; length))); tighten the finding bar of that role or add a verifier rule" ] )
+  + ( [ $all | map(select(.event == "round-cap")) | group_by(dget("loop") // "unknown")[] | select((map(.task) | unique | length) >= 2)
+        | "round-cap candidate: round caps recur on loop \(.[0] | dget("loop") // "unknown") (tasks \(map(.task) | unique | join(", "))): look at the classes that kept returning (see recurring classes) and at whether the plan step is missing" ] )
+  + [ "prune: list rules with zero hits over the window in the PR description" ]
+| .[]
+JQ
+)
+
+# ingest <file> <task> <misc 0|1>: appends the valid JSON-object lines of one log to ALL and counts the rest in SKIPPED.
+ingest() {
+  local f=$1 task=$2 misc=$3 lines valid out
+  if [ ! -r "$f" ]; then printf 'fm-retro: skipping unreadable %s\n' "$f" >&2; return; fi
+  lines=$(grep -c '[^[:space:]]' "$f")
+  out=$(jq -R -c --arg t "$task" --argjson misc "$misc" 'fromjson? | select(type == "object") | .task = (.task // $t) | if $misc == 1 then .task = $t | ._misc = true else . end' "$f") \
+    || { printf 'fm-retro: skipping unreadable %s\n' "$f" >&2; return; }
+  valid=0
+  [ -z "$out" ] || valid=$(printf '%s\n' "$out" | grep -c .)
+  SKIPPED=$((SKIPPED + lines - valid))
+  [ -z "$out" ] || ALL="$ALL$out"$'\n'
+}
+
+# load_records <root> <workflow> <since>: sets RECORDS (a JSON array) and SKIPPED. The misc log
+# (<root>/retro/misc.jsonl) is read too; its records are marked _misc and never count as a task.
+load_records() {
+  local root=$1 wf=$2 since=$3 f
+  SKIPPED=0 ALL=''
+  for f in "$root"/*/retro.jsonl; do
+    [ -e "$f" ] || continue
+    ingest "$f" "$(basename "$(dirname "$f")")" 0
+  done
+  [ ! -e "$root/retro/misc.jsonl" ] || ingest "$root/retro/misc.jsonl" misc 1
+  RECORDS=$(printf '%s' "$ALL" | jq -s -c --arg wf "$wf" --argjson since "$since" "$JQ_LIB"'
+    wfmap as $wm
+    | map(select(($since == null or (.ts // 0) >= $since) and ($wf == "" or $wm[.task] == $wf)))
+    | to_entries | map(.value + {_i: .key})') || die 'could not read the logs'
+}
+
+read_view_args() { # sets ROOT WF SINCE MIN from the options in "$@"
+  ROOT=$FM_DATA WF='' SINCE=null MIN=2
+  while [ "$#" -gt 0 ]; do
+    [ "$#" -ge 2 ] || die "$1 needs a value"
+    case $1 in
+      --root) ROOT=$2 ;;
+      --workflow) WF=$2 ;;
+      --since) case $2 in ''|*[!0-9]*) die '--since must be an epoch in seconds' ;; esac; SINCE=$2 ;;
+      --min-cases) case $2 in ''|0|*[!0-9]*) die '--min-cases must be a positive integer' ;; esac; MIN=$2 ;;
+      *) die "unknown option: $1" ;;
+    esac
+    shift 2
+  done
+}
+
+cmd_report() {
+  read_view_args "$@"
+  load_records "$ROOT" "$WF" "$SINCE"
+  printf '%s' "$RECORDS" | jq -r --argjson skipped "$SKIPPED" "$JQ_LIB$JQ_REPORT"
+}
+
+cmd_propose() {
+  read_view_args "$@"
+  load_records "$ROOT" "$WF" "$SINCE"
+  printf '%s' "$RECORDS" | jq -r --argjson min "$MIN" "$JQ_LIB$JQ_PROPOSE"
+}
+
+# ---------------------------------------------------------------- eval patterns
+# frontmatter_json <ROLE.md>: {name, tools, skills, spawns} from the lines between the first two ---.
+frontmatter_json() {
+  awk '
+    NR == 1 { if ($0 != "---") exit 1; next }
+    $0 == "---" { exit }
+    function emit(k, v) { gsub(/^[ \t"\047]+|[ \t"\047]+$/, "", v); if (v != "") print k "\t" v }
+    /^[A-Za-z]+:/ {
+      key = $0; sub(/:.*/, "", key); val = $0; sub(/^[^:]*:[ \t]*/, "", val)
+      cur = (key == "autoloadSkills") ? "skills" : key
+      if (val ~ /^\[/) { gsub(/[\[\]]/, "", val); n = split(val, parts, ","); for (i = 1; i <= n; i++) emit(cur, parts[i]) }
+      else if (cur == "name") emit("name", val)
+      next
+    }
+    /^[ \t]+-[ \t]+/ { v = $0; sub(/^[ \t]+-[ \t]+/, "", v); emit(cur, v) }
+  ' "$1" | jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t"))
+    | reduce .[] as $p ({name: null, tools: [], skills: [], spawns: []}; if $p[0] == "name" then .name = $p[1] else .[$p[0]] += [$p[1]] end)'
+}
+
+role_body() { awk 'NR == 1 { next } fm { print; next } $0 == "---" { fm = 1 }' "$1"; }
+
+# run_check <check json>: prints nothing on success, the reason on failure.
+run_check() {
+  local c=$1 kind file out
+  kind=$(printf '%s' "$c" | jq -r '.kind // ""')
+  case $kind in
+    workflow)
+      local wf prog
+      wf=$(printf '%s' "$c" | jq -r '.workflow // ""'); prog=$(printf '%s' "$c" | jq -r '.jq // ""')
+      [ -n "$prog" ] || { printf 'empty check: workflow %s has no jq program' "$wf"; return; }
+      file="$CONFIG_ROOT/workflows/$wf.json"
+      [ -f "$file" ] || { printf 'workflow %s: no such definition (%s)' "$wf" "$file"; return; }
+      out=$(jq -e "($prog) == true" "$file" 2>&1) || printf 'workflow %s: jq did not output true: %s' "$wf" "$prog" ;;
+    role)
+      local role re
+      role=$(printf '%s' "$c" | jq -r '.role // ""'); re=$(printf '%s' "$c" | jq -r '.regex // ""')
+      [ -n "$re" ] || { printf 'empty check: role %s has no regex' "$role"; return; }
+      file="$CONFIG_ROOT/roles/$role/ROLE.md"
+      [ -f "$file" ] || { printf 'role %s: no ROLE.md (%s)' "$role" "$file"; return; }
+      role_body "$file" | grep -Eq -- "$re" || printf 'role %s: body does not match /%s/' "$role" "$re" ;;
+    role-frontmatter)
+      local role prog fm
+      role=$(printf '%s' "$c" | jq -r '.role // ""'); prog=$(printf '%s' "$c" | jq -r '.jq // ""')
+      [ -n "$prog" ] || { printf 'empty check: role %s frontmatter has no jq program' "$role"; return; }
+      file="$CONFIG_ROOT/roles/$role/ROLE.md"
+      [ -f "$file" ] || { printf 'role %s: no ROLE.md (%s)' "$role" "$file"; return; }
+      fm=$(frontmatter_json "$file") || { printf 'role %s: frontmatter missing' "$role"; return; }
+      out=$(printf '%s' "$fm" | jq -e "($prog) == true" 2>&1) || printf 'role %s frontmatter: jq did not output true: %s' "$role" "$prog" ;;
+    *) printf 'unknown check kind: %s' "$kind" ;;
+  esac
+}
+
+cmd_eval_patterns() {
+  local file='' root=$CONFIG_ROOT
+  while [ "$#" -gt 0 ]; do
+    [ "$#" -ge 2 ] || die "$1 needs a value"
+    case $1 in
+      --file) file=$2 ;;
+      --config-root) root=$2 ;;
+      *) die "unknown option for eval patterns: $1" ;;
+    esac
+    shift 2
+  done
+  CONFIG_ROOT=$root
+  [ -n "$file" ] || file="$CONFIG_ROOT/tests/evals/patterns.json"
+  [ -f "$file" ] || die "no patterns file: $file"
+  jq -e '(.version == 1) and (.patterns | type == "array")' "$file" >/dev/null 2>&1 || die "not a patterns file (version 1, patterns array): $file"
+
+  local n i p id set text nchecks j why failed=0 pass_test=0 all_test=0 pass_tuning=0 all_tuning=0 ok badset
+  badset=$(jq -r '[.patterns[] | select(.set | IN("test", "tuning") | not) | (.id // "?")] | .[0] // empty' "$file")
+  [ -z "$badset" ] || die "pattern $badset: set must be exactly test or tuning"
+  n=$(jq '.patterns | length' "$file")
+  for ((i = 0; i < n; i++)); do
+    p=$(jq -c ".patterns[$i]" "$file")
+    id=$(printf '%s' "$p" | jq -r '.id // "?"'); set=$(printf '%s' "$p" | jq -r '.set')
+    text=$(printf '%s' "$p" | jq -r '.pattern // ""')
+    nchecks=$(printf '%s' "$p" | jq '(.checks // []) | length')
+    ok=1 why=''
+    for ((j = 0; j < nchecks; j++)); do
+      out=$(run_check "$(printf '%s' "$p" | jq -c ".checks[$j]")")
+      [ -z "$out" ] || { ok=0; why="$why  failed check $((j + 1)): $out"$'\n'; }
+    done
+    [ "$nchecks" -gt 0 ] || { ok=0; why="  pattern has no checks"$'\n'; }
+    case $set in tuning) all_tuning=$((all_tuning + 1)) ;; *) all_test=$((all_test + 1)) ;; esac
+    if [ "$ok" = 1 ]; then
+      printf 'ok - %s [%s] %s\n' "$id" "$set" "$text"
+      case $set in tuning) pass_tuning=$((pass_tuning + 1)) ;; *) pass_test=$((pass_test + 1)) ;; esac
+    else
+      failed=1
+      printf 'FAIL - %s [%s] %s\n%s' "$id" "$set" "$text" "$why"
+    fi
+  done
+  printf 'score: test %s/%s, tuning %s/%s\n' "$pass_test" "$all_test" "$pass_tuning" "$all_tuning"
+  exit "$failed"
+}
+
+# ---------------------------------------------------------------- eval replay
+cmd_eval_replay() {
+  [ "$#" -ge 2 ] || usage
+  local cases=$1 outs=$2 min=0 maxfp=-1
+  shift 2
+  while [ "$#" -gt 0 ]; do
+    [ "$#" -ge 2 ] || die "$1 needs a value"
+    case $1 in
+      --min-final-recall) min=$2 ;;
+      --max-control-fp) maxfp=$2 ;;
+      *) die "unknown option for eval replay: $1" ;;
+    esac
+    shift 2
+  done
+  jq -ne --argjson m "$min" '$m | type == "number" and . >= 0 and . <= 1' >/dev/null 2>&1 || die '--min-final-recall must be a number between 0 and 1'
+  case $maxfp in -1|[0-9]*) ;; *) die '--max-control-fp must be a non-negative integer' ;; esac
+  [ -d "$cases" ] || die "no cases directory: $cases"
+
+  local rows='' errs='' d name out row
+  for d in "$cases"/*/; do
+    [ -f "${d}case.json" ] || continue
+    name=$(basename "$d")
+    if [ ! -f "$outs/$name.json" ]; then errs="$errs"$'no recorded output for '"$name"$'\n'; continue; fi
+    if ! row=$(jq -c --arg dir "$name" --slurpfile o "$outs/$name.json" '
+        . as $c | ($o[0] // {}) as $out
+        | def hit($f): ((($f.what // "") | ascii_downcase) as $w | ($c.keywords // []) | all(. as $k | $w | contains($k | ascii_downcase)))
+            and (($c.where // "") == "" or (($f.where // "") | test($c.where)));
+        def stage($s): [($out[$s] // [])[] | select(hit(.))] | length;
+        def total($s): ($out[$s] // []) | length;
+        { case: $dir, id: $c.id, set: $c.set, kw: (($c.keywords // []) | length),
+          raw: (stage("raw") > 0), verified: (stage("verified") > 0), final: (stage("final") > 0),
+          n: { raw: total("raw"), verified: total("verified"), final: total("final") },
+          nm: { raw: (total("raw") - stage("raw")), verified: (total("verified") - stage("verified")), final: (total("final") - stage("final")) } }' "${d}case.json" 2>/dev/null); then
+      errs="$errs"$'unreadable case or output for '"$name"$'\n'
+      continue
+    fi
+    rows="$rows$row"$'\n'
+  done
+
+  local summary
+  summary=$(printf '%s' "$rows" | jq -s -r --argjson min "$min" --argjson maxfp "$maxfp" '
+    def bad_set: (.set | IN("tuning", "test", "control") | not);
+    . as $all
+    | [ ( $all[] | select(bad_set) | "ERR:case \(.case): set must be tuning, test or control, not \(.set | tojson)" ),
+        ( $all[] | select((.set == "tuning" or .set == "test") and .kw < 2) | "ERR:case \(.case): a tuning or test case needs at least 2 keywords" ),
+        ( $all | group_by(.id)[] | select(length > 1) | "ERR:case id \(.[0].id) appears in two sets (\(map(.set) | join(", ")))" ),
+      ( ["tuning", "test"][] as $s | [$all[] | select(.set == $s)] as $g
+        | "\($s): recall raw \([$g[] | select(.raw)] | length)/\($g | length), verified \([$g[] | select(.verified)] | length)/\($g | length), final \([$g[] | select(.final)] | length)/\($g | length); noise: raw \([$g[].nm.raw] | add // 0), verified \([$g[].nm.verified] | add // 0), final \([$g[].nm.final] | add // 0) non-matching findings",
+          ( $g[] | select(.raw and (.verified | not)) | "LOST: \(.case) between raw and verified" ),
+          ( $g[] | select(.verified and (.final | not)) | "LOST: \(.case) between verified and final" ) ),
+      ( [$all[] | select(.set == "control")] as $g
+        | ([$g[].n.final] | add // 0) as $fin
+        | "control findings raw \([$g[].n.raw] | add // 0), verified \([$g[].n.verified] | add // 0), final \($fin) (false positives; max allowed \(if $maxfp < 0 then "unlimited" else $maxfp end))",
+          ( if $maxfp >= 0 and $fin > $maxfp then "ERR:control final findings \($fin) exceed --max-control-fp \($maxfp)" else empty end ) ),
+      ( [$all[] | select(.set == "test")] as $g
+        | ($g | length) as $n | ([$g[] | select(.final)] | length) as $f
+        | if $min > 0 and (($n == 0) or ($f / $n < $min)) then "ERR:test final recall \($f)/\($n) is below --min-final-recall \($min)" else empty end ) ]
+    | .[]' 2>&1) || die "could not score the replay: $summary"
+  [ -z "$summary" ] || printf '%s\n' "$summary" | grep -v '^ERR:'
+  local failed=0
+  if [ -n "$errs" ]; then printf '%s' "$errs" | sed 's/^/ERROR: /' >&2; failed=1; fi
+  if printf '%s\n' "$summary" | grep -q '^ERR:'; then printf '%s\n' "$summary" | grep '^ERR:' | sed 's/^ERR:/ERROR: /' >&2; failed=1; fi
+  exit "$failed"
+}
+
+case ${1:-} in
+  record) shift; cmd_record "$@" ;;
+  report) shift; cmd_report "$@" ;;
+  propose) shift; cmd_propose "$@" ;;
+  eval)
+    shift
+    case ${1:-} in
+      patterns) shift; cmd_eval_patterns "$@" ;;
+      replay) shift; cmd_eval_replay "$@" ;;
+      *) usage ;;
+    esac ;;
+  *) usage ;;
+esac

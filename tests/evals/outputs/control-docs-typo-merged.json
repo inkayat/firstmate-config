@@ -1,0 +1,10 @@
+{
+  "raw": [
+    {
+      "what": "Heading level skips from h2 to h4",
+      "where": "README.md"
+    }
+  ],
+  "verified": [],
+  "final": []
+}

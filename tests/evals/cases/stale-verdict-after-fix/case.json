@@ -1,0 +1,10 @@
+{
+  "id": "stale-verdict-after-fix",
+  "set": "test",
+  "key": "A QA pass recorded for an older commit let the change deliver after a later fix commit.",
+  "keywords": [
+    "stale",
+    "commit"
+  ],
+  "where": "fm-workflow"
+}

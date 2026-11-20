@@ -1,0 +1,19 @@
+{
+  "raw": [
+    {
+      "what": "Handoff block lists a shared skill path that no role frontmatter declares",
+      "where": "bin/fm-role-handoff"
+    },
+    {
+      "what": "Unused variable in the install script",
+      "where": "install.sh"
+    }
+  ],
+  "verified": [
+    {
+      "what": "Unused variable in the install script",
+      "where": "install.sh"
+    }
+  ],
+  "final": []
+}

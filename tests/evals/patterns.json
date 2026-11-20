@@ -1,0 +1,466 @@
+{
+  "version": 1,
+  "description": "Past failure patterns, each checked against the roles and workflows as they are. A role or workflow change that loses a pattern's protection fails `fm-retro eval patterns`. `set` keeps tuning patterns (used while writing a rule) apart from the fixed test patterns the score is judged on; bin/fm-retro prints both scores. Patterns come from the Anthropic code-review and verification articles and from this repository's own history.",
+  "patterns": [
+    {
+      "id": "P-001",
+      "set": "test",
+      "source": "article: one CLI PR went through more than fifty review rounds overnight",
+      "pattern": "review and QA loops never converge: no round cap, or a fourth round instead of the author stepping back",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.loops[\"review-fix\"].maxIterations == 3) and (.loops[\"qa-fix\"].maxIterations == 3) and (.loops[\"review-fix\"].onExhausted.to == \"step-back\") and (.loops[\"qa-fix\"].onExhausted.to == \"step-back\")"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "bug-fix",
+          "jq": "(.loops[\"review-fix\"].maxIterations == 3) and (.loops[\"qa-fix\"].maxIterations == 3) and (.steps[\"step-back\"].on.done == \"@escalate\")"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "refactor",
+          "jq": "(.loops[\"review-fix\"].maxIterations == 3) and (.loops[\"qa-fix\"].maxIterations == 3)"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "ui-build-verify-review",
+          "jq": "(.loops[\"review-fix\"].maxIterations == 3) and (.loops[\"qa-fix\"].maxIterations == 3)"
+        }
+      ]
+    },
+    {
+      "id": "P-002",
+      "set": "test",
+      "source": "article: about 59% of what the reviewer kept flagging was code from its first pass",
+      "pattern": "every re-review re-reads the whole change and re-posts old findings instead of the delta",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.steps.review.input | map(.from) | index(\"delta\") != null) and (.steps.review.input | map(.from) | index(\"feedback-all\") != null) and (.steps.review.instruction | contains(\"only the delta\"))"
+        },
+        {
+          "kind": "role",
+          "role": "code-reviewer",
+          "regex": "review the DELTA since the last reviewed commit"
+        }
+      ]
+    },
+    {
+      "id": "P-003",
+      "set": "test",
+      "source": "article: findings are verified by other agents before humans (and implementers) see them",
+      "pattern": "unverified review findings go straight back to the implementer: noise costs a commit and a round each",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.steps.review.on.fail == \"verify-review\") and (.steps[\"verify-review\"].verifies == [\"review\"]) and ((.steps.implement.input | map(select(.name == \"feedback\") | .steps) | .[0] | index(\"review\")) == null)"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.steps.security.on.fail == \"verify-security\") and (.steps[\"verify-security\"].verifies == [\"security\"])"
+        },
+        {
+          "kind": "role-frontmatter",
+          "role": "finding-verifier",
+          "jq": "(.spawns | index(\"fm-tenth-man\")) != null"
+        }
+      ]
+    },
+    {
+      "id": "P-004",
+      "set": "test",
+      "source": "article: a passing review on an out-of-date commit means nothing",
+      "pattern": "a pass recorded for an older commit lets the change deliver after a later fix commit",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.steps.implement.commits == true) and (.steps.ship.instruction | contains(\"THIS commit\")) and (.gates.commit != null)"
+        },
+        {
+          "kind": "role",
+          "role": "qa",
+          "regex": "valid only for"
+        },
+        {
+          "kind": "role",
+          "role": "release-engineer",
+          "regex": "A stale pass, a missing gate"
+        }
+      ]
+    },
+    {
+      "id": "P-005",
+      "set": "test",
+      "source": "article: if a change can modify the check that judges it, the check is broken",
+      "pattern": "a gate reads its rules from the change under review, so the change can edit the rules that judge it",
+      "checks": [
+        {
+          "kind": "role",
+          "role": "qa",
+          "regex": "git show <base>"
+        },
+        {
+          "kind": "role",
+          "role": "code-reviewer",
+          "regex": "git show <base>"
+        },
+        {
+          "kind": "role",
+          "role": "risk-classifier",
+          "regex": "git show <base>"
+        },
+        {
+          "kind": "role",
+          "role": "security-engineer",
+          "regex": "rules from BASE"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.steps.classify.instruction | contains(\"BASE branch\")) and (.steps.qa.instruction | contains(\"BASE branch\")) and (.steps.review.instruction | contains(\"BASE branch\"))"
+        }
+      ]
+    },
+    {
+      "id": "P-006",
+      "set": "test",
+      "source": "article: never let a bot approval replace a required human one",
+      "pattern": "an agent verdict (QA, review, release, or the Captain) is treated as the human approval a risky change requires",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.steps.ship.instruction | contains(\"never replaces a human\")) and (.steps.deliver.instruction | contains(\"Never merge\"))"
+        },
+        {
+          "kind": "role",
+          "role": "release-engineer",
+          "regex": "never replaces a required human"
+        }
+      ]
+    },
+    {
+      "id": "P-007",
+      "set": "tuning",
+      "source": "brief: a security review that can block when the change touches a sensitive surface",
+      "pattern": "a change that touches a sensitive surface skips the security review, or the security gate cannot block",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.steps.review.on.pass | type == \"array\") and (.steps.review.on.pass[0].when.security == [\"required\"]) and (.steps.review.on.pass[0].to == \"security\") and (.steps.security.on.fail == \"verify-security\")"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.steps[\"verify-review\"].on.pass | type == \"array\") and (.steps[\"verify-review\"].on.pass[0].to == \"security\")"
+        },
+        {
+          "kind": "role",
+          "role": "risk-classifier",
+          "regex": "Any sensitive surface means tier at least medium"
+        }
+      ]
+    },
+    {
+      "id": "P-008",
+      "set": "test",
+      "source": "article: When we change direction - raise it early, not as a blocking comment on a finished PR",
+      "pattern": "a wrong approach is discovered late and ground through: a step has no early change-direction outcome",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "[.steps[] | select(.kind == \"work\" and .output != \"risk\") | .on | has(\"change-direction\")] | all"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "research-decide",
+          "jq": "[.steps[] | select(.kind == \"work\" and .output != \"risk\") | .on | has(\"change-direction\")] | all"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.steps.redirect.on | keys | sort) == [\"close\", \"escalate\", \"reshape\"]"
+        },
+        {
+          "kind": "role",
+          "role": "senior-fullstack",
+          "regex": "end `change-direction` with the wrong premise"
+        }
+      ]
+    },
+    {
+      "id": "P-009",
+      "set": "test",
+      "source": "article: ask the agent to show the output instead of saying it is done",
+      "pattern": "the implementer reports done with no command output, and review starts on unverified work",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.steps.implement.output == \"result\") and (.gates | has(\"evidence\")) and (.steps.implement.instruction | contains(\"REAL flow\"))"
+        },
+        {
+          "kind": "role",
+          "role": "senior-fullstack",
+          "regex": "capture what it printed"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.steps.classify.on.low == \"qa\") and (.steps.implement.on.done == \"classify\")"
+        }
+      ]
+    },
+    {
+      "id": "P-010",
+      "set": "test",
+      "source": "article: Claude cannot skip flaky tests or weaken a check to pass it",
+      "pattern": "the fixer weakens or deletes the regression test that was meant to gate the fix",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "bug-fix",
+          "jq": "(.roles.tester != .roles.implementer) and (.steps.fix.instruction | contains(\"Do not edit that test\")) and (.steps.qa.instruction | contains(\"IMPORTANT finding\"))"
+        },
+        {
+          "kind": "role",
+          "role": "test-engineer",
+          "regex": "Weakening, skipping, deleting"
+        }
+      ]
+    },
+    {
+      "id": "P-011",
+      "set": "tuning",
+      "source": "article: refactors are verified by differential tests with the old system as the oracle",
+      "pattern": "a refactor changes behavior and nothing compares old and new",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "refactor",
+          "jq": "(.steps.qa.instruction | contains(\"behavior must be unchanged\")) and (.steps.refactor.instruction | contains(\"BEFORE\"))"
+        },
+        {
+          "kind": "role",
+          "role": "qa",
+          "regex": "old system as"
+        }
+      ]
+    },
+    {
+      "id": "P-012",
+      "set": "test",
+      "source": "article: running the app end to end matters more than tests; UI is checked in a real browser",
+      "pattern": "a UI change is verified by reading code or unit tests, never in a browser",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "ui-build-verify-review",
+          "jq": "(.steps.qa.on.pass == \"ui-verify\") and (.steps[\"ui-verify\"].on.pass == \"review\") and (.roles.ui == \"ui-qa\")"
+        },
+        {
+          "kind": "role",
+          "role": "ui-qa",
+          "regex": "None exists: end BLOCKED"
+        }
+      ]
+    },
+    {
+      "id": "P-013",
+      "set": "test",
+      "source": "official FirstMate AGENTS.md section 7: no-mistakes alone owns review; no second manual reviewer",
+      "pattern": "the forced workflow stacks a second manual reviewer or a blocking gate on top of no-mistakes",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "delegated-build",
+          "jq": "([.roles[]] | unique) == [\"senior-fullstack\"]"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "delegated-build",
+          "jq": "(.gates | length) > 0 and ([.gates[]] | all(. == \"observe\"))"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "delegated-build",
+          "jq": "[.steps[] | select(.kind == \"work\")] | length == 1"
+        }
+      ]
+    },
+    {
+      "id": "P-014",
+      "set": "tuning",
+      "source": "primary policy section 6: bounded helpers only, one level, no widened authority",
+      "pattern": "a leaf role gains the task tool (recursion), or a spawning role loses its allow-list",
+      "checks": [
+        {
+          "kind": "role-frontmatter",
+          "role": "scout",
+          "jq": "((.tools | index(\"task\")) == null) and ((.spawns | length) == 0)"
+        },
+        {
+          "kind": "role-frontmatter",
+          "role": "senior-fullstack",
+          "jq": "((.tools | index(\"task\")) == null) and ((.spawns | length) == 0)"
+        },
+        {
+          "kind": "role-frontmatter",
+          "role": "lead",
+          "jq": "((.tools | index(\"task\")) != null) and ((.spawns | length) > 0) and ((.spawns | index(\"fm-lead\")) == null)"
+        }
+      ]
+    },
+    {
+      "id": "P-015",
+      "set": "test",
+      "source": "article: findings are voted on; only enough agreement posts them; style-only is dropped",
+      "pattern": "the verifier drops a finding without evidence, or leaves a handed finding unaccounted for",
+      "checks": [
+        {
+          "kind": "role",
+          "role": "finding-verifier",
+          "regex": "Every drop has a reason from the list and evidence"
+        },
+        {
+          "kind": "role",
+          "role": "finding-verifier",
+          "regex": "exactly once"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": ".gates | has(\"coverage\")"
+        }
+      ]
+    },
+    {
+      "id": "P-016",
+      "set": "tuning",
+      "source": "article: Important, Nit, Pre-existing: a bug the PR did not introduce must not read as the author's fault",
+      "pattern": "style or cleanup findings block the author, or a pre-existing bug is blamed on the author",
+      "checks": [
+        {
+          "kind": "role",
+          "role": "code-reviewer",
+          "regex": "A defect that predates the change is PRE-EXISTING"
+        },
+        {
+          "kind": "role",
+          "role": "code-reviewer",
+          "regex": "OPTIONAL at most"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.steps.review.instruction | contains(\"PRE-EXISTING\")) and (.steps.review.instruction | contains(\"style-only\"))"
+        }
+      ]
+    },
+    {
+      "id": "P-017",
+      "set": "test",
+      "source": "article: the improvement loop proposes through a PR and a human approves; nothing auto-applies",
+      "pattern": "the improver edits a role or a gate directly, from inside a running task",
+      "checks": [
+        {
+          "kind": "role-frontmatter",
+          "role": "improver",
+          "jq": "((.tools | index(\"edit\")) == null) and ((.tools | index(\"write\")) == null)"
+        },
+        {
+          "kind": "role",
+          "role": "improver",
+          "regex": "Auto-applying a proposal"
+        },
+        {
+          "kind": "role-frontmatter",
+          "role": "improver",
+          "jq": "(.spawns | sort) == [\"fm-scout\", \"fm-tenth-man\"]"
+        }
+      ]
+    },
+    {
+      "id": "P-018",
+      "set": "test",
+      "source": "article: start any new gate in observe mode before enforce, with a bounded blocked-twice-then-allow escape",
+      "pattern": "a new gate ships enforcing, so a false positive wedges every run",
+      "checks": [
+        {
+          "kind": "workflow",
+          "workflow": "build-test-review",
+          "jq": "(.gates | length) > 0 and ([.gates[]] | all(. == \"observe\"))"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "plan-build-test-review",
+          "jq": "(.gates | length) > 0 and ([.gates[]] | all(. == \"observe\"))"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "bug-fix",
+          "jq": "(.gates | length) > 0 and ([.gates[]] | all(. == \"observe\"))"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "refactor",
+          "jq": "(.gates | length) > 0 and ([.gates[]] | all(. == \"observe\"))"
+        },
+        {
+          "kind": "workflow",
+          "workflow": "ui-build-verify-review",
+          "jq": "(.gates | length) > 0 and ([.gates[]] | all(. == \"observe\"))"
+        }
+      ]
+    },
+    {
+      "id": "P-019",
+      "set": "tuning",
+      "source": "past incident #32: the Captain chose skills per task and the lists drifted",
+      "pattern": "skills are chosen per task instead of coming with the role, or a role exceeds the skill budget",
+      "checks": [
+        {
+          "kind": "role-frontmatter",
+          "role": "code-reviewer",
+          "jq": "(.skills | length) <= 3"
+        },
+        {
+          "kind": "role-frontmatter",
+          "role": "planner",
+          "jq": "(.skills | length) <= 3 and ((.skills | index(\"be-ambitious\")) != null)"
+        },
+        {
+          "kind": "role",
+          "role": "planner",
+          "regex": "Proposed beyond brief"
+        }
+      ]
+    },
+    {
+      "id": "P-020",
+      "set": "test",
+      "source": "primary policy section 6: the parent keeps verification; macro orchestration stays with FirstMate",
+      "pattern": "the lead replaces the workflow's independent QA and review, or drives the workflow itself",
+      "checks": [
+        {
+          "kind": "role",
+          "role": "lead",
+          "regex": "do NOT replace"
+        },
+        {
+          "kind": "role",
+          "role": "lead",
+          "regex": "independent QA, review and security steps"
+        }
+      ]
+    }
+  ]
+}

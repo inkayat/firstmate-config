@@ -1,0 +1,24 @@
+{
+  "raw": [
+    {
+      "what": "QA verdict is stale: it judged commit a1b2c3 but the change delivered at the later fix commit d4e5f6",
+      "where": "bin/fm-workflow next, deliver step"
+    },
+    {
+      "what": "Error message for a missing report path is unclear",
+      "where": "bin/fm-workflow verdict"
+    }
+  ],
+  "verified": [
+    {
+      "what": "QA verdict is stale: it judged commit a1b2c3 but the change delivered at the later fix commit d4e5f6",
+      "where": "bin/fm-workflow next, deliver step"
+    }
+  ],
+  "final": [
+    {
+      "what": "Stale QA verdict accepted after a later commit; deliver must re-run QA on the new commit",
+      "where": "bin/fm-workflow next, deliver step"
+    }
+  ]
+}

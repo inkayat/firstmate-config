@@ -1,0 +1,10 @@
+{
+  "id": "loop-without-limit",
+  "set": "test",
+  "key": "A fix-and-recheck cycle in a workflow had no loop limit, so a failing step could retry forever instead of escalating.",
+  "keywords": [
+    "loop",
+    "limit"
+  ],
+  "where": "^workflows/"
+}
